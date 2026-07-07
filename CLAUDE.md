@@ -1,9 +1,10 @@
-# product-analytics
+# analytics-kit
 
 App-agnostic, **vendor-neutral analytics abstraction library** in **TypeScript**. Consuming apps
 depend on it like a vendored SDK and code against its own neutral interfaces — never a vendor SDK
-directly. The first backend target is a PostHog-compatible one, implemented by **adapting
-posthog-js's client code and de-branding it**; a self-hosted target drops in later. The library
+directly. The first backend target is a PostHog-compatible one, implemented by **copying only the
+posthog-js client code we need and de-branding it — never importing a vendor SDK**; a self-hosted
+target drops in later. The library
 mirrors posthog-js's `core → browser → node` structure — but **its own surface names no vendor**
 (see Product commitments).
 
@@ -19,15 +20,17 @@ Every design decision is measured against these:
   stripped, vendor endpoints become configuration. (`posthogAdapter` and the like are invalid —
   name by role, not by vendor.)
 - **Capability-completeness.** The neutral surface must cover what a mature analytics SDK exposes
-  (capture/events, identify, super-properties, groups, feature flags, session replay, …) — measured
-  against the `posthog-js` reference — so nothing is lost by depending on this library.
+  (capture/events, identify, super-properties, groups, query primitives for KPIs — plus typed
+  extension points for feature flags, session replay, …) — measured against the `posthog-js`
+  reference — so nothing is lost by depending on this library. **Port only what's needed**: the
+  capability set is scoped to the contract in `planning/BRIEF.md`, not to everything PostHog ships.
 - **Two acceptance bars** — the hard test of any design:
   1. **Provider-swap = one adapter, zero consumer change.** Swapping the backend means writing ONE
      adapter and changing NO consumer code.
   2. **New-app adoption = config only, zero library change.** A new consuming app adopts by
      configuration alone — no edits to the library.
 - **Primitives, not products.** Expose analytics primitives (capture an event, identify a user,
-  evaluate a flag), not opinionated end-product features.
+  run a funnel/retention query), not opinionated end-product features.
 - **Privacy = a consumer-supplied payload allowlist.** The consumer supplies the allowlist of
   properties permitted to leave the app; the library enforces it.
 
@@ -77,21 +80,22 @@ This applies to architectural changes, not trivial fixes. Use your judgement.
 
 ## Project Structure
 
-Greenfield — the `src/` layout below is the intended shape (mirrors posthog-js), not yet built:
+Greenfield — the workspace layout below is the intended shape (mirrors posthog-js), not yet built:
 
 ```
-src/
-├── core/       # vendor-neutral seam: the Analytics client contract, the adapter interface, shared types
-├── browser/    # browser target: persistence, autocapture seam, pageviews, session replay
-├── node/       # node/server target: server-side capture, no persistence
-└── react/      # optional React bindings
-adapters/       # backend adapters — the first target is adapted from posthog-js and de-branded
-                #   (named by role/endpoint, never after a vendor); future self-hosted
+packages/
+├── analytics-kit/   # the main entry & vendor-neutral seam: provider contract, adapter interface,
+│                    #   typed-taxonomy mechanism, allowlist hook, config-selected factory, shared types
+├── browser/         # @analytics-kit/browser — browser target: identity/persistence, transport,
+│                    #   capture + enrichment (ported from posthog-js, de-branded)
+├── node/            # @analytics-kit/node — server target: server-side capture + the query client
+└── react/           # @analytics-kit/react — optional React/Next binding (provider + hooks)
 ```
 
-Consumers install only the target they need. **Package names are TBD — never bake a vendor name
-into any of them**, and there's no need to publish a package literally named `core` (the neutral
-seam can be the library's main entry). `src/core` here is just an internal module name.
+Consumers install only the target they need. **Package names are decided**: the seam is the main
+`analytics-kit` package (no package literally named `core` — "core" survives only as the area
+slug), platform targets are `@analytics-kit/*`. Never bake a vendor name into any of them.
+Adapters are internal modules of their target package, named by role, never by vendor.
 
 ## Conventions
 

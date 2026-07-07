@@ -1,4 +1,4 @@
-# product-analytics
+# analytics-kit
 
 An **app-agnostic, vendor-neutral analytics abstraction library** for TypeScript. Your app codes
 against one small set of neutral interfaces; the analytics backend sits behind a swappable adapter,
@@ -8,14 +8,14 @@ selected by configuration. **No vendor name appears in the library's surface.**
 
 Most apps wire analytics calls to a specific vendor's SDK, scattered across the codebase. Swapping
 vendors, or adopting the same conventions in a new app, then means touching everything.
-`product-analytics` puts a neutral seam in between:
+`analytics-kit` puts a neutral seam in between:
 
 - **Provider-swap = one adapter, zero consumer change.** Change the backend by writing one
   adapter — no consumer code changes.
 - **New-app adoption = config only, zero library change.** A new app adopts by configuration
   alone.
-- **Primitives, not products.** Capture an event, identify a user, evaluate a flag — not
-  opinionated product features baked in.
+- **Primitives, not products.** Capture an event, identify a user, run a funnel/retention query —
+  not opinionated product features baked in.
 - **Privacy by allowlist.** You supply the allowlist of properties permitted to leave your app;
   the library enforces it.
 - **Vendor-neutral to the core.** The library's own code and public API carry no vendor
@@ -39,15 +39,15 @@ endpoint + write key; a self-hosted backend is planned.
 ## Install
 
 ```sh
-# package names are TBD / illustrative
-pnpm add @product-analytics/browser   # browser target
-pnpm add @product-analytics/node      # server-side target
+pnpm add analytics-kit            # the seam: contracts, taxonomy, allowlist, factory
+pnpm add @analytics-kit/browser   # browser target
+pnpm add @analytics-kit/node      # server-side target + query client
 ```
 
 ## Usage (sketch)
 
 ```ts
-import { createAnalytics } from "@product-analytics/browser";
+import { createAnalytics } from "@analytics-kit/browser";
 
 const analytics = createAnalytics({
   // the backend is configuration — no vendor name in the API
@@ -61,9 +61,6 @@ const analytics = createAnalytics({
 
 analytics.capture("checkout_completed", { plan: "pro", total_cents: 4200 });
 analytics.identify("user_123", { plan: "pro" });
-if (analytics.isFeatureEnabled("new-nav")) {
-  // …
-}
 ```
 
 > API shown is illustrative and will change. See `CLAUDE.md` for the architecture.
