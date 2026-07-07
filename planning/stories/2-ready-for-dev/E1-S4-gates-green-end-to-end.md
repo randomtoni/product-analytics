@@ -19,7 +19,7 @@ The epic's success bar is not "packages exist" but "all four quality gates pass 
 ### In
 
 - A single trivial passing vitest test in each of the four packages (`analytics-kit`, `@analytics-kit/{browser,node,react}`) — e.g. asserting the package's placeholder export — so the `test` gate exercises a real (not `passWithNoTests`) case per package.
-- Verify/wire each package's `test` script against the shared vitest config so the tests are discovered.
+- The trivial test lands in each package as `src/index.test.ts` (or under `src/__tests__/`), discovered by that package's own `vitest.config.ts` (added in S2/S3, merging the root `vitest.shared.ts`). No new config wiring should be needed here — if a package's test isn't discovered, the fix is that package's `vitest.config.ts`/`include`, not a root-level change. Node env suffices for these trivial assertions (no jsdom).
 - Run the full sweep and confirm all four turbo tasks are green across all four packages: `turbo run typecheck`, `turbo run lint`, `turbo run test`, `turbo run build`.
 - Confirm turbo caching: a second identical gate run is served from cache for unchanged packages.
 
@@ -44,7 +44,8 @@ The epic's success bar is not "packages exist" but "all four quality gates pass 
 - Once real tests exist per package, the shared vitest `passWithNoTests: true` (from S1) becomes a safety net rather than the reason a package is green — leave it in place for future empty slices.
 - **Gate task names are fixed** by CLAUDE.md: `turbo run typecheck | lint | test | build`. Do not rename to posthog's `check-types`.
 - **Do not hit any real backend** in tests (CLAUDE.md conventions) — trivial in-process assertions only; no network.
-- Cache expectation follows `posthog-js/turbo.json` semantics: `build` is cacheable keyed on `src/**` + config `inputs`; a no-change re-run should report cache hits. `lint` has no `dependsOn`; `typecheck`/`test`/`build` depend on `^build`.
+- Cache expectation follows the `inputs`/`globalDependencies` pinned in S1's `turbo.json`: `build` is cacheable keyed on its explicit `inputs` (`src/**`, `tsconfig.json`, `tsup.config.ts`, `package.json`) plus the shared root configs in `globalDependencies`; a no-change re-run reports cache hits (`FULL TURBO`). `lint` has no `dependsOn`; `typecheck`/`test`/`build` depend on `^build`.
+- **`.mjs`/`.js` output naming** — the AC that every package emits `.mjs` (ESM) + `.js` (CJS) holds only because no package sets `"type": "module"` (pinned in S2/S3). If a build emits a `.cjs` or an ESM `.js` instead, the cause is a stray `"type": "module"` in that package.json — fix the package.json, don't repoint the exports map.
 
 ## Shipped
 
