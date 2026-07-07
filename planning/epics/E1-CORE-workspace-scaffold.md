@@ -1,6 +1,6 @@
 ---
 id: E1-CORE-workspace-scaffold
-status: planned
+status: active
 area: core
 touches: []
 api_impact: additive
@@ -23,9 +23,12 @@ The workspace is the substrate every other epic builds on — nothing can be por
 
 ## Stories
 
-- Workspace root: `pnpm-workspace.yaml` + `turbo.json` task graph + root `tsconfig`/eslint-base/vitest/tsup shared config.
-- The four package skeletons: each with `package.json` (name, `exports`, deps pointing inward), per-package `tsup.config` + `tsconfig`.
-- Gates wired + green on empty packages: a trivial passing test per package so `test`/`typecheck`/`lint`/`build` all pass end-to-end.
+Linear chain — `S1 → S2 → S3 → S4` (each depends on the prior); topo-sortable via `depends_on`. S2 (seam) lands before S3 (targets) so the inward-only dependency direction is a checkable story boundary.
+
+- **[E1-S1](../stories/2-ready-for-dev/E1-S1-workspace-root-scaffold.md)** *(additive, no deps)* — workspace root: `pnpm-workspace.yaml` + `turbo.json` four-task graph + root shared config (`tsconfig.base.json`, flat `eslint.config.js`, shared vitest + tsup conventions). No packages yet.
+- **[E1-S2](../stories/2-ready-for-dev/E1-S2-seam-package-skeleton.md)** *(additive, depends on E1-S1)* — the seam package `analytics-kit` skeleton: `package.json` (exports triplet, per-package gate scripts, **no** inward/outward deps), `tsconfig`, `tsup.config`, neutral placeholder `src/index.ts`. Root of the inward graph.
+- **[E1-S3](../stories/2-ready-for-dev/E1-S3-target-package-skeletons.md)** *(additive, depends on E1-S2)* — the three target skeletons `@analytics-kit/{browser,node,react}`, each depending inward on `analytics-kit` (`workspace:*`), never sideways; react declares `react` as a peer.
+- **[E1-S4](../stories/2-ready-for-dev/E1-S4-gates-green-end-to-end.md)** *(additive, depends on E1-S3)* — gates green end-to-end: a trivial passing test per package + confirm `turbo run typecheck|lint|test|build` all green across all four packages (with cache hits on re-run).
 
 ## Out of scope
 
