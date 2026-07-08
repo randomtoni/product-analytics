@@ -39,6 +39,8 @@ import { generateUuidV7 } from './uuid-v7';
 import { isLikelyBot } from './bot-detection';
 import { RateLimiter, DEFAULT_BATCH_SCOPE } from './rate-limiter';
 import { interpretBodyBackPressure } from './back-pressure-interpreter';
+import { gzipCompress, gzipSyncFallback, isGzipSupported, isGzipData } from './gzip';
+import { appendCompressedQueryParams, GZIP_CONTENT_TYPE, JSON_CONTENT_TYPE } from './transport-wire';
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
@@ -46,6 +48,15 @@ const LIBRARY_VERSION = '0.0.0';
 // Rapid writes are coalesced into one backend write; the in-memory props stay
 // current synchronously, and pending writes flush on unload.
 const SAVE_DEBOUNCE_MS = 250;
+
+// The transport-ready batch body: a JSON string (uncompressed) or gzip bytes, plus
+// its [WIRE] Content-Type. `compressed` records which path was taken so the transport
+// knows whether to append the compression query params. Adapter-internal.
+interface EncodedBatch {
+  body: string | Uint8Array;
+  contentType: string;
+  compressed: boolean;
+}
 
 export interface BrowserAdapterOptions {
   key: string;
@@ -77,6 +88,10 @@ export interface BrowserAdapterOptions {
   // (default 20). Both optional with sane defaults.
   flushInterval?: number;
   flushAt?: number;
+  // Gzip the batch body before sending. Defaults on where the native primitive
+  // exists; set false to force S2's uncompressed JSON POST. A neutral boolean — the
+  // wire encoding it selects (gzip, [WIRE] Content-Type/query params) stays internal.
+  compression?: boolean;
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
@@ -109,8 +124,14 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // signal (read via the injected interpreter — the one [WIRE] place a backend's
   // signal field name lives). Neither reaches the neutral surface.
   private readonly rateLimiter: RateLimiter;
+  // Whether to gzip the batch body. Resolved once at construction: the consumer's
+  // opt-out (compression === false) always wins; otherwise it is on only where the
+  // native/sync primitive can run. Adapter-internal — the wire encoding it drives
+  // never reaches the neutral surface.
+  private readonly compressionEnabled: boolean;
 
   constructor(options: BrowserAdapterOptions) {
+    this.compressionEnabled = options.compression !== false && isGzipSupported();
     this.botFilterEnabled = options.botFilter !== false;
     this.blockedUserAgents = options.blockedUserAgents ?? [];
     this.rateLimiter = new RateLimiter({ interpretBackPressure: interpretBodyBackPressure });
@@ -372,16 +393,17 @@ export class BrowserAdapter implements AnalyticsAdapter {
     }
   }
 
-  // The adapter-owned batch POST: build the [WIRE] `data:[]` envelope and POST it
-  // (uncompressed JSON) to the S1-resolved ingest URL via the neutral fetch() SPI,
-  // returning the neutral response so the retry wrapper can read its status. When no
-  // ingest target is configured, the batch is empty, or the scope is inside its
-  // server cool-off window, nothing is sent and undefined is returned — which the
-  // retry wrapper already treats as an indistinguishable no-op, keeping the
-  // proactive cool-off from tangling with S3's reactive retry. After a completed
-  // POST, the backend's back-pressure signal is read off the response body (via the
-  // injected interpreter) and arms the affected scope's cool-off. S5 compresses the
-  // body — below this seam.
+  // The adapter-owned batch POST: build the [WIRE] `data:[]` envelope, encode it
+  // (gzip when compression is enabled, else uncompressed JSON), and POST it to the
+  // S1-resolved ingest URL — returning the neutral response so the retry wrapper can
+  // read its status. When no ingest target is configured, the batch is empty, or the
+  // scope is inside its server cool-off window, nothing is sent and undefined is
+  // returned — which the retry wrapper already treats as an indistinguishable no-op,
+  // keeping the proactive cool-off from tangling with S3's reactive retry. After a
+  // completed POST, the backend's back-pressure signal is read off the response body
+  // (via the injected interpreter) and arms the affected scope's cool-off. The gzip
+  // encode + its [WIRE] Content-Type/query params live below this method, in
+  // encodeBatch() / postEncoded() — never on the neutral surface.
   private async postBatch(batch: WireEvent[]): Promise<NeutralFetchResponse | undefined> {
     const url = this.ingestUrl();
     if (url === undefined || batch.length === 0) {
@@ -390,13 +412,59 @@ export class BrowserAdapter implements AnalyticsAdapter {
     if (this.rateLimiter.isCoolingOff(DEFAULT_BATCH_SCOPE)) {
       return undefined;
     }
-    const response = await this.fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: assembleBatchBody(batch, Date.now()),
-    });
+    const json = assembleBatchBody(batch, Date.now());
+    const encoded = await this.encodeBatch(json);
+    const response = await this.postEncoded(url, encoded);
     await this.rateLimiter.interpretBackPressure(response);
     return response;
+  }
+
+  // Encode the JSON envelope for transport: gzip it when compression is enabled,
+  // preferring the native async primitive and falling back to the sync one. Output
+  // validation happens inside gzipCompress (returns null on any failure); a final
+  // isGzipData guard catches a native path that silently returned non-gzip bytes.
+  // On ANY compression failure the UNCOMPRESSED JSON string is returned rather than
+  // corrupt bytes — the caller ships plain JSON. Adapter-internal encoding.
+  private async encodeBatch(json: string): Promise<EncodedBatch> {
+    if (!this.compressionEnabled) {
+      return { body: json, contentType: JSON_CONTENT_TYPE, compressed: false };
+    }
+    const native = await gzipCompress(json);
+    if (native !== null && isGzipData(native)) {
+      return { body: native, contentType: GZIP_CONTENT_TYPE, compressed: true };
+    }
+    const sync = gzipSyncFallback(json);
+    if (isGzipData(sync)) {
+      return { body: sync, contentType: GZIP_CONTENT_TYPE, compressed: true };
+    }
+    return { body: json, contentType: JSON_CONTENT_TYPE, compressed: false };
+  }
+
+  // The single adapter-internal transport. A string body (uncompressed, or
+  // compression off) rides the neutral fetch() SPI — the string-delivery contract
+  // consumers and a second adapter share. A binary (gzipped) body cannot cross that
+  // string-bodied SPI, so it goes to the DOM fetch directly, below the seam, with the
+  // [WIRE] compression=/ver=/_= query params appended to the URL. S6 takes ownership
+  // of this method to add fetch → XHR → sendBeacon selection + keepalive.
+  private async postEncoded(url: string, encoded: EncodedBatch): Promise<NeutralFetchResponse> {
+    if (typeof encoded.body === 'string') {
+      return this.fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': encoded.contentType },
+        body: encoded.body,
+      });
+    }
+    const compressedUrl = appendCompressedQueryParams(url, LIBRARY_VERSION);
+    // Ship the gzip bytes as an ArrayBuffer body with the [WIRE] Content-Type header —
+    // the shape fetch and XHR accept directly (S6 adds XHR/sendBeacon selection and can
+    // re-wrap as a Blob where sendBeacon needs it). Copy into a fresh ArrayBuffer so the
+    // BodyInit is a plain (non-shared) buffer.
+    const buffer = encoded.body.slice().buffer as ArrayBuffer;
+    return fetch(compressedUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': encoded.contentType },
+      body: buffer,
+    });
   }
 
   getConsentState(): ConsentState {

@@ -24,6 +24,7 @@ export interface AnalyticsConfig {
   blockedUserAgents?: string[];
   flushInterval?: number;
   flushAt?: number;
+  compression?: boolean;
 }
 
 interface AnalyticsDeps {

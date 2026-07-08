@@ -44,3 +44,17 @@ Batched event payloads compress well; gzipping the body cuts bandwidth on every 
 - Reference: `posthog-js/packages/core/src/gzip.ts` + `posthog-js/packages/browser/src/request.ts`.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate): the real `validateNativeGzip` (magic-byte/CRC32/size checks) is never exercised — jsdom returns null from the native chain, so the adapter test MODELS validation failure by mocking `gzipCompress`→null. The "never corrupt bytes" guarantee rests on untested detection logic. Add a direct unit test on `validateNativeGzip` (export it for test): too-short Blob, corrupted-trailer-CRC, wrong-input-size-trailer → each throws (and `gzipCompress` swallows to null).
+- > Reviewer suggestion (2026-07-08, forward note): `ver=` is hardcoded to `LIBRARY_VERSION='0.0.0'` and always appended (reference drops it for versionless endpoints — a PostHog routing nuance, correctly not ported). Note for whoever sets a real version.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (browser):** `gzip.ts` (de-branded: `gzipCompress` native `CompressionStream`→validated `Uint8Array|null`, `validateNativeGzip` magic/CRC32/size, `gzipSyncFallback` fflate, `isGzipSupported`/`isGzipData`), `transport-wire.ts` (the ONE `[WIRE]` module: `GZIP_CONTENT_TYPE`=text/plain + `appendCompressedQueryParams` `compression=gzip-js`/`ver=`/`_=`) + tests
+- **Files changed:** `browser-adapter.ts` (`encodeBatch` native→fflate→uncompressed-string chain + `postEncoded` transport seam: string→neutral `this.fetch` SPI, binary→DOM fetch below the seam; `compression` option), `analytics-kit/create-analytics.ts` (+`AnalyticsConfig.compression?`) + shape-pin, `browser/create-analytics.ts` (thread), `package.json` (+`fflate ^0.8.2`). **SPI (`adapter.ts`) UNCHANGED** — `NeutralFetchOptions.body` stays `string`.
+- **New public API:** `AnalyticsConfig.compression?: boolean` (default on where `CompressionStream` supported; de-branded from `disable_compression`)
+- **Tests added:** browser +16 (gzip 8: fflate round-trip/deterministic/empty, isGzipData/isGzipSupported/gzipCompress-never-throws; adapter 8: native-success, native-null→fflate, native-validation-fail→fflate, both-bad→uncompressed-string, toggle-off, native-absent→off, `[WIRE]` params+text/plain, no-neutral-vocab) + 26 delivery adapters pinned `compression:false` → 343; seam 128
+- **Commit:** `E5-S5-compression — gzip request bodies (native + fflate fallback)` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (validateNativeGzip direct test; ver= hardcode); S2/S3/S4/E4 green
+- **Cross-story seams exposed (S6):** `postEncoded(url, encoded: EncodedBatch)` is the SINGLE delivery point below the neutral SPI — where **S6** adds fetch→XHR→sendBeacon selection + keepalive (<~52KB) + the unload sendBeacon path. Today: string body→neutral `this.fetch`; binary body (gzip `ArrayBuffer`)→direct DOM `fetch`. `EncodedBatch` = `{body: string|Uint8Array, contentType, compressed}` carries everything S6 needs (S6's sendBeacon re-wraps the gzip bytes as a `Blob` with Content-Type). `encodeBatch`/`postEncoded` untouched by `postBatch` — S6 layers selection on top.

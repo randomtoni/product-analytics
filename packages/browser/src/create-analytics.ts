@@ -30,6 +30,7 @@ export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
         blockedUserAgents: config.blockedUserAgents,
         flushInterval: config.flushInterval,
         flushAt: config.flushAt,
+        compression: config.compression,
       });
 }
 

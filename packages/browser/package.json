@@ -18,7 +18,8 @@
     "build": "tsup"
   },
   "dependencies": {
-    "analytics-kit": "workspace:*"
+    "analytics-kit": "workspace:*",
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
     "jsdom": "^26.1.0"

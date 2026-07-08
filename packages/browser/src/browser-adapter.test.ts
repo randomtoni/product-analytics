@@ -1,5 +1,10 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
-import type { AnalyticsAdapter, NeutralEvent, NeutralFetchOptions } from 'analytics-kit';
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+import type {
+  AnalyticsAdapter,
+  AnalyticsConfig,
+  NeutralEvent,
+  NeutralFetchOptions,
+} from 'analytics-kit';
 import { BrowserAdapter } from './browser-adapter';
 import {
   ANONYMOUS_DISTINCT_ID_KEY,
@@ -1076,7 +1081,7 @@ describe('batch queue + real delivery (S2)', () => {
   }
 
   test('capture enqueues the post-pipeline enriched event — it is no longer dropped', async () => {
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
     adapter.register({ plan: 'pro' });
 
@@ -1095,7 +1100,7 @@ describe('batch queue + real delivery (S2)', () => {
   });
 
   test('flush() POSTs the data:[] envelope to the S1-resolved ingest URL via the fetch() SPI', async () => {
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'd-1' }));
@@ -1111,7 +1116,7 @@ describe('batch queue + real delivery (S2)', () => {
   });
 
   test('each wired event carries an offset (not an absolute timestamp) in the envelope', async () => {
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
 
     adapter.capture(makeEvent({ timestamp: new Date(Date.now() - 5000) }));
@@ -1124,7 +1129,7 @@ describe('batch queue + real delivery (S2)', () => {
 
   test('the interval trigger flushes buffered events without an explicit flush (fake timers)', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushInterval: 1000 });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushInterval: 1000, compression: false });
     const calls = mockFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'interval-1' }));
@@ -1143,6 +1148,7 @@ describe('batch queue + real delivery (S2)', () => {
       ingestHost: INGEST,
       flushInterval: 5000,
       flushAt: 2,
+      compression: false,
     });
     const calls = mockFetch(adapter);
 
@@ -1168,7 +1174,7 @@ describe('batch queue + real delivery (S2)', () => {
   });
 
   test('optOut (setConsentState denied) DROPS the unsent buffer — no POST fires after opt-out', async () => {
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'pre-optout' }));
@@ -1180,7 +1186,7 @@ describe('batch queue + real delivery (S2)', () => {
   });
 
   test('optIn (setConsentState granted) does NOT drop the buffer — the E4 regression guard', async () => {
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'kept' }));
@@ -1193,7 +1199,7 @@ describe('batch queue + real delivery (S2)', () => {
   });
 
   test('a merge (identify) event flushes with set_traits lifted to a top-level wire key', async () => {
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
 
     adapter.identify('user-1', { plan: 'pro' });
@@ -1208,7 +1214,7 @@ describe('batch queue + real delivery (S2)', () => {
   });
 
   test('shutdown drains the buffer just like flush', async () => {
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'on-shutdown' }));
@@ -1219,7 +1225,7 @@ describe('batch queue + real delivery (S2)', () => {
   });
 
   test('the batch envelope / data:[] / offset stay adapter-internal — no wire shape on the neutral surface (bar A)', async () => {
-    const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter as BrowserAdapter);
 
     // The consumer captures a plain NeutralEvent — it carries NO wire vocabulary
@@ -1266,7 +1272,7 @@ describe('retry queue with backoff (S3)', () => {
 
   test('a 5xx re-enqueues the batch and re-sends after the exponential backoff (fake timers)', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     // First POST 503, then 200 on the retry.
     const calls = mockFetchStatuses(adapter, [503, 200]);
 
@@ -1287,7 +1293,7 @@ describe('retry queue with backoff (S3)', () => {
 
   test('a persistent 5xx re-sends on the exponential schedule 3000 → 6000 → 12000 (base*2**n)', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetchStatuses(adapter, [503]); // always fails
 
     adapter.capture(makeEvent({ dedupeId: 'sched' }));
@@ -1308,7 +1314,7 @@ describe('retry queue with backoff (S3)', () => {
 
   test('a 4xx is NEVER retried — the batch is dropped from the retry queue', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetchStatuses(adapter, [400]);
 
     adapter.capture(makeEvent({ dedupeId: 'perm-reject' }));
@@ -1323,7 +1329,7 @@ describe('retry queue with backoff (S3)', () => {
 
   test('a 429 (rate-limit, a 4xx) is NOT retried by S3 — rate-limiting is S4, not retry', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetchStatuses(adapter, [429]);
 
     adapter.capture(makeEvent({ dedupeId: 'rl' }));
@@ -1335,7 +1341,7 @@ describe('retry queue with backoff (S3)', () => {
 
   test('a 200 succeeds first time — no retry scheduled', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetchStatuses(adapter, [200]);
 
     adapter.capture(makeEvent({ dedupeId: 'ok' }));
@@ -1348,7 +1354,7 @@ describe('retry queue with backoff (S3)', () => {
 
   test('a network failure (status 0) retries at most 3 times', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetchStatuses(adapter, [0]); // always a network failure
 
     adapter.capture(makeEvent({ dedupeId: 'net' }));
@@ -1365,7 +1371,7 @@ describe('retry queue with backoff (S3)', () => {
 
   test('a persistent 5xx retries at most 10 times', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetchStatuses(adapter, [500]); // always a 5xx
 
     adapter.capture(makeEvent({ dedupeId: 'srv' }));
@@ -1381,7 +1387,7 @@ describe('retry queue with backoff (S3)', () => {
 
   test('the retry re-POSTs the SAME data:[] batch (idempotent uuid replayed unchanged)', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetchStatuses(adapter, [503, 200]);
 
     adapter.capture(makeEvent({ dedupeId: 'stable-uuid' }));
@@ -1396,7 +1402,7 @@ describe('retry queue with backoff (S3)', () => {
   });
 
   test('all retry state stays adapter-internal — no retry config or state on the neutral surface (bar A)', () => {
-    const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
 
     // The neutral AnalyticsAdapter surface carries NO retry vocabulary: no schedule,
     // no backoff, no retry-count member. Retry lives entirely inside the adapter.
@@ -1460,7 +1466,7 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
 
   test('the token bucket throttles capture/enqueue at the ported burst — the 101st event is dropped before the queue (fake timers)', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
 
     // Fire 150 events in a tight loop (no time advancing) — only the 100-token burst
@@ -1479,7 +1485,7 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
 
   test('the bucket refills at the ported 10/s rate — 1s of elapsed time re-admits exactly 10 events (fake timers)', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
 
     // Drain the burst.
@@ -1507,7 +1513,7 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
 
   test('a below-limit capture rate never throttles — steady traffic flows unimpeded', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
 
     // 5 events/s for 3s — well under 10/s and the burst — nothing is dropped.
@@ -1524,7 +1530,7 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
 
   test('a body-borne back-pressure signal blocks the affected batch for the cool-off window (fake timers)', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1 });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1, compression: false });
     // First POST's body signals back-pressure; every later response is clean.
     const calls = mockFetchBodies(adapter, [JSON.stringify({ quota_limited: ['events'] }), '']);
 
@@ -1554,7 +1560,7 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
 
   test('a clean response body arms NO cool-off — steady delivery continues (regression of the no-back-pressure path)', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1 });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1, compression: false });
     const calls = mockFetchBodies(adapter, ['']); // every response body is empty
 
     adapter.capture(makeEvent({ dedupeId: 'a' }));
@@ -1568,7 +1574,7 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
 
   test('the back-pressure signal is read off the response BODY, not a header — the neutral fetch response type is unchanged (bar A)', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1 });
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1, compression: false });
 
     // The response the adapter reads exposes exactly the shipped neutral SPI —
     // status + text() + json(), NO header accessor. The signal is body-borne.
@@ -1590,7 +1596,7 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
   });
 
   test('rate-limit state stays adapter-internal — no back-pressure vocabulary on the neutral surface (bar A)', () => {
-    const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
 
     // The neutral AnalyticsAdapter surface carries NO rate-limit / back-pressure
     // member: no quota field, no cool-off, no token-bucket accessor. It all lives
@@ -1600,5 +1606,238 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
     expect(surface.isCoolingOff).toBeUndefined();
     expect(surface.consumeToken).toBeUndefined();
     expect(surface.rateLimiter).toBeDefined(); // present, but a private impl field
+  });
+});
+
+// A hoisted set of spies the mocked ./gzip module delegates to, so individual tests
+// can script the native/sync/validation behaviour per case. gunzipSync round-trips
+// the shipped bytes back to the original JSON to prove they are real gzip.
+const gzipMock = vi.hoisted(() => ({
+  isGzipSupported: vi.fn<() => boolean>(),
+  gzipCompress: vi.fn<(input: string) => Promise<Uint8Array | null>>(),
+  gzipSyncFallback: vi.fn<(input: string) => Uint8Array>(),
+}));
+
+vi.mock('./gzip', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./gzip')>();
+  return {
+    ...actual,
+    isGzipSupported: () => gzipMock.isGzipSupported(),
+    gzipCompress: (input: string) => gzipMock.gzipCompress(input),
+    gzipSyncFallback: (input: string) => gzipMock.gzipSyncFallback(input),
+  };
+});
+
+describe('gzip compression (S5)', () => {
+  const INGEST = 'https://analytics.example.com';
+  const GZIP_MAGIC = [0x1f, 0x8b];
+
+  // The real de-branded primitives — used to produce genuine gzip bytes and to
+  // round-trip them back, independent of the per-test spies on the module.
+  let realGzip: typeof import('./gzip');
+  let gunzipSync: typeof import('fflate').gunzipSync;
+  let strFromU8: typeof import('fflate').strFromU8;
+
+  beforeAll(async () => {
+    realGzip = await vi.importActual<typeof import('./gzip')>('./gzip');
+    ({ gunzipSync, strFromU8 } = await import('fflate'));
+  });
+
+  beforeEach(() => {
+    // Reset call history between cases (the shared config does not auto-clear), then
+    // re-apply the default: native supported and producing valid gzip bytes. jsdom's
+    // Response/Blob chain can't actually drive the real native CompressionStream path
+    // (it returns null there), so the default native mock returns REAL gzip bytes — via
+    // the working sync compressor — to stand in for a successful native compression.
+    // Individual tests override these before capturing.
+    vi.clearAllMocks();
+    gzipMock.isGzipSupported.mockReturnValue(true);
+    gzipMock.gzipCompress.mockImplementation(async (input) => realGzip.gzipSyncFallback(input));
+    gzipMock.gzipSyncFallback.mockImplementation((input) => realGzip.gzipSyncFallback(input));
+  });
+
+  afterEach(() => {
+    // Uninstall the global-fetch spy so the compressed-path stub never leaks past S5.
+    vi.restoreAllMocks();
+  });
+
+  // Record the binary POST the adapter makes below the neutral SPI (the compressed
+  // path bypasses this.fetch and goes straight to the DOM fetch). The gzip body rides
+  // as an ArrayBuffer with the [WIRE] Content-Type in the headers.
+  type BinaryCall = { url: string; body: ArrayBuffer; contentType: string | undefined };
+  function spyDomFetch(): BinaryCall[] {
+    const calls: BinaryCall[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        calls.push({ url: String(input), body: init?.body as ArrayBuffer, contentType: headers['Content-Type'] });
+        return { status: 200, text: async () => '', json: async () => ({}) } as unknown as Response;
+      }
+    );
+    return calls;
+  }
+
+  // The uncompressed string path still rides the neutral fetch() SPI — spy it to prove
+  // the fallback / toggle-off cases deliver a JSON string, not binary.
+  type StringCall = { url: string; options: NeutralFetchOptions };
+  function spyNeutralFetch(adapter: BrowserAdapter): StringCall[] {
+    const calls: StringCall[] = [];
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+    return calls;
+  }
+
+  function bodyBytes(call: BinaryCall): Uint8Array {
+    return new Uint8Array(call.body);
+  }
+
+  test('the batch body is gzipped via the native CompressionStream path when it succeeds — sync fallback not reached', async () => {
+    // native (mocked to a successful compression) yields valid gzip bytes.
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const domCalls = spyDomFetch();
+
+    adapter.capture(makeEvent({ dedupeId: 'gz-native' }));
+    await adapter.flush();
+
+    // The native path ran and its bytes were shipped; the sync fallback was NOT reached.
+    expect(gzipMock.gzipCompress).toHaveBeenCalledTimes(1);
+    expect(gzipMock.gzipSyncFallback).not.toHaveBeenCalled();
+    // Exactly one compressed POST fired below the neutral SPI.
+    expect(domCalls).toHaveLength(1);
+
+    const bytes = bodyBytes(domCalls[0]);
+    // Real gzip framing, and it round-trips back to the JSON envelope carrying the uuid.
+    expect([bytes[0], bytes[1]]).toEqual(GZIP_MAGIC);
+    const json = strFromU8(gunzipSync(bytes));
+    expect(JSON.parse(json).data[0].uuid).toBe('gz-native');
+  });
+
+  test('the gzipped POST sets Content-Type text/plain and the [WIRE] compression/ver/_ query params', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const domCalls = spyDomFetch();
+
+    adapter.capture(makeEvent({ dedupeId: 'gz-headers' }));
+    await adapter.flush();
+
+    expect(domCalls[0].contentType).toBe('text/plain');
+    const url = new URL(domCalls[0].url);
+    expect(url.searchParams.get('compression')).toBe('gzip-js');
+    expect(url.searchParams.get('ver')).toBe('0.0.0');
+    expect(url.searchParams.has('_')).toBe(true);
+    // The base path is preserved; only [WIRE] params were appended.
+    expect(url.origin + url.pathname).toBe('https://analytics.example.com/batch/');
+  });
+
+  test('when the native compression yields nothing, the fflate sync fallback compresses the body', async () => {
+    // Native returned null (unsupported at send time or a swallowed failure) — the
+    // sync fflate fallback must produce the bytes rather than shipping uncompressed.
+    gzipMock.gzipCompress.mockResolvedValue(null);
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const domCalls = spyDomFetch();
+
+    adapter.capture(makeEvent({ dedupeId: 'gz-fflate' }));
+    await adapter.flush();
+
+    // Native yielded null → the sync fflate fallback produced the bytes.
+    expect(gzipMock.gzipCompress).toHaveBeenCalledTimes(1);
+    expect(gzipMock.gzipSyncFallback).toHaveBeenCalledTimes(1);
+    expect(domCalls).toHaveLength(1);
+
+    const bytes = bodyBytes(domCalls[0]);
+    expect([bytes[0], bytes[1]]).toEqual(GZIP_MAGIC);
+    expect(JSON.parse(strFromU8(gunzipSync(bytes))).data[0].uuid).toBe('gz-fflate');
+  });
+
+  test('output validation rejecting the native result falls back to the fflate sync path (not corrupt bytes)', async () => {
+    // Model a native path whose output failed validation: gzipCompress swallows it and
+    // returns null, exactly as the real validateNativeGzip → catch path does.
+    gzipMock.gzipCompress.mockResolvedValue(null);
+    const syncSpy = gzipMock.gzipSyncFallback.mockImplementation((input) =>
+      realGzip.gzipSyncFallback(input)
+    );
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const domCalls = spyDomFetch();
+
+    adapter.capture(makeEvent({ dedupeId: 'gz-validate' }));
+    await adapter.flush();
+
+    expect(syncSpy).toHaveBeenCalledTimes(1);
+    const bytes = bodyBytes(domCalls[0]);
+    // Still valid gzip (the fallback), never corrupt bytes.
+    expect([bytes[0], bytes[1]]).toEqual(GZIP_MAGIC);
+    expect(JSON.parse(strFromU8(gunzipSync(bytes))).data[0].uuid).toBe('gz-validate');
+  });
+
+  test('when BOTH native and sync produce non-gzip bytes, delivery falls back to the uncompressed JSON string path', async () => {
+    // Both compression paths return garbage that fails the isGzipData guard — the
+    // adapter must ship plain JSON via the neutral SPI rather than corrupt bytes.
+    gzipMock.gzipCompress.mockResolvedValue(new Uint8Array([0x00, 0x01, 0x02]));
+    gzipMock.gzipSyncFallback.mockReturnValue(new Uint8Array([0x00, 0x01, 0x02]));
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const stringCalls = spyNeutralFetch(adapter);
+    const domCalls = spyDomFetch();
+
+    adapter.capture(makeEvent({ dedupeId: 'gz-bad-both' }));
+    await adapter.flush();
+
+    // No binary POST — the uncompressed JSON string went through the neutral SPI.
+    expect(domCalls).toHaveLength(0);
+    expect(stringCalls).toHaveLength(1);
+    expect(stringCalls[0].options.headers['Content-Type']).toBe('application/json');
+    expect(stringCalls[0].url).toBe('https://analytics.example.com/batch/');
+    const data = (JSON.parse(stringCalls[0].options.body as string) as { data: { uuid: string }[] })
+      .data;
+    expect(data[0].uuid).toBe('gz-bad-both');
+  });
+
+  test('the compression toggle off restores S2 uncompressed JSON POST via the neutral fetch() SPI', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const stringCalls = spyNeutralFetch(adapter);
+    const domCalls = spyDomFetch();
+
+    adapter.capture(makeEvent({ dedupeId: 'toggle-off' }));
+    await adapter.flush();
+
+    // Compression never ran; the uncompressed S2 path fired unchanged.
+    expect(gzipMock.gzipCompress).not.toHaveBeenCalled();
+    expect(gzipMock.gzipSyncFallback).not.toHaveBeenCalled();
+    expect(domCalls).toHaveLength(0);
+    expect(stringCalls).toHaveLength(1);
+    expect(stringCalls[0].options.method).toBe('POST');
+    expect(stringCalls[0].options.headers['Content-Type']).toBe('application/json');
+    // No [WIRE] compression params on the uncompressed path.
+    expect(stringCalls[0].url).toBe('https://analytics.example.com/batch/');
+    expect(JSON.parse(stringCalls[0].options.body as string).data[0].uuid).toBe('toggle-off');
+  });
+
+  test('compression resolves OFF when the native primitive is absent (default-on only where supported)', async () => {
+    gzipMock.isGzipSupported.mockReturnValue(false);
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const stringCalls = spyNeutralFetch(adapter);
+    const domCalls = spyDomFetch();
+
+    adapter.capture(makeEvent({ dedupeId: 'no-primitive' }));
+    await adapter.flush();
+
+    // No native support → no compression at all → the plain S2 string path.
+    expect(gzipMock.gzipCompress).not.toHaveBeenCalled();
+    expect(domCalls).toHaveLength(0);
+    expect(stringCalls).toHaveLength(1);
+    expect(stringCalls[0].options.headers['Content-Type']).toBe('application/json');
+  });
+
+  test('the neutral surface carries NO compression wire vocabulary — the toggle is a plain boolean (bar A)', () => {
+    const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+
+    // No wire value / Content-Type / query-param member leaks onto the neutral surface.
+    const surface = adapter as unknown as Record<string, unknown>;
+    expect(surface.compression).toBeUndefined();
+    expect(surface['gzip-js']).toBeUndefined();
+    expect(surface.gzipCompress).toBeUndefined();
+    // The neutral config field is a plain boolean, not a vendor value.
+    const config: AnalyticsConfig = { compression: true };
+    expect(typeof config.compression).toBe('boolean');
   });
 });
