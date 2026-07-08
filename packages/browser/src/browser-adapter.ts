@@ -1,13 +1,14 @@
-import type {
-  AnalyticsAdapter,
-  ConsentState,
-  NeutralEvent,
-  NeutralProperties,
-  NeutralTraits,
-  NeutralFetchOptions,
-  NeutralFetchResponse,
-  RegisterOptions,
-  ResetOptions,
+import {
+  RESERVED_PAGE_EVENT,
+  type AnalyticsAdapter,
+  type ConsentState,
+  type NeutralEvent,
+  type NeutralProperties,
+  type NeutralTraits,
+  type NeutralFetchOptions,
+  type NeutralFetchResponse,
+  type RegisterOptions,
+  type ResetOptions,
 } from 'analytics-kit';
 import {
   buildPropsBackend,
@@ -49,6 +50,16 @@ import { beaconSend, hasFetch, postViaXhr, KEEPALIVE_THRESHOLD_BYTES } from './t
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
 
+// The current path, read defensively so the adapter stays safe in a non-DOM
+// (SSR/test) context — mirrors the navigator guard in isBot(). Empty string when
+// there is no location.
+function currentPathname(): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  return window.location?.pathname ?? '';
+}
+
 // Rapid writes are coalesced into one backend write; the in-memory props stay
 // current synchronously, and pending writes flush on unload.
 const SAVE_DEBOUNCE_MS = 250;
@@ -60,6 +71,16 @@ interface EncodedBatch {
   body: string | Uint8Array;
   contentType: string;
   compressed: boolean;
+}
+
+// The in-memory current-pageview record (neutral keys — no $-prefix). Minted when a
+// `page` event flows through capture() so E6-S2 can compute now − timestamp for a
+// pageleave duration; cleared on session rotation to start a fresh lineage.
+// Adapter-internal — never reaches the neutral surface.
+interface CurrentPageview {
+  timestamp: number;
+  pageViewId: string;
+  pathname: string;
 }
 
 export interface BrowserAdapterOptions {
@@ -145,6 +166,15 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // One-shot latch: a real page unload fires more than one lifecycle event, so the
   // beacon drain runs at most once — the second event is a no-op, not a beacon storm.
   private unloadDrained = false;
+  // The current-pageview record, set when a `page` event flows through capture()
+  // and read by E6-S2 at unload to compute the pageleave duration. undefined before
+  // the first page event and after a session rotation clears it.
+  private currentPageview: CurrentPageview | undefined;
+  // The last session id observed on a captured event. Adapter-side rotation detector:
+  // a CHANGED id (not the first undefined→id adoption) means the session rotated, so
+  // the pageview record is cleared. Shared substrate — E6-S4 reuses the same
+  // comparison to reset its per-session entry props. Adapter-internal.
+  private lastSeenSessionId: string | undefined;
 
   constructor(options: BrowserAdapterOptions) {
     this.compressionEnabled = options.compression !== false && isGzipSupported();
@@ -356,7 +386,40 @@ export class BrowserAdapter implements AnalyticsAdapter {
 
   /** @internal Public only so pass-through tests can pin the enrichment pipeline; not stable adapter API. */
   runCapturePipeline(event: NeutralEvent): NeutralEvent {
-    return this.mergeSuperProperties(this.stampSessionId(event));
+    const stamped = this.stampSessionId(event);
+    this.trackPageview(stamped);
+    return this.mergeSuperProperties(stamped);
+  }
+
+  // Maintain the current-pageview record off the session-stamped event. Rotation is
+  // detected first (a changed session id clears the record); then a `page` event mints
+  // a fresh record. Ordering matters: rotate-then-set, so a `page` that arrives on the
+  // first event of a new session starts the new lineage rather than being wiped.
+  private trackPageview(event: NeutralEvent): void {
+    this.detectSessionRotation(event.sessionId);
+    if (event.event !== RESERVED_PAGE_EVENT) {
+      return;
+    }
+    this.currentPageview = {
+      timestamp: event.timestamp?.getTime() ?? Date.now(),
+      pageViewId: generateUuidV7(),
+      pathname: currentPathname(),
+    };
+  }
+
+  // Adapter-side session-rotation detector (no onSessionId observer on the pure
+  // SessionIdManager). Compare the freshly-stamped id against the last one seen: a
+  // CHANGE is a rotation (idle/max-length expiry or reset) → clear the pageview
+  // record; the first undefined→id transition is adoption, not a rotation.
+  // E6-S4 reuses this comparison for its per-session entry-prop reset.
+  private detectSessionRotation(sessionId: string | undefined): void {
+    if (
+      this.lastSeenSessionId !== undefined &&
+      sessionId !== this.lastSeenSessionId
+    ) {
+      this.currentPageview = undefined;
+    }
+    this.lastSeenSessionId = sessionId;
   }
 
   /** @internal The adapter's wire-mapping seam: lay a pipeline-processed NeutralEvent
@@ -366,6 +429,14 @@ export class BrowserAdapter implements AnalyticsAdapter {
    * internal — the WireEvent shape never reaches the neutral surface. */
   toWireEvent(event: NeutralEvent): WireEvent {
     return mapEventToWire(event);
+  }
+
+  /** @internal The current-pageview record (undefined before the first `page` event
+   * and after a session rotation). E6-S2 reads this at unload to compute the pageleave
+   * duration; a unit test reads it to pin the record. Adapter-internal — never on the
+   * neutral surface. */
+  currentPageviewRecord(): CurrentPageview | undefined {
+    return this.currentPageview;
   }
 
   private stampSessionId(event: NeutralEvent): NeutralEvent {

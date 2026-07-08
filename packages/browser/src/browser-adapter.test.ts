@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+import { RESERVED_PAGE_EVENT } from 'analytics-kit';
 import type {
   AnalyticsAdapter,
   AnalyticsConfig,
@@ -2513,6 +2514,178 @@ describe('offline queue persistence — survives a reload (S9, NEW WORK)', () =>
     const contract: Array<keyof AnalyticsAdapter> = ['capture', 'identify', 'flush', 'shutdown', 'fetch'];
     for (const member of contract) {
       expect(typeof adapter[member]).toBe('function');
+    }
+  });
+});
+
+describe('pageview-state substrate (E6-S1)', () => {
+  const IDLE_MS = 30 * 60 * 1000;
+  const UUID_V7_RE = UUID_V7;
+
+  function pageEvent(overrides: Partial<NeutralEvent> = {}): NeutralEvent {
+    return makeEvent({ event: RESERVED_PAGE_EVENT, ...overrides });
+  }
+
+  test('a `page` event through the pipeline sets the current-pageview record (timestamp, fresh pageViewId, pathname)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const at = new Date('2026-07-08T09:00:00.000Z');
+
+    adapter.runCapturePipeline(pageEvent({ timestamp: at }));
+
+    const record = adapter.currentPageviewRecord();
+    expect(record).toBeDefined();
+    expect(record!.timestamp).toBe(at.getTime());
+    expect(record!.pageViewId).toMatch(UUID_V7_RE);
+    // jsdom default location is http://localhost:3000/ ⇒ pathname '/'.
+    expect(record!.pathname).toBe('/');
+  });
+
+  test('the record timestamp falls back to now() when the page event carries no timestamp', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-08T10:00:00.000Z'));
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    adapter.runCapturePipeline(pageEvent({ timestamp: undefined }));
+
+    expect(adapter.currentPageviewRecord()!.timestamp).toBe(Date.now());
+  });
+
+  test('no record exists before any `page` event flows', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    adapter.runCapturePipeline(makeEvent({ event: 'add_to_cart' }));
+
+    expect(adapter.currentPageviewRecord()).toBeUndefined();
+  });
+
+  test('a non-`page` track after a `page` does NOT overwrite the record', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const pageAt = new Date('2026-07-08T09:00:00.000Z');
+
+    adapter.runCapturePipeline(pageEvent({ timestamp: pageAt }));
+    const first = adapter.currentPageviewRecord();
+
+    adapter.runCapturePipeline(makeEvent({ event: 'clicked', timestamp: new Date(pageAt.getTime() + 5_000) }));
+    const after = adapter.currentPageviewRecord();
+
+    expect(after).toEqual(first);
+    expect(after!.timestamp).toBe(pageAt.getTime());
+  });
+
+  test('a second `page` mints a FRESH pageViewId (new lineage on the same session)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T09:00:00.000Z').getTime();
+
+    adapter.runCapturePipeline(pageEvent({ timestamp: new Date(base) }));
+    const firstId = adapter.currentPageviewRecord()!.pageViewId;
+
+    // Within the idle window: same session, but a new pageview record with a new id.
+    adapter.runCapturePipeline(pageEvent({ timestamp: new Date(base + 60_000) }));
+    const secondId = adapter.currentPageviewRecord()!.pageViewId;
+
+    expect(secondId).toMatch(UUID_V7_RE);
+    expect(secondId).not.toBe(firstId);
+  });
+
+  test('the pageview record reads the live pathname at page() time', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    window.history.pushState({}, '', '/checkout/step-2');
+
+    try {
+      adapter.runCapturePipeline(pageEvent());
+      expect(adapter.currentPageviewRecord()!.pathname).toBe('/checkout/step-2');
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
+  });
+
+  test('session rotation (idle expiry) clears the pageview record; the next `page` starts a fresh lineage', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    // Page event on session A.
+    const firstSession = adapter.runCapturePipeline(pageEvent({ timestamp: new Date(base) })).sessionId;
+    const firstRecord = adapter.currentPageviewRecord();
+    expect(firstRecord).toBeDefined();
+
+    // A non-page event past the idle window rotates the session → record cleared.
+    const rotated = adapter.runCapturePipeline(makeEvent({ event: 'ping', timestamp: new Date(base + IDLE_MS + 1) }));
+    expect(rotated.sessionId).not.toBe(firstSession);
+    expect(adapter.currentPageviewRecord()).toBeUndefined();
+
+    // The next page on the new session starts a fresh lineage.
+    adapter.runCapturePipeline(pageEvent({ timestamp: new Date(base + IDLE_MS + 2) }));
+    const freshRecord = adapter.currentPageviewRecord();
+    expect(freshRecord).toBeDefined();
+    expect(freshRecord!.pageViewId).not.toBe(firstRecord!.pageViewId);
+  });
+
+  test('a `page` event that rotates the session starts the new lineage (rotate-then-set order — not wiped)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    const firstSession = adapter.runCapturePipeline(pageEvent({ timestamp: new Date(base) })).sessionId;
+    const firstId = adapter.currentPageviewRecord()!.pageViewId;
+
+    // The FIRST event of the new session is itself a page event: rotation clears, then
+    // this page sets the new record — the new lineage survives, not wiped by its own rotation.
+    const rotated = adapter.runCapturePipeline(pageEvent({ timestamp: new Date(base + IDLE_MS + 1) }));
+    expect(rotated.sessionId).not.toBe(firstSession);
+    const record = adapter.currentPageviewRecord();
+    expect(record).toBeDefined();
+    expect(record!.pageViewId).not.toBe(firstId);
+    expect(record!.timestamp).toBe(base + IDLE_MS + 1);
+  });
+
+  test('the FIRST undefined→id transition is adoption, NOT a rotation — the record set on that first page survives', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    // The very first captured event mints the session id (undefined → id). That
+    // transition must not be treated as a rotation, so a page record set on it survives.
+    adapter.runCapturePipeline(pageEvent({ timestamp: new Date('2026-07-08T00:00:00.000Z') }));
+
+    expect(adapter.currentPageviewRecord()).toBeDefined();
+  });
+
+  test('reset() rotates the session so the next page starts a fresh lineage (clear flows through the same comparison)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    const firstSession = adapter.runCapturePipeline(pageEvent({ timestamp: new Date(base) })).sessionId;
+    const firstId = adapter.currentPageviewRecord()!.pageViewId;
+
+    // reset() clears the session id; the next captured event mints a new one, which the
+    // adapter-side comparison sees as a change ⇒ the stale pageview record is cleared.
+    adapter.reset();
+    const afterReset = adapter.runCapturePipeline(makeEvent({ event: 'ping', timestamp: new Date(base + 1_000) }));
+    expect(afterReset.sessionId).not.toBe(firstSession);
+    expect(adapter.currentPageviewRecord()).toBeUndefined();
+
+    adapter.runCapturePipeline(pageEvent({ timestamp: new Date(base + 2_000) }));
+    expect(adapter.currentPageviewRecord()!.pageViewId).not.toBe(firstId);
+  });
+
+  test('the pageview record keys stay neutral — no $-prefixed key (bar A)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    adapter.runCapturePipeline(pageEvent());
+
+    for (const key of Object.keys(adapter.currentPageviewRecord()!)) {
+      expect(key).not.toContain('$');
+    }
+    expect(adapter.currentPageviewRecord()).not.toHaveProperty('$pageview_id');
+  });
+
+  test('the pageview record never leaks onto the captured event properties (adapter-internal)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    const result = adapter.runCapturePipeline(pageEvent({ properties: { ref: 'nav' } }));
+
+    // The event carries only what the caller supplied; pageViewId/pathname stay internal.
+    expect(result.properties ?? {}).not.toHaveProperty('pageViewId');
+    expect(result.properties ?? {}).not.toHaveProperty('pathname');
+    for (const key of Object.keys(result.properties ?? {})) {
+      expect(key).not.toContain('$');
     }
   });
 });

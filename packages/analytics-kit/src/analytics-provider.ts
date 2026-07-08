@@ -22,7 +22,7 @@ export interface AnalyticsProvider<TX extends TaxonomyShape = DefaultTaxonomySha
     ...args: PropsParam<TX['events'][K]>
   ): void;
   identify(id: string, traits?: Partial<TX['traits']>, traitsOnce?: Partial<TX['traits']>): void;
-  page(name?: string, props?: NeutralProperties): void;
+  page(name?: string, props?: TX['page']): void;
   group<G extends keyof TX['groups'] & string>(
     type: G,
     key: string,

@@ -48,3 +48,17 @@ api_impact: additive
 - Pageviews are **manual/router-driven** in R1 (no history-change auto-capture); this is locked and matches the E9 React-provider stance. — architect (2026-07-07): §E9 ("pageview capture is manual/router-driven").
 
 ## Shipped
+- > Reviewer flag (2026-07-08, **BLOCKING forward-req on E6-S2**): the pipeline recognizes a pageview via `event.event === RESERVED_PAGE_EVENT` (`'page'`), but the E2 facade maps `page('/dashboard')`→`buildEvent('/dashboard')` so `event.event === '/dashboard'` — **only a NAMELESS `page()` sets the record; a NAMED `page('/dashboard')` does not.** Real routers pass a path/name, so S2's duration + all enrichment silently no-op for the common case. Root cause traces to the E2-S3 forward-note (`NeutralEvent` has no page discriminator). **S2 must introduce a NEUTRAL page-discriminator** — the facade stamps a reserved neutral marker on `NeutralEvent` for BOTH named and nameless `page()`, and the pipeline keys off that marker (NOT `event.event === 'page'`). Never a `$pageview` token. Architect consult required (touches the seam facade + `NeutralEvent`). Not an S1 ship-blocker (S1 met its literal scope); a named blocker on S2 before it builds.
+- > Reviewer suggestion (2026-07-08): add a browser-adapter test documenting a named `page('/x')` does NOT currently set the record — makes the wrinkle visible in the suite + gives S2 a red pin to flip.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files changed (seam):** `index.ts` (export `RESERVED_PAGE_EVENT`), `analytics-provider.ts` (`page(name?, props?: TX['page'])` taxonomy-typed; runtime unchanged; pin stays 15)
+- **Files changed (browser):** `browser-adapter.ts` (adapter-internal `CurrentPageview {timestamp,pageViewId,pathname}` minted at page() time via `generateUuidV7`; `lastSeenSessionId` + `detectSessionRotation()`/`trackPageview()` in the pipeline; `currentPathname()` DOM-safe helper; `@internal currentPageviewRecord()` accessor)
+- **New public API:** none — pageview state adapter-internal; `page()` typing tightened (bar A pin stays 15); `RESERVED_PAGE_EVENT` now barrel-exported
+- **Tests added:** browser +14 (page-sets-record/non-page-doesn't-overwrite/fresh-id/rotation-clears/first-transition-adoption/reset-rotation/neutral-keys/no-leak); seam +6 (taxonomy page() typing 5, index barrel-export 1) → seam 133, browser 414
+- **Commit:** `E6-S1-pageview-state-page-typing — Pageview state + typed page() substrate` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (the BLOCKING S2 page-discriminator forward-req + a named-page test) → see Technical notes
+- **Cross-story seams exposed:** **S2** reads the record via `@internal currentPageviewRecord()` for `now − record.timestamp` (ms) duration at unload — BUT must FIRST resolve the neutral page-discriminator (above) or the record is rarely minted. **S4** reuses the SAME `lastSeenSessionId` + `detectSessionRotation()` branch (one adapter field, no observer) for its per-session entry-prop reset; first `undefined→id` is adoption not rotation (S4 gets correct first-event semantics free). Named `page('home')` currently arrives as event name `'home'` (E2 facade `name ?? RESERVED_PAGE_EVENT`).

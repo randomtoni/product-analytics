@@ -109,6 +109,52 @@ test('ShapeOf resolves prop type-tags to their runtime types', () => {
   expectTypeOf<ShapeOf<Decl>['events']['e']>().toEqualTypeOf<{ a: string; b: number }>();
 });
 
+test('ShapeOf.page resolves a declared page shape and defaults to NeutralProperties (E6-S1)', () => {
+  type Declared = { events: { e: Record<string, never> }; page: { path: 'string'; referrer: 'string' } };
+  expectTypeOf<ShapeOf<Declared>['page']>().toEqualTypeOf<{ path: string; referrer: string }>();
+
+  type NoPage = { events: { e: Record<string, never> } };
+  expectTypeOf<ShapeOf<NoPage>['page']>().toEqualTypeOf<Record<string, unknown>>();
+});
+
+test('page() type-checks a taxonomy-declared page shape and rejects wrong prop types (E6-S1)', () => {
+  const analytics = createAnalytics({
+    taxonomy: defineTaxonomy({
+      events: { e: {} },
+      page: { path: 'string', referrer: 'string' },
+    }),
+  });
+
+  analytics.page('home', { path: '/home', referrer: '/landing' });
+  expectTypeOf(analytics.page).parameter(1).toEqualTypeOf<
+    { path: string; referrer: string } | undefined
+  >();
+
+  // @ts-expect-error path must be a string, not a number
+  analytics.page('home', { path: 3 });
+  // @ts-expect-error 'title' is not a declared page prop
+  analytics.page('home', { title: 'x' });
+});
+
+test('page() defaults to NeutralProperties (any props) when the taxonomy declares no page shape (E6-S1)', () => {
+  const analytics = createAnalytics({
+    taxonomy: defineTaxonomy({ events: { e: {} } }),
+  });
+
+  analytics.page();
+  analytics.page('home');
+  analytics.page('home', { anything: 'goes', count: 3 });
+  expectTypeOf(analytics.page).parameter(1).toEqualTypeOf<Record<string, unknown> | undefined>();
+});
+
+test('bar B: an untyped createAnalytics({}) keeps page(name?, props?) loose (E6-S1)', () => {
+  const analytics = createAnalytics({});
+
+  analytics.page();
+  analytics.page('home', { any: 'prop' });
+  expectTypeOf(analytics.page).parameter(1).toEqualTypeOf<Record<string, unknown> | undefined>();
+});
+
 test('PropType and PropDecl are the declaration vocabulary', () => {
   expectTypeOf<PropType>().toEqualTypeOf<'string' | 'number' | 'boolean' | 'date'>();
   expectTypeOf<PropDecl>().toEqualTypeOf<Record<string, PropType>>();
