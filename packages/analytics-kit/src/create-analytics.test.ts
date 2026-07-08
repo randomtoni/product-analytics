@@ -164,7 +164,7 @@ test('the internal facade class is never exposed through the public barrel', () 
   expect('AnalyticsProviderImpl' in pkg).toBe(false);
 });
 
-test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E3), the persistence mode (E4), the consent default (E4-S3), the cross-subdomain cookie fields (E4-S4), the session-expiry timeouts (E4-S8), the ingest host/path (E5-S1), the bot-filter switch + denylist extension (E5-S7), the batch flush interval/size (E5-S2), and the compression toggle (E5-S5)', () => {
+test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E3), the persistence mode (E4), the consent default (E4-S3), the cross-subdomain cookie fields (E4-S4), the session-expiry timeouts (E4-S8), the ingest host/path (E5-S1), the bot-filter switch + denylist extension (E5-S7), the batch flush interval/size (E5-S2), the compression toggle (E5-S5), and the per-module enrichment opt-out object (E6-S5)', () => {
   expectTypeOf<AnalyticsConfig>().toEqualTypeOf<{
     key?: string;
     taxonomy?: Taxonomy<TaxonomyDecl>;
@@ -183,6 +183,13 @@ test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E
     flushInterval?: number;
     flushAt?: number;
     compression?: boolean;
+    enrichment?: {
+      page?: boolean;
+      device?: boolean;
+      referrer?: boolean;
+      utm?: boolean;
+      pageleave?: boolean;
+    };
   }>();
   const empty: AnalyticsConfig = {};
   expect(empty).toEqual({});

@@ -7,6 +7,14 @@ import {
 import { NoopAdapter } from './noop-adapter';
 import type { ShapeOf, Taxonomy, TaxonomyDecl } from './taxonomy';
 
+export interface EnrichmentConfig {
+  page?: boolean;
+  device?: boolean;
+  referrer?: boolean;
+  utm?: boolean;
+  pageleave?: boolean;
+}
+
 export interface AnalyticsConfig {
   key?: string;
   taxonomy?: Taxonomy<TaxonomyDecl>;
@@ -25,6 +33,7 @@ export interface AnalyticsConfig {
   flushInterval?: number;
   flushAt?: number;
   compression?: boolean;
+  enrichment?: EnrichmentConfig;
 }
 
 interface AnalyticsDeps {

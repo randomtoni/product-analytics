@@ -2,6 +2,7 @@ import {
   RESERVED_PAGELEAVE_EVENT,
   type AnalyticsAdapter,
   type ConsentState,
+  type EnrichmentConfig,
   type NeutralEvent,
   type NeutralProperties,
   type NeutralTraits,
@@ -157,9 +158,15 @@ export interface BrowserAdapterOptions {
   // Mint a pageleave at unload (time-on-page), riding the beacon drain. Defaults ON
   // when pageview capture is in use (posthog's `capture_pageleave: 'if_capture_pageview'`
   // default, de-branded) — R1 pageviews are always available, so on unless explicitly
-  // false. A plain boolean here; E6-S5 rewires this into the structured `enrichment`
-  // object.
+  // false. Legacy internal fallback: `enrichment.pageleave` is now the authoritative
+  // config-driven toggle (threaded through resolveAdapter); this plain boolean is read
+  // only when `enrichment.pageleave` is absent.
   capturePageleave?: boolean;
+  // Per-module enrichment opt-out (E6-S5). The single structured object the seam
+  // `AnalyticsConfig.enrichment` threads through here. Each toggle defaults ON (absent
+  // ⇒ enriched); setting one false disables ONLY that module. Gates S3's page/device/
+  // referrer context groups, S4's utm campaign parse, and S2's pageleave independently.
+  enrichment?: EnrichmentConfig;
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
@@ -219,14 +226,22 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // pipeline pass. ONE comparison serves both the pageview-record clear (E6-S1) and the
   // per-session entry-prop recapture (E6-S4). Adapter-internal.
   private lastSeenSessionId: string | undefined;
-  // Whether unload() mints a pageleave. Resolved once at construction: on unless the
-  // consumer explicitly disables it (posthog's if_capture_pageview default, de-branded —
-  // R1 pageview capture is always available). E6-S5 rewires this into `enrichment`.
+  // Whether unload() mints a pageleave. Resolved once at construction from the E6-S5
+  // structured `enrichment.pageleave` toggle (authoritative), falling back to the legacy
+  // `capturePageleave` boolean when absent; on unless explicitly disabled (posthog's
+  // if_capture_pageview default, de-branded — R1 pageview capture is always available).
   private readonly capturePageleaveEnabled: boolean;
+  // The per-module enrichment opt-out set (E6-S5), stored so each context/attribution
+  // group reads its toggle per event. Absent object or absent key ⇒ that module is ON
+  // (opt-out semantics). Only the page/device/referrer/utm gates read it live; pageleave
+  // is resolved once into capturePageleaveEnabled above.
+  private readonly enrichment: EnrichmentConfig;
 
   constructor(options: BrowserAdapterOptions) {
     this.compressionEnabled = options.compression !== false && isGzipSupported();
-    this.capturePageleaveEnabled = options.capturePageleave !== false;
+    this.enrichment = options.enrichment ?? {};
+    this.capturePageleaveEnabled =
+      (options.enrichment?.pageleave ?? options.capturePageleave) !== false;
     this.botFilterEnabled = options.botFilter !== false;
     this.blockedUserAgents = options.blockedUserAgents ?? [];
     this.rateLimiter = new RateLimiter({ interpretBackPressure: interpretBodyBackPressure });
@@ -458,10 +473,17 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // prop (or a super-prop already merged in) of the same key WINS — the spread order
   // (context first, incoming bag last) mirrors mergeSuperProperties.
   private enrichContext(event: NeutralEvent): NeutralEvent {
-    const context = buildContext({
-      libraryId: this.getLibraryId(),
-      libraryVersion: this.getLibraryVersion(),
-    });
+    const context = buildContext(
+      {
+        libraryId: this.getLibraryId(),
+        libraryVersion: this.getLibraryVersion(),
+      },
+      {
+        page: this.enrichment.page,
+        device: this.enrichment.device,
+        referrer: this.enrichment.referrer,
+      }
+    );
     return { ...event, properties: { ...context, ...event.properties } };
   }
 
@@ -544,8 +566,11 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // incoming bag last). The `initial_*` set-once props ride via the super-prop merge, not
   // here (they live in the store, written by writeInitialProps).
   private enrichAttribution(event: NeutralEvent): NeutralEvent {
+    // The `utm` toggle (E6-S5) gates ONLY the per-event campaign/click-id parse. The
+    // per-session `session_entry_*` re-emit is attribution, not one of S5's five toggles —
+    // it stays on.
     const attribution: NeutralProperties = {
-      ...parseCampaignParams(),
+      ...(this.enrichment.utm !== false ? parseCampaignParams() : {}),
       ...this.sessionEntryProps(),
     };
     if (Object.keys(attribution).length === 0) {

@@ -31,6 +31,7 @@ export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
         flushInterval: config.flushInterval,
         flushAt: config.flushAt,
         compression: config.compression,
+        enrichment: config.enrichment,
       });
 }
 

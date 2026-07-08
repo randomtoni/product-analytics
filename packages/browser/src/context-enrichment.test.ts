@@ -146,3 +146,63 @@ describe('buildContext — non-DOM degradation', () => {
     });
   });
 });
+
+describe('buildContext — E6-S5 per-group opt-out toggles', () => {
+  function stubNavigator(): void {
+    vi.stubGlobal('navigator', {
+      userAgent: CHROME_MAC,
+      vendor: '',
+      language: 'en-US',
+      maxTouchPoints: 0,
+    });
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
+  }
+
+  test('default (no toggles) enriches all three groups', () => {
+    stubNavigator();
+    const context = buildContext(LIB);
+    expect(context).toHaveProperty('current_url');
+    expect(context.browser).toBe('Chrome');
+    expect(context.referrer).toBe('https://ref.example.com/x');
+  });
+
+  test('page:false drops ONLY the page keys — device + referrer stay', () => {
+    stubNavigator();
+    const context = buildContext(LIB, { page: false });
+    expect(context).not.toHaveProperty('current_url');
+    expect(context).not.toHaveProperty('host');
+    expect(context).not.toHaveProperty('pathname');
+    expect(context.browser).toBe('Chrome');
+    expect(context.referrer).toBe('https://ref.example.com/x');
+    expect(context.lib).toBe('analytics-kit-browser');
+    expect(typeof context.timezone_offset).toBe('number');
+  });
+
+  test('device:false drops ONLY the device keys — page + referrer stay', () => {
+    stubNavigator();
+    const context = buildContext(LIB, { device: false });
+    expect(context).not.toHaveProperty('browser');
+    expect(context).not.toHaveProperty('device_type');
+    expect(context).not.toHaveProperty('screen_width');
+    expect(context).not.toHaveProperty('browser_language');
+    expect(context).toHaveProperty('current_url');
+    expect(context.referrer).toBe('https://ref.example.com/x');
+  });
+
+  test('referrer:false drops ONLY the referrer keys — page + device stay', () => {
+    stubNavigator();
+    const context = buildContext(LIB, { referrer: false });
+    expect(context).not.toHaveProperty('referrer');
+    expect(context).not.toHaveProperty('referring_domain');
+    expect(context).toHaveProperty('current_url');
+    expect(context.browser).toBe('Chrome');
+  });
+
+  test('an explicit true is treated the same as absent (opt-out semantics)', () => {
+    stubNavigator();
+    const context = buildContext(LIB, { page: true, device: true, referrer: true });
+    expect(context).toHaveProperty('current_url');
+    expect(context.browser).toBe('Chrome');
+    expect(context.referrer).toBe('https://ref.example.com/x');
+  });
+});

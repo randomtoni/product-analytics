@@ -7,6 +7,7 @@ import type {
   NeutralFetchOptions,
 } from 'analytics-kit';
 import { BrowserAdapter, type BrowserAdapterOptions } from './browser-adapter';
+import { resolveAdapter } from './create-analytics';
 import { containsInsertId } from './wire-scan.test-helper';
 import {
   ANONYMOUS_DISTINCT_ID_KEY,
@@ -3384,5 +3385,266 @@ describe('UTM/campaign + session-entry + initial attribution (E6-S4)', () => {
     expect(props.gclid).toBe('g1');
     expect(props.session_entry_url).toBe('http://localhost:3000/campaign?utm_source=news&gclid=g1');
     expect(props.initial_utm_source).toBe('news');
+  });
+});
+
+describe('per-module enrichment opt-out — structured `enrichment` object (E6-S5)', () => {
+  const INGEST = 'https://analytics.example.com';
+  const PAGELEAVE_WIRE = '$pageleave';
+
+  const liveAdapters: BrowserAdapter[] = [];
+  function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
+    const adapter = new BrowserAdapter(options);
+    liveAdapters.push(adapter);
+    return adapter;
+  }
+
+  function goTo(href: string): void {
+    window.history.pushState({}, '', href);
+  }
+
+  type BeaconCall = { url: string; body: string | Uint8Array; contentType: string };
+  const beaconCleanups: (() => void)[] = [];
+  function spyBeacon(): BeaconCall[] {
+    beaconMock.calls.length = 0;
+    beaconMock.returns = true;
+    const nav = navigator as unknown as { sendBeacon?: (url: string) => boolean };
+    const had = 'sendBeacon' in nav;
+    const prior = nav.sendBeacon;
+    nav.sendBeacon = () => true;
+    beaconCleanups.push(() => {
+      if (had) nav.sendBeacon = prior;
+      else delete nav.sendBeacon;
+    });
+    return beaconMock.calls;
+  }
+
+  function pageleaveEvents(beacons: BeaconCall[]): Record<string, unknown>[] {
+    const events: Record<string, unknown>[] = [];
+    for (const beacon of beacons) {
+      const text = typeof beacon.body === 'string' ? beacon.body : '';
+      if (!text) continue;
+      for (const e of (JSON.parse(text) as { data: Record<string, unknown>[] }).data) {
+        events.push(e);
+      }
+    }
+    return events.filter((e) => e.event === PAGELEAVE_WIRE);
+  }
+
+  function capturePage(adapter: BrowserAdapter, timestamp: Date): void {
+    adapter.capture(makeEvent({ event: RESERVED_PAGE_EVENT, isPageView: true, timestamp }));
+  }
+
+  // The page/device/referrer/utm context keys the pipeline stamps; asserted present/absent
+  // per toggle. A UTM-carrying href + a referrer are staged so every group has a value.
+  function enrichedProps(adapter: BrowserAdapter): Record<string, unknown> {
+    return adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+  }
+
+  afterEach(() => {
+    for (const adapter of liveAdapters.splice(0)) {
+      (adapter as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    }
+    for (const cleanup of beaconCleanups.splice(0)) cleanup();
+    beaconMock.calls.length = 0;
+    window.history.pushState({}, '', '/');
+    vi.restoreAllMocks();
+  });
+
+  // --- DEFAULT: all-on opt-out (no `enrichment` key) ---
+
+  test('default (no enrichment key) leaves ALL five modules on — page/device/referrer/utm keys present + pageleave fires', () => {
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    goTo('/landing?utm_source=news');
+    const beacons = spyBeacon();
+
+    const props = enrichedProps(adapter);
+    expect(props).toHaveProperty('current_url');
+    expect(props).toHaveProperty('browser');
+    expect(props.referrer).toBe('https://ref.example.com/x');
+    expect(props.utm_source).toBe('news');
+
+    capturePage(adapter, new Date());
+    adapter.unload();
+    expect(pageleaveEvents(beacons)).toHaveLength(1);
+  });
+
+  test('an EMPTY enrichment object is the same as absent — all modules stay on (opt-out semantics)', () => {
+    const adapter = makeAdapter({ key: freshKey(), enrichment: {} });
+    goTo('/?utm_source=news');
+    const props = enrichedProps(adapter);
+    expect(props).toHaveProperty('current_url');
+    expect(props).toHaveProperty('browser');
+    expect(props.utm_source).toBe('news');
+  });
+
+  // --- PER-MODULE INDEPENDENCE: one false disables ONLY that module ---
+
+  test('page:false drops ONLY the page keys — device/referrer/utm still present', () => {
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
+    const adapter = makeAdapter({ key: freshKey(), enrichment: { page: false } });
+    goTo('/landing?utm_source=news');
+
+    const props = enrichedProps(adapter);
+    expect(props).not.toHaveProperty('current_url');
+    expect(props).not.toHaveProperty('host');
+    expect(props).not.toHaveProperty('pathname');
+    // The other four modules are untouched.
+    expect(props).toHaveProperty('browser');
+    expect(props.referrer).toBe('https://ref.example.com/x');
+    expect(props.utm_source).toBe('news');
+  });
+
+  test('device:false drops ONLY the device keys — page/referrer/utm still present', () => {
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
+    const adapter = makeAdapter({ key: freshKey(), enrichment: { device: false } });
+    goTo('/landing?utm_source=news');
+
+    const props = enrichedProps(adapter);
+    expect(props).not.toHaveProperty('browser');
+    expect(props).not.toHaveProperty('device_type');
+    expect(props).not.toHaveProperty('screen_width');
+    expect(props).not.toHaveProperty('browser_language');
+    expect(props).toHaveProperty('current_url');
+    expect(props.referrer).toBe('https://ref.example.com/x');
+    expect(props.utm_source).toBe('news');
+  });
+
+  test('referrer:false drops ONLY the referrer keys — page/device/utm still present', () => {
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
+    const adapter = makeAdapter({ key: freshKey(), enrichment: { referrer: false } });
+    goTo('/landing?utm_source=news');
+
+    const props = enrichedProps(adapter);
+    expect(props).not.toHaveProperty('referrer');
+    expect(props).not.toHaveProperty('referring_domain');
+    expect(props).toHaveProperty('current_url');
+    expect(props).toHaveProperty('browser');
+    expect(props.utm_source).toBe('news');
+  });
+
+  test('utm:false drops ONLY the campaign keys — page/device/referrer context still present', () => {
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
+    const adapter = makeAdapter({ key: freshKey(), enrichment: { utm: false } });
+    goTo('/landing?utm_source=news&utm_medium=email&gclid=g1');
+
+    const props = enrichedProps(adapter);
+    expect(props).not.toHaveProperty('utm_source');
+    expect(props).not.toHaveProperty('utm_medium');
+    expect(props).not.toHaveProperty('gclid');
+    // Context is untouched.
+    expect(props).toHaveProperty('current_url');
+    expect(props).toHaveProperty('browser');
+    expect(props.referrer).toBe('https://ref.example.com/x');
+  });
+
+  test('utm:false does NOT disable the per-session session_entry_* attribution (not one of the five toggles)', () => {
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/');
+    const adapter = makeAdapter({ key: freshKey(), enrichment: { utm: false } });
+    goTo('/entry?utm_source=news');
+
+    const props = enrichedProps(adapter);
+    // The per-event utm parse is gated off, but session-entry (attribution, not a toggle)
+    // and the set-once initial props stay on.
+    expect(props).not.toHaveProperty('utm_source');
+    expect(props.session_entry_url).toBe('http://localhost:3000/entry?utm_source=news');
+    expect(props.initial_utm_source).toBe('news');
+  });
+
+  test('pageleave:false fires NO pageleave on unload — the other four modules still enrich', () => {
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
+    const adapter = makeAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      enrichment: { pageleave: false },
+    });
+    goTo('/landing?utm_source=news');
+    const beacons = spyBeacon();
+
+    // Context/utm still enrich a normal event.
+    const props = enrichedProps(adapter);
+    expect(props).toHaveProperty('current_url');
+    expect(props).toHaveProperty('browser');
+    expect(props.utm_source).toBe('news');
+
+    // But no pageleave is minted at unload.
+    capturePage(adapter, new Date());
+    adapter.unload();
+    expect(pageleaveEvents(beacons)).toHaveLength(0);
+  });
+
+  // --- REGRESSION: the legacy `capturePageleave` boolean still works (S2 contract) ---
+
+  test('the legacy capturePageleave:false boolean still disables pageleave when enrichment.pageleave is absent', () => {
+    const adapter = makeAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      capturePageleave: false,
+    });
+    const beacons = spyBeacon();
+    capturePage(adapter, new Date());
+    adapter.unload();
+    expect(pageleaveEvents(beacons)).toHaveLength(0);
+  });
+
+  test('enrichment.pageleave is authoritative over the legacy capturePageleave boolean when both are set', () => {
+    // enrichment.pageleave:true overrides capturePageleave:false — the structured object wins.
+    const adapter = makeAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      capturePageleave: false,
+      enrichment: { pageleave: true },
+    });
+    const beacons = spyBeacon();
+    capturePage(adapter, new Date());
+    adapter.unload();
+    expect(pageleaveEvents(beacons)).toHaveLength(1);
+  });
+
+  // --- COMBINED: two toggles off at once, the rest on ---
+
+  test('two modules off at once (page + utm) disables exactly those two — device/referrer/pageleave stay on', () => {
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
+    const adapter = makeAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      enrichment: { page: false, utm: false },
+    });
+    goTo('/landing?utm_source=news');
+    const beacons = spyBeacon();
+
+    const props = enrichedProps(adapter);
+    expect(props).not.toHaveProperty('current_url');
+    expect(props).not.toHaveProperty('utm_source');
+    expect(props).toHaveProperty('browser');
+    expect(props.referrer).toBe('https://ref.example.com/x');
+
+    capturePage(adapter, new Date());
+    adapter.unload();
+    expect(pageleaveEvents(beacons)).toHaveLength(1);
+  });
+
+  // --- END-TO-END: the toggle threads through resolveAdapter's whitelist (bar B) ---
+
+  test('the enrichment config threads from the seam through resolveAdapter into the adapter (not silently dropped)', () => {
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
+    // resolveAdapter is the explicit-whitelist boundary: a config field is silently
+    // dropped unless it is named in the `new BrowserAdapter({...})` list. Build through it.
+    const adapter = resolveAdapter({ key: freshKey(), enrichment: { device: false } }) as BrowserAdapter;
+    liveAdapters.push(adapter);
+    goTo('/landing?utm_source=news');
+
+    const props = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+    // device:false took effect end-to-end (config → resolveAdapter whitelist → adapter).
+    expect(props).not.toHaveProperty('browser');
+    expect(props).not.toHaveProperty('device_type');
+    // The un-toggled modules still enrich.
+    expect(props).toHaveProperty('current_url');
+    expect(props.utm_source).toBe('news');
   });
 });

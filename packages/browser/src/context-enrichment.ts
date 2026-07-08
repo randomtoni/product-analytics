@@ -143,14 +143,27 @@ function timezoneContext(): NeutralProperties {
   return props;
 }
 
+// Per-module enrichment opt-out (E6-S5). Each group defaults ON (absent ⇒ enriched);
+// setting one false disables ONLY that group's spread. A new enrichment module adds its
+// own toggle here without re-cutting the others (S6 nests `country`, S8 reads per-context).
+export interface ContextToggles {
+  page?: boolean;
+  device?: boolean;
+  referrer?: boolean;
+}
+
 // The neutral context bag for one event. Fresh on every call — nothing is cached, so a
 // navigation between captures is reflected. Merged into the event by the caller as a
-// default (consumer props win). S5 will gate the page/device/referrer spreads by config.
-export function buildContext(library: LibraryIdentity): NeutralProperties {
+// default (consumer props win). Each of page/device/referrer is gated on its E6-S5 toggle
+// (absent ⇒ on); timezone + lib are always-on.
+export function buildContext(
+  library: LibraryIdentity,
+  toggles: ContextToggles = {}
+): NeutralProperties {
   return {
-    ...pageContext(),
-    ...deviceContext(),
-    ...referrerContext(),
+    ...(toggles.page !== false ? pageContext() : {}),
+    ...(toggles.device !== false ? deviceContext() : {}),
+    ...(toggles.referrer !== false ? referrerContext() : {}),
     ...timezoneContext(),
     lib: library.libraryId,
     lib_version: library.libraryVersion,

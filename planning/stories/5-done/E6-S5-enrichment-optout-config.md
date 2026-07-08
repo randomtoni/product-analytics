@@ -51,3 +51,17 @@ The BRIEF requires each enrichment individually opt-out-able **by config only** 
 - Note (privacy, `touches` — NOT this story's scope but adjacent): posthog-js's masking/denylist hooks (`property_denylist`/`sanitize_properties`/`mask_personal_data_properties`) are the INVERSE of E3's allowlist and are retained as neutral privacy hooks — but they are a separate privacy concern, not an `enrichment` toggle. Do NOT fold them into this object. — architect (2026-07-07): epic §E3.3.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08): the browser-local `ContextToggles` (`context-enrichment.ts`) redeclares the `page`/`device`/`referrer` subset of `EnrichmentConfig` — derive it as `Pick<EnrichmentConfig,'page'|'device'|'referrer'>` so the subset stays pinned to the source of truth (prevents silent drift if S6/S8 renames a toggle).
+- > Reviewer note (2026-07-08, for S8): `enrichment.pageleave` is resolved ONCE at construction into `capturePageleaveEnabled` (a construction-time listener behavior) while page/device/referrer/utm are read live per-event — so pageleave can't be flipped per-context the way the other four can without refactoring. S8's per-context work should know this asymmetry.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files changed (seam):** `create-analytics.ts` (+`EnrichmentConfig {page?,device?,referrer?,utm?,pageleave?}` all optional booleans + `AnalyticsConfig.enrichment?`) + shape-pin extended (`:168-186`), `index.ts` (barrel-export `EnrichmentConfig`)
+- **Files changed (browser):** `create-analytics.ts` (`enrichment: config.enrichment` in resolveAdapter whitelist), `browser-adapter.ts` (thread `enrichment`; gate S3 page/device/referrer + S4 utm + S2 pageleave; `capturePageleaveEnabled = (enrichment?.pageleave ?? capturePageleave) !== false`), `context-enrichment.ts` (`ContextToggles` gating each context group)
+- **New public API:** `AnalyticsConfig.enrichment?: EnrichmentConfig` (additive, opt-OUT: absent/`true`⇒on, `false`⇒off). Pin stays 15 (no facade change).
+- **Tests added:** seam shape-pin extended (139); browser +23 (context-enrichment 6 per-group + adapter 17: each-toggle-isolates page/device/referrer/utm/pageleave, default-all-on, empty==absent, utm-off-keeps-session-entry/initial, pageleave precedence over legacy, two-off, resolveAdapter-whitelist end-to-end) → 511
+- **Commit:** `E6-S5-enrichment-optout-config — Structured enrichment opt-out config` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (Pick-derive ContextToggles; pageleave construction-time asymmetry)
+- **Cross-story seams exposed:** **S6** nests `country?: {...}` into THIS `EnrichmentConfig` (ONE pin bump at `create-analytics.test.ts:168-186`), reads via `options.enrichment?.country` — but the country VALUE is consumer-supplied ⇒ E3-gated via facade `register` (not the trusted library-computed path; plain `!== false` gate, no legacy twin). **S8** reads the single coherent `enrichment` object per-context; gating is at the module call-sites (`buildContext` toggles / `enrichAttribution` utm / `capturePageleaveEnabled`) so a per-context override swaps the toggle set — EXCEPT pageleave (construction-time, see note). No shape fork.
