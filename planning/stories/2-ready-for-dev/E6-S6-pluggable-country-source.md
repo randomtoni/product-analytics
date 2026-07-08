@@ -18,12 +18,13 @@ Country is NOT derived client-side by PostHog (it's server-side GeoIP). This exp
 
 ### In
 
-- Add a `country` slot to the structured `enrichment` config (from E6-S5): an options object with
-  - `countrySource` — a consumer-injected source of the country value (a value or a `() => string | undefined` provider — pick the simpler-that-works shape; a synchronous provider is enough for R1, e.g. reading an edge header the consumer has already surfaced).
+- Add a `country` slot to the structured `enrichment` config (from E6-S5) — nest it INTO S5's coherent `enrichment` object (do NOT fork a divergent shape): `enrichment.country?: { countrySource?: ...; disableGeoip?: boolean }`, giving the full shape `{ page?, device?, referrer?, utm?, pageleave?, country? }`.
+  - `countrySource` — a consumer-injected source of the country value (a value or a synchronous `() => string | undefined` provider; sync is enough for R1, e.g. reading an edge header the consumer has already surfaced).
   - a `disableGeoip` boolean — when true, signal the backend to skip its server-side GeoIP (de-brand posthog-js's `$geoip_disable` [WIRE] property; the neutral toggle sets the adapter-internal wire flag, the neutral surface never sees `$geoip_disable`).
-- When `countrySource` yields a value, stamp it as a neutral `country` property on captured events.
-- **The injected country value is CONSUMER-SUPPLIED ⇒ allowlist-gated** — unlike library-computed enrichment (page/device/referrer), the country VALUE comes from the consumer, so its key must be on the E3 allowlist; an off-list `country` key fails loudly (throw / drop-and-error-log per `onViolation`). This is the E4-S7 / §E3.4 library-computed-trusted-vs-consumer-supplied-gated distinction applied.
-- Thread `country` through `resolveAdapter`'s whitelist and update the `AnalyticsConfig` shape-pin (`create-analytics.test.ts:167`) to include the `country` slot on `enrichment`.
+- **When `countrySource` yields a value, deliver it via the FACADE `register({ country })` — NOT an adapter stamp.** Resolve `countrySource` once at init (in/near `resolveAdapter` / facade construction) and, if it yields a value, call the facade `register({ country })`. This routes the value through the E3 gate and stores it as a super-prop, which `mergeSuperProperties` merges onto every event as a default. Do NOT add `country` to `BrowserAdapterOptions` and do NOT stamp it inside `runCapturePipeline`. When the source yields nothing, do not register — no `country` key is emitted.
+- **The injected country value is CONSUMER-SUPPLIED ⇒ allowlist-gated** — because it crosses the facade `register()` gate (`AnalyticsProviderImpl.allowed`, `analytics-provider.ts:104-111` / `:171-187`), an off-list `country` key fails loudly (throw / drop-and-error-log per `onViolation`) exactly like a consumer `track` prop. This is the E4-S7 / §E3.4 library-computed-trusted-vs-consumer-supplied-gated distinction, satisfied by reusing the existing gated `register()` path rather than duplicating the gate in the adapter.
+- **`disableGeoip`** — this IS threaded into the adapter (`BrowserAdapterOptions` + `resolveAdapter` whitelist) as an adapter-internal `[WIRE]` flag; it is a library-set toggle, not a consumer VALUE, so it does not cross the allowlist. Only the `country` VALUE gate goes through `register()`.
+- Update the seam `AnalyticsConfig` shape-pin (`packages/analytics-kit/src/create-analytics.test.ts:168-186`) to nest the `country` slot on `enrichment`. This re-touches the SAME pin line S5 added — S6 `depends_on` S5 for exactly this reason.
 
 ### Out
 
@@ -33,18 +34,19 @@ Country is NOT derived client-side by PostHog (it's server-side GeoIP). This exp
 
 ## Acceptance criteria
 
-- [ ] A consumer-injected `countrySource` value is stamped as a neutral `country` prop on captured events; when the source yields nothing, no `country` key is emitted.
+- [ ] A consumer-injected `countrySource` value is delivered via the facade `register({ country })` and appears as a neutral `country` prop on captured events (merged as a super-prop default); when the source yields nothing, no `register` call and no `country` key is emitted. A per-call `track` prop `country` overrides the injected one for that event (super-prop-default precedence — `mergeSuperProperties`, `browser-adapter.ts:392`).
 - [ ] `disableGeoip: true` sets the adapter-internal wire flag (de-branded `$geoip_disable`) without exposing `$geoip_disable` on the neutral surface. (bar A)
-- [ ] The injected `country` value passes through the E3 allowlist as a consumer-supplied key — an off-list `country` key is rejected loudly per `onViolation` (throw / drop-and-error-log). (E3 + §E3.4)
-- [ ] `enrichment.country` is threaded through `resolveAdapter` and the `AnalyticsConfig` shape-pin includes it and passes; the `keyof AnalyticsProvider` pin stays fifteen. (bar B)
+- [ ] The injected `country` value passes through the E3 allowlist because it crosses the facade `register()` gate — an off-list `country` key is rejected loudly per `onViolation` (throw / drop-and-error-log), identically to a consumer `track` prop. (E3 + §E3.4)
+- [ ] `disableGeoip` is threaded through `resolveAdapter`/`BrowserAdapterOptions`; the seam `AnalyticsConfig` shape-pin includes the `enrichment.country` slot and passes; the `keyof AnalyticsProvider` pin stays fifteen. (bar B)
 - [ ] All four gates green.
 
 ## Technical notes
 
 - **Country is pluggable, never a baked client-side GeoIP** — locked. posthog-js derives country server-side (GeoIP); the client only carries `$geoip_disable` [WIRE] as a toggle. Expose a neutral `countrySource` hook + a `disableGeoip` switch; the injected value is consumer-supplied. — architect (2026-07-07): epic §E6.4 + Notes.
 - **The gating distinction is the crux:** library-computed enrichment (S3/S4 page/device/utm) is TRUSTED (downstream of the allowlist); the injected country VALUE is CONSUMER-SUPPLIED, so it must be allowlist-gated. This is why S6 `touches: [browser, privacy]` while S3/S4 do not. — architect (2026-07-07): §E3.4 + §E6.4; the E4-S7 exemption distinction.
-  - **Implementation note:** the E3 allowlist gate lives at the FACADE (`AnalyticsProviderImpl.allowed`), which runs on consumer-supplied `track` props — but country is injected via config and stamped in the ADAPTER, below the facade gate. The builder must ensure the injected country value is still allowlist-checked (either re-run the allowlist check on the injected value in the adapter, or route the injection so it crosses the facade gate). Confirm the mechanism with the architect during implementation — the requirement (consumer-supplied ⇒ gated) is locked; the exact seam for enforcing it on a config-injected value needs a builder/architect pin. — PM flag (2026-07-08).
-- Shape-pin discipline: extend `AnalyticsConfig` + the `create-analytics.test.ts:167` pin for the `country` slot on `enrichment`. — established E4/E5 convention.
+- **Enforcement seam — PINNED: route the injected country through the facade via `register({ country })`, NOT an adapter stamp.** `register()` is already the "consumer-supplied → gated once at the facade (`AnalyticsProviderImpl.allowed`, `analytics-provider.ts:171-187`) → trusted at merge" path; the country value crosses the identical E3 gate a `track` prop does, so an off-list `country` key fails loudly per `onViolation` with ZERO new gate and ZERO allowlist reference in the adapter (the adapter stays allowlist-agnostic). Resolve `enrichment.country.countrySource` at init and, if it yields a value, `register` it; do NOT add `country` to `BrowserAdapterOptions` or stamp it in `runCapturePipeline`. — architect (2026-07-08): §E6 country-gate seam. (This supersedes the earlier PM "confirm with architect during implementation" flag — the seam is now settled.)
+  - **Caveat (pin in the impl):** `register()` is a once-at-init snapshot and super-props merge as defaults (per-call `country` wins). Correct for R1's synchronous edge-header provider (country-per-session is stable). A per-event-fresh country would need a different, gate-crossing seam — OUT OF SCOPE, do not build.
+- Shape-pin discipline: nest the `country` slot on the `enrichment` object and extend the seam pin at `packages/analytics-kit/src/create-analytics.test.ts:168-186`. — established E4/E5 convention.
 - `disableGeoip` → adapter-internal wire flag; `$geoip_disable` is [WIRE], never neutral surface. — posthog-source-guide / architect (2026-07-07).
 
 ## Shipped

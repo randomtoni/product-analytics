@@ -18,10 +18,11 @@ A consumer names contexts (e.g. `marketing` vs `app`) and toggles enrichment/aut
 
 ### In
 
-- Config: `contexts: { <name>: { <profile> }, ... }` + `defaultContext: <name>`. A **capture profile** is a partial bundle of the already-shipped toggles: `autocapture` (S7 boolean), `pageview` auto-vs-manual + `pageleave` (S2), and the `enrichment` object (S5) — each optional per context, falling back to the top-level config default.
+- Config: `contexts: { <name>: { <profile> }, ... }` + `defaultContext: <name>`. A **capture profile** is a partial bundle of the ALREADY-SHIPPED R1 toggles only: `autocapture` (S7 boolean), the `pageleave` toggle (S2, via `enrichment.pageleave`), and the `enrichment` object (S5, incl. `country` from S6) — each optional per context, falling back to the top-level config default. **Do NOT introduce a `pageview` auto-vs-manual knob** — auto-pageview-on-history-change is explicitly OUT for R1 (S1/S2 Out; pageviews are manual/router-driven), so there is no auto/manual toggle to select per context. A profile SELECTS among existing toggles; it adds no new mechanism.
 - A **scoped view**: `analytics.context('marketing')` returns a **narrower `ScopedAnalytics` type** exposing only the capture-time verbs a profile varies — `track`, `page`, `group` — that apply the named profile but **delegate identity/session/transport to the shared core** (same distinct id, cookie, session, transport). Identity/consent/lifecycle verbs (`identify`, `reset`, `optIn`/`optOut`, `flush`, `shutdown`) are NOT on the scoped view — they operate on the shared root only.
-- `context()` is exposed via a **separate wrapper/factory surface, NOT added to the pinned `AnalyticsProvider` interface** — the frozen `keyof AnalyticsProvider` pin (`analytics-provider.test.ts:587`) stays at fifteen. Add a NEW, separate type-pin for the wrapper/`ScopedAnalytics` shape.
-- Thread `contexts`/`defaultContext` through config + the shape-pin (`create-analytics.test.ts:167`).
+- `context()` is exposed via a **separate wrapper/factory surface, NOT added to the pinned `AnalyticsProvider` interface** — the frozen `keyof AnalyticsProvider` pin (`analytics-provider.test.ts:587-604`) stays at fifteen. **Where it lives (code-shape pin):** `createAnalytics` currently returns the `AnalyticsProvider` interface (`analytics-kit/src/create-analytics.ts:34-57`). Adding `context()` to that interface WOULD bump the 15-member pin — forbidden. Instead, widen the RETURN TYPE to a new exported type (e.g. `RootAnalytics<TX> = AnalyticsProvider<TX> & { context(name): ScopedAnalytics<TX> }`) and carry `context()` there; the underlying `AnalyticsProvider` interface (and its `keyof` pin) is untouched. Add a NEW, separate type-pin for `RootAnalytics`/`ScopedAnalytics` — do NOT extend or mutate the `analytics-provider.test.ts:587` pin.
+- **`ScopedAnalytics` carries the SAME tightened `page()` signature E6-S1 lands.** `page` is one of the three scoped verbs; S1 tightens the facade `page(name?, props?)` to the taxonomy `page` shape (`ShapeOf`'s `page` field, `taxonomy.ts:42`). `ScopedAnalytics`'s `page` MUST use that identical taxonomy-typed signature — not a looser `NeutralProperties` one — so the scoped view type-checks a consumer's declared `page` props exactly as the root does. Same for `track`/`group` (they already carry the taxonomy generics on `AnalyticsProvider`).
+- Thread `contexts`/`defaultContext` through config + the seam shape-pin (`packages/analytics-kit/src/create-analytics.test.ts:168-186`).
 
 ### Out
 
@@ -35,8 +36,9 @@ A consumer names contexts (e.g. `marketing` vs `app`) and toggles enrichment/aut
 - [ ] A consumer defines named contexts + a profile each by config only; `analytics.context('marketing').track(...)` applies the marketing profile (its enrichment/autocapture/pageview settings), and `analytics.context('app').track(...)` applies the app profile. (bar B)
 - [ ] Switching context does NOT change identity/session/transport — same distinct id, same cookie, same session across contexts (verifiable: capture in two contexts, assert one shared distinct id + session → cross-context funnel stitching preserved).
 - [ ] The scoped view exposes ONLY `track`/`page`/`group` (capture verbs) — not `identify`/`reset`/`optOut`/`flush`/`shutdown` (compile-time: `ScopedAnalytics` is narrower than `AnalyticsProvider`).
-- [ ] `keyof AnalyticsProvider` stays the frozen fifteen; `context` is exposed on a separate wrapper type with its own pin. (API-surface discipline)
-- [ ] `AnalyticsConfig` shape-pin updated for `contexts`/`defaultContext` and passing.
+- [ ] `keyof AnalyticsProvider` stays the frozen fifteen (`analytics-provider.test.ts:587-604` unchanged); `context` is exposed on a separate widened return type (`RootAnalytics`) with its own NEW type-pin, and `ScopedAnalytics` has its own pin. (API-surface discipline)
+- [ ] The scoped view's `page`/`track`/`group` carry the SAME taxonomy-typed signatures as the root (per E6-S1's tightened `page`) — a consumer's declared `page`/event props type-check through the scoped view identically.
+- [ ] Seam `AnalyticsConfig` shape-pin (`packages/analytics-kit/src/create-analytics.test.ts:168-186`) updated for `contexts`/`defaultContext` and passing.
 - [ ] All four gates green.
 
 ## Technical notes

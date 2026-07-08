@@ -24,7 +24,7 @@ DOM autocapture (clicks/changes/form-submits → element metadata) is the larges
   - Capture-phase `document` listeners for `submit` / `change` / `click` (`autocapture.ts:305-307`), with the same event/element gating (`shouldCaptureDomEvent`, `autocapture-utils.ts:366-438`).
   - Element metadata extraction → neutral keys (de-brand `$elements_chain` → e.g. `elements_chain`, `$el_text` → `el_text`, `$event_type` → `event_type`; the `attr__<name>` allowlist scheme; `tag_name`/`classes`/`nth_child`/`nth_of_type`) — posthog-js `autocapturePropertiesForElement` (`:145-258`).
   - A configurable skip-class (de-brand `ph-no-capture` / `ph-no-autocapture` / `[data-ph-no-autocapture]`) — the class/attr NAMES must be configurable/neutral, not baked with a vendor prefix. Also the sensitive-value scrub (CC/SSN, password/hidden inputs) from `shouldCaptureValue` / `isSensitiveElement`.
-- **Default OFF, opt-in via a plain browser-adapter config boolean** `autocapture` (default `false`). Add it to `AnalyticsConfig` + thread through `resolveAdapter` + update the `AnalyticsConfig` shape-pin (`create-analytics.test.ts:167`).
+- **Default OFF, opt-in via a plain TOP-LEVEL config boolean** `autocapture` (default `false`) — a sibling of `enrichment`, NOT a member of the `enrichment` object (autocapture is a capture MECHANISM, not an enrichment toggle). Add `autocapture?: boolean` to the seam `AnalyticsConfig` (`packages/analytics-kit/src/create-analytics.ts:10-28`), declare it on `BrowserAdapterOptions` (`browser-adapter.ts:65-99`), thread it through `resolveAdapter`'s whitelist (`browser/create-analytics.ts:17-35` — add `autocapture: config.autocapture`), and extend the seam shape-pin literal (`packages/analytics-kit/src/create-analytics.test.ts:168-186`).
 - Autocaptured events flow through the SAME `capture()` pipeline (bot gate → rate limiter → enrichment → wire map → transport) — an autocaptured click is a normal neutral event.
 
 ### Out
@@ -39,8 +39,8 @@ DOM autocapture (clicks/changes/form-submits → element metadata) is the larges
 - [ ] Default (`autocapture` unset or `false`) = NO DOM listeners bound, zero autocapture events. (opt-in, default off — bar B)
 - [ ] **No network call is made for autocapture gating** — the remote-config phone-home is absent (verifiable: init + autocapture make no gating request). This is the load-bearing divergence.
 - [ ] The skip-class and sensitive-value scrub work; element attribute capture honors the allowlist + sensitivity restrictions; skip-class/attr names carry NO vendor prefix on the neutral surface.
-- [ ] `autocapture` is threaded through `resolveAdapter` and the `AnalyticsConfig` shape-pin includes it and passes; `keyof AnalyticsProvider` pin stays fifteen. (bar B)
-- [ ] Autocapture listeners are torn down on `shutdown()` (mirror the existing unload-listener teardown).
+- [ ] `autocapture` is threaded through `resolveAdapter` + `BrowserAdapterOptions` and the seam `AnalyticsConfig` shape-pin (`packages/analytics-kit/src/create-analytics.test.ts:168-186`) includes it and passes; `keyof AnalyticsProvider` pin stays fifteen. (bar B)
+- [ ] Autocapture listeners are torn down on `shutdown()` — mirror the existing unload-listener teardown (`detachUnloadListeners`, bound in `bindUnloadListeners` `browser-adapter.ts:240-261`, invoked in `shutdown()` `:502`). Guard the DOM binding for the non-DOM/SSR context exactly as `bindUnloadListeners` does (`typeof window/document === 'undefined'`).
 - [ ] All four gates green.
 
 ## Technical notes
@@ -50,6 +50,8 @@ DOM autocapture (clicks/changes/form-submits → element metadata) is the larges
 - Element extraction surface (de-brand all): `$elements_chain`, `$el_text`, `$event_type`, `$ce_version`, `attr__*`, `data-ph-capture-attribute-*`, skip classes `ph-no-capture`/`ph-sensitive`/`ph-no-autocapture` — all PostHog DOM vocabulary; the NAMES must not leak (make skip-class/attr-prefix configurable/neutral). — posthog-source-guide (2026-07-08).
 - Sensitive-value scrub (`shouldCaptureValue` CC/SSN, `isSensitiveElement` password/hidden) is UNIVERSAL — keep it (a privacy floor), just neutralize names. — posthog-source-guide (2026-07-08).
 - Autocaptured events ride the normal `capture()` pipeline — they inherit bot gate, rate limiter, enrichment, allowlist posture for free. Element metadata is library-computed ⇒ trusted (not consumer-supplied event props). — architect (2026-07-08).
-- Listener teardown on `shutdown()` mirrors `detachUnloadListeners` (`browser-adapter.ts:232`, `:502`).
+- Listener teardown on `shutdown()` mirrors `detachUnloadListeners` (assigned `browser-adapter.ts:232`, unbinder built in `bindUnloadListeners` `:240-261`, invoked `:502`).
+- **DOM types are available — do NOT reach for `any`.** The browser package compiles under `lib:["ES2022","DOM"]` (`packages/browser/tsconfig.json`) with `strict` + `no-explicit-any`. `document`, capture-phase `addEventListener('click'|'change'|'submit', fn, true)`, `Element`/`HTMLElement`, `MutationObserver`, `Node.contains` are all fully typed — type the DOM surface properly, no `any`/`@ts-expect-error`. Guard every DOM read for the non-DOM context (mirror `bindUnloadListeners`). — browser tsconfig (2026-07-08).
+- **Element metadata is library-computed ⇒ trusted** and rides `runCapturePipeline` as normal — do NOT allowlist-gate the autocapture element props (they are not consumer-supplied event props; same trusted posture as S3/S4 enrichment). — architect (2026-07-08).
 
 ## Shipped
