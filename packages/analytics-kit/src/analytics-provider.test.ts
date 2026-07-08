@@ -12,6 +12,7 @@ class RecordingAdapter implements AnalyticsAdapter {
   flushed = 0;
   didShutdown = false;
   store = new Map<string, unknown>();
+  persistedWrites: Array<{ key: string; value: unknown }> = [];
 
   capture(event: NeutralEvent): void {
     this.captured.push(event);
@@ -42,6 +43,7 @@ class RecordingAdapter implements AnalyticsAdapter {
     return this.store.get(key) as T | undefined;
   }
   setPersistedProperty<T>(key: string, value: T | null): void {
+    this.persistedWrites.push({ key, value });
     if (value === null) {
       this.store.delete(key);
     } else {
@@ -217,13 +219,101 @@ test('the adapter field is reassignable so S4/S5 can swap the active delegate', 
   expect(second.captured).toHaveLength(1);
 });
 
+test('hasOptedOut() defaults to false on a fresh provider', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  expect(analytics.hasOptedOut()).toBe(false);
+});
+
+test('after optOut the live spy receives zero capture/identify/group/alias calls; hasOptedOut() is true', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  analytics.track('x');
+  analytics.page('home');
+  analytics.identify('user-1', { plan: 'pro' });
+  analytics.group('company', 'acme');
+  analytics.setTraits({ plan: 'pro' });
+
+  expect(adapter.captured).toHaveLength(0);
+  expect(adapter.identified).toHaveLength(0);
+  expect(adapter.grouped).toHaveLength(0);
+  expect(adapter.aliased).toHaveLength(0);
+  expect(analytics.hasOptedOut()).toBe(true);
+});
+
+test('after optIn delegation to the live spy resumes; hasOptedOut() is false', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  analytics.track('while-opted-out');
+  analytics.optIn();
+  analytics.track('after-opt-in');
+  analytics.identify('user-1', { plan: 'pro' });
+  analytics.group('company', 'acme');
+
+  expect(adapter.captured).toHaveLength(1);
+  expect(adapter.captured[0].event).toBe('after-opt-in');
+  expect(adapter.identified).toHaveLength(1);
+  expect(adapter.grouped).toHaveLength(1);
+  expect(analytics.hasOptedOut()).toBe(false);
+});
+
+test('whole-stack reach: while opted-out no persistence write reaches the live adapter (forward guard)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  analytics.track('x');
+  analytics.identify('user-1', { plan: 'pro' });
+  analytics.group('company', 'acme');
+
+  expect(adapter.persistedWrites).toHaveLength(0);
+});
+
+test('optOut is idempotent and keeps routing verbs to the no-op', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  analytics.optOut();
+  analytics.track('x');
+
+  expect(adapter.captured).toHaveLength(0);
+  expect(analytics.hasOptedOut()).toBe(true);
+});
+
+test('optIn on a never-opted-out provider keeps delegation live and hasOptedOut() false', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optIn();
+  analytics.track('x');
+
+  expect(adapter.captured).toHaveLength(1);
+  expect(analytics.hasOptedOut()).toBe(false);
+});
+
 test('the impl class is not exported from the package entrypoint', () => {
   expect('AnalyticsProviderImpl' in pkg).toBe(false);
 });
 
-test('AnalyticsProvider exposes exactly the eight §1 methods (no consent trio)', () => {
+test('AnalyticsProvider exposes exactly the eleven §1 methods (verbs + consent trio)', () => {
   expectTypeOf<keyof AnalyticsProvider>().toEqualTypeOf<
-    'track' | 'identify' | 'page' | 'group' | 'reset' | 'setTraits' | 'flush' | 'shutdown'
+    | 'track'
+    | 'identify'
+    | 'page'
+    | 'group'
+    | 'reset'
+    | 'setTraits'
+    | 'optIn'
+    | 'optOut'
+    | 'hasOptedOut'
+    | 'flush'
+    | 'shutdown'
   >();
 });
 
@@ -244,6 +334,9 @@ test('AnalyticsProvider method signatures are pinned (compile-time)', () => {
     (traits: NeutralTraits, once?: boolean) => void
   >();
   expectTypeOf<AnalyticsProvider['reset']>().toEqualTypeOf<() => void>();
+  expectTypeOf<AnalyticsProvider['optIn']>().toEqualTypeOf<() => void>();
+  expectTypeOf<AnalyticsProvider['optOut']>().toEqualTypeOf<() => void>();
+  expectTypeOf<AnalyticsProvider['hasOptedOut']>().toEqualTypeOf<() => boolean>();
   expectTypeOf<AnalyticsProvider['flush']>().returns.toEqualTypeOf<Promise<void>>();
   expectTypeOf<AnalyticsProvider['shutdown']>().returns.toEqualTypeOf<Promise<void>>();
 });
