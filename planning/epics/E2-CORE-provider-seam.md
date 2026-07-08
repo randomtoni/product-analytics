@@ -1,6 +1,6 @@
 ---
 id: E2-CORE-provider-seam
-status: planned
+status: active
 area: core
 touches: [adapters]
 api_impact: additive
@@ -25,11 +25,19 @@ The `AnalyticsProvider` facade + `AnalyticsAdapter` SPI *is* the vendor-neutral 
 
 ## Stories
 
-- Neutral event object + `AnalyticsProvider` facade interface (the §1 method surface, holding an adapter and delegating).
-- `AnalyticsAdapter` SPI: transport + persisted-property storage + client-identity + neutral capture/identify/group/alias + flush/shutdown — the target-agnostic subset.
-- `createAnalytics(config)` config-selected factory + whole-stack `NoopAdapter` (unkeyed = silent).
-- Consent gating on the facade (`optIn`/`optOut`/`hasOptedOut` → whole-stack no-op; persistence deferred to E4).
-- Declared-but-unimplemented `FeatureFlagPort` / `SessionReplayPort` optional slots (types only).
+Six stories, all drafted to `stories/2-ready-for-dev/`. Dependency shape (topo-sortable via `depends_on`):
+
+```
+S1 ─► S2 ─► S3 ─┬─► S4 ─► S5
+                └─► S6
+```
+
+- **[E2-S1](../stories/2-ready-for-dev/E2-S1-neutral-event-substrate.md)** *(additive, no deps)* — the `NeutralEvent` type + shared neutral data types (`NeutralProperties`/`NeutralTraits`); fixes `distinctId` (required, resolved above the adapter) and the settled per-event `dedupeId` name. The substrate every other story references.
+- **[E2-S2](../stories/2-ready-for-dev/E2-S2-analytics-adapter-spi.md)** *(additive, depends on S1)* — the `AnalyticsAdapter` SPI: neutral verbs (capture/identify/group/alias/flush/shutdown over `NeutralEvent`) + neutral platform primitives (transport `fetch`, persisted-property get/set, client identity). No wire terms on the interface.
+- **[E2-S3](../stories/2-ready-for-dev/E2-S3-analytics-provider-facade.md)** *(additive, depends on S1 + S2)* — the `AnalyticsProvider` facade: the BRIEF §1 surface **minus the consent trio**, a thin class holding an adapter and delegating. Keeps the `AnalyticsProvider` name (E9 renames its React component).
+- **[E2-S4](../stories/2-ready-for-dev/E2-S4-factory-and-noop-adapter.md)** *(additive, depends on S2 + S3)* — `createAnalytics(config, adapter?)` generic factory machinery + whole-stack `NoopAdapter` null-object; unkeyed ⇒ silent. Seam ships the machinery; targets supply their adapter (never seam-side target imports).
+- **[E2-S5](../stories/2-ready-for-dev/E2-S5-consent-gating.md)** *(additive, depends on S3 + S4)* — augments `AnalyticsProvider` with `optIn`/`optOut`/`hasOptedOut`; opt-out routes the whole stack to the `NoopAdapter` (in-memory state in E2; E4 persists).
+- **[E2-S6](../stories/2-ready-for-dev/E2-S6-optional-capability-ports.md)** *(additive, depends on S3)* — declared-but-unimplemented `FeatureFlagPort` / `SessionReplayPort` optional slots (`flags?`/`replay?`), types only, `undefined` in release 1; never folded into `track`/`identify`.
 
 ## Out of scope
 
