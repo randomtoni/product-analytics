@@ -14,6 +14,8 @@ export interface AnalyticsConfig {
   onViolation?: ViolationPolicy;
   persistence?: 'cookie' | 'localStorage+cookie' | 'memory';
   consentDefault?: 'granted' | 'denied';
+  cookieDomain?: string;
+  crossSubdomainCookie?: boolean;
   sessionIdleTimeoutMs?: number;
   sessionMaxLengthMs?: number;
 }

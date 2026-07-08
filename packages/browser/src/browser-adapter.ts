@@ -31,6 +31,12 @@ const SAVE_DEBOUNCE_MS = 250;
 export interface BrowserAdapterOptions {
   key: string;
   persistence?: PersistenceMode;
+  // Config-authoritative cross-subdomain cookie domain. When set, the identity
+  // cookie is written at that domain and the public-suffix probe never runs.
+  cookieDomain?: string;
+  // Opt into cross-subdomain sharing; when true and `cookieDomain` is unset, the
+  // public-suffix probe derives the domain (gated behind the consent-first read).
+  crossSubdomainCookie?: boolean;
   // Swap the id scheme (device id) without touching identity semantics; defaults
   // to the crypto UUIDv7 generator.
   deviceIdGenerator?: IdGenerator;
@@ -62,7 +68,14 @@ export class BrowserAdapter implements AnalyticsAdapter {
     );
     const effectiveMode: PersistenceMode = this.consent.get() === 'granted' ? mode : 'memory';
 
-    const backend = buildPropsBackend(effectiveMode, this.memoryBackend);
+    // The cookie-domain resolution (and its public-suffix probe) lives inside
+    // buildPropsBackend's non-memory branches, reached only when effectiveMode is
+    // NOT 'memory' — i.e. consent is granted. An opted-out / pending / DNT client
+    // hits the 'memory' branch, so no throwaway probe cookie is ever written.
+    const backend = buildPropsBackend(effectiveMode, this.memoryBackend, {
+      cookieDomain: options.cookieDomain,
+      crossSubdomainCookie: options.crossSubdomainCookie,
+    });
     this.store = new PersistenceStore({
       backend,
       name: storeName(options.key),

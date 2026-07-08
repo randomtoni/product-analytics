@@ -1,5 +1,6 @@
 import { hasDocument, hasLocalStorage } from './dom';
 import { COOKIE_MIRRORED_KEYS } from './persistence-keys';
+import { resolveCookieDomain } from './cookie-domain';
 
 export type StorageEntry = Record<string, unknown>;
 
@@ -32,52 +33,73 @@ function parseJson(raw: string | null): StorageEntry | null {
   }
 }
 
-export const cookieBackend: StorageBackend = {
-  isSupported: () => hasDocument(),
+export interface CookieBackendOptions {
+  // The bare cross-subdomain domain (no leading dot), config-authoritative else
+  // probe-derived. Undefined ⇒ a host-only cookie (no `domain=` attribute).
+  domain?: string;
+}
 
-  get(name) {
-    if (!hasDocument()) {
+// A cookie-backed store. The resolved cross-subdomain `domain` is captured at
+// construction (resolve-once, no per-write flag on the shared `set` signature)
+// and appended as `; domain=.<d>` to every write and delete — so a cookie is
+// removed at the same scope it was set. `createCookieBackend()` with no domain
+// yields the plain host-only cookie the consent-read fallback uses.
+export function createCookieBackend(options: CookieBackendOptions = {}): StorageBackend {
+  const domainAttribute = options.domain ? `; domain=.${options.domain}` : '';
+
+  const backend: StorageBackend = {
+    isSupported: () => hasDocument(),
+
+    get(name) {
+      if (!hasDocument()) {
+        return null;
+      }
+      const prefix = `${name}=`;
+      const parts = document.cookie.split(';').filter((part) => part.length > 0);
+      for (let part of parts) {
+        while (part.charAt(0) === ' ') {
+          part = part.substring(1);
+        }
+        if (part.indexOf(prefix) === 0) {
+          return decodeURIComponent(part.substring(prefix.length));
+        }
+      }
       return null;
-    }
-    const prefix = `${name}=`;
-    const parts = document.cookie.split(';').filter((part) => part.length > 0);
-    for (let part of parts) {
-      while (part.charAt(0) === ' ') {
-        part = part.substring(1);
+    },
+
+    parse(name) {
+      return parseJson(backend.get(name));
+    },
+
+    set(name, value) {
+      if (!hasDocument()) {
+        return false;
       }
-      if (part.indexOf(prefix) === 0) {
-        return decodeURIComponent(part.substring(prefix.length));
+      try {
+        const expiry = new Date();
+        expiry.setTime(expiry.getTime() + COOKIE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+        const encoded = encodeURIComponent(JSON.stringify(value));
+        document.cookie = `${name}=${encoded}; expires=${expiry.toUTCString()}; SameSite=Lax; path=/${domainAttribute}`;
+        return true;
+      } catch {
+        return false;
       }
-    }
-    return null;
-  },
+    },
 
-  parse(name) {
-    return parseJson(cookieBackend.get(name));
-  },
+    remove(name) {
+      if (!hasDocument()) {
+        return;
+      }
+      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax; path=/${domainAttribute}`;
+    },
+  };
 
-  set(name, value) {
-    if (!hasDocument()) {
-      return false;
-    }
-    try {
-      const expiry = new Date();
-      expiry.setTime(expiry.getTime() + COOKIE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
-      const encoded = encodeURIComponent(JSON.stringify(value));
-      document.cookie = `${name}=${encoded}; expires=${expiry.toUTCString()}; SameSite=Lax; path=/`;
-      return true;
-    } catch {
-      return false;
-    }
-  },
+  return backend;
+}
 
-  remove(name) {
-    if (!hasDocument()) {
-      return;
-    }
-    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax; path=/`;
-  },
-};
+// The domain-less cookie backend: the consent-read fallback (a host-only cookie,
+// never cross-subdomain) and the existing storage tests use this instance.
+export const cookieBackend: StorageBackend = createCookieBackend();
 
 export const localStorageBackend: StorageBackend = {
   isSupported() {
@@ -156,10 +178,15 @@ export function createMemoryBackend(): StorageBackend {
 
 // localStorage holds the full blob; the cookie half mirrors only the identity/
 // session subset (small, cross-subdomain-shareable). On read the two merge with
-// localStorage winning on conflict.
+// localStorage winning on conflict. The cookie mirror uses a domain-scoped cookie
+// backend so the mirrored identity keys are shared across subdomains at the same
+// domain as a pure-cookie store would use — no host-only split-brain.
 export function createLocalStoragePlusCookieBackend(
-  cookieMirroredKeys: readonly string[]
+  cookieMirroredKeys: readonly string[],
+  cookieOptions: CookieBackendOptions = {}
 ): StorageBackend {
+  const cookie = createCookieBackend(cookieOptions);
+
   return {
     isSupported: () => localStorageBackend.isSupported(),
 
@@ -168,7 +195,7 @@ export function createLocalStoragePlusCookieBackend(
     },
 
     parse(name) {
-      const cookieEntry = cookieBackend.parse(name);
+      const cookieEntry = cookie.parse(name);
       const localEntry = localStorageBackend.parse(name);
       if (cookieEntry === null && localEntry === null) {
         return null;
@@ -186,14 +213,14 @@ export function createLocalStoragePlusCookieBackend(
         }
       }
       if (Object.keys(cookieMirror).length > 0) {
-        cookieBackend.set(name, cookieMirror);
+        cookie.set(name, cookieMirror);
       }
       return stored;
     },
 
     remove(name) {
       localStorageBackend.remove(name);
-      cookieBackend.remove(name);
+      cookie.remove(name);
     },
   };
 }
@@ -214,25 +241,53 @@ export function resolveConsentBackend(
   return localStorageBackend.isSupported() ? localStorageBackend : cookieBackend;
 }
 
+export interface PropsBackendCookieOptions {
+  // Config-authoritative cross-subdomain domain. When set, the probe never runs.
+  cookieDomain?: string;
+  // Opt into cross-subdomain sharing; when true and `cookieDomain` is unset, the
+  // public-suffix probe derives the domain.
+  crossSubdomainCookie?: boolean;
+}
+
 // Mode → property-store backend, falling back gracefully when a backend is
 // unsupported. `memoryBackend` is injected so it can be shared with a pre-store
 // raw read (see `createMemoryBackend`).
+//
+// The cross-subdomain domain is resolved ONCE here (config-authoritative else the
+// public-suffix probe) and threaded into every cookie-writing path. Crucially,
+// this is called only when consent is granted (the caller collapses a non-granted
+// client to `mode: 'memory'`, which takes the probe-free branch below) — so an
+// opted-out / pending / DNT client never resolves a domain and the probe writes
+// ZERO throwaway cookies.
 export function buildPropsBackend(
   mode: PersistenceMode,
-  memoryBackend: StorageBackend
+  memoryBackend: StorageBackend,
+  cookieOptions: PropsBackendCookieOptions = {}
 ): StorageBackend {
   switch (mode) {
     case 'memory':
       return memoryBackend;
-    case 'cookie':
-      return cookieBackend.isSupported() ? cookieBackend : memoryBackend;
+    case 'cookie': {
+      if (!cookieBackend.isSupported()) {
+        return memoryBackend;
+      }
+      const domain = resolveCookieDomain({
+        configDomain: cookieOptions.cookieDomain,
+        crossSubdomain: cookieOptions.crossSubdomainCookie,
+      });
+      return createCookieBackend({ domain });
+    }
     case 'localStorage+cookie':
     default: {
-      const localPlusCookie = createLocalStoragePlusCookieBackend(COOKIE_MIRRORED_KEYS);
+      const domain = resolveCookieDomain({
+        configDomain: cookieOptions.cookieDomain,
+        crossSubdomain: cookieOptions.crossSubdomainCookie,
+      });
+      const localPlusCookie = createLocalStoragePlusCookieBackend(COOKIE_MIRRORED_KEYS, { domain });
       if (localPlusCookie.isSupported()) {
         return localPlusCookie;
       }
-      return cookieBackend.isSupported() ? cookieBackend : memoryBackend;
+      return cookieBackend.isSupported() ? createCookieBackend({ domain }) : memoryBackend;
     }
   }
 }

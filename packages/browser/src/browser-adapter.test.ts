@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { AnalyticsAdapter, NeutralEvent } from 'analytics-kit';
 import { BrowserAdapter } from './browser-adapter';
-import { DEVICE_ID_KEY, DISTINCT_ID_KEY, IDENTITY_STATE_KEY } from './persistence-keys';
+import { DEVICE_ID_KEY, DISTINCT_ID_KEY, IDENTITY_STATE_KEY, storeName } from './persistence-keys';
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -347,6 +347,140 @@ describe('super-property registration (S7)', () => {
     const result = adapter.runCapturePipeline(makeEvent({ properties: { a: 1 } }));
 
     expect(result.properties).toEqual({ plan: 'pro', theme: 'dark', a: 1 });
+  });
+});
+
+describe('cross-subdomain cookie domain (S4)', () => {
+  // Capture every raw `document.cookie` write so a domain= attribute can be
+  // asserted even when jsdom would reject a cross-origin domain (jsdom only
+  // accepts a domain= matching the localhost origin).
+  function withCookieWriteSpy(run: (writes: string[]) => void): void {
+    const writes: string[] = [];
+    const spy = vi.spyOn(document, 'cookie', 'set').mockImplementation((value: string) => {
+      writes.push(value);
+    });
+    try {
+      run(writes);
+    } finally {
+      spy.mockRestore();
+      const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+      if (descriptor) {
+        Object.defineProperty(document, 'cookie', descriptor);
+      }
+    }
+  }
+
+  test('with cookieDomain set + granted, the identity cookie is written at that domain', () => {
+    const key = freshKey();
+    // Grant consent durably first (S3 gate) — only then does the cookie path run.
+    new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('granted');
+
+    withCookieWriteSpy((writes) => {
+      const adapter = new BrowserAdapter({
+        key,
+        persistence: 'localStorage+cookie',
+        cookieDomain: 'example.com',
+      });
+      adapter.setPersistedProperty('device_id', 'dev-1');
+      window.dispatchEvent(new Event('beforeunload'));
+
+      const identityCookieWrite = writes.find((w) => w.startsWith(storeName(key)));
+      expect(identityCookieWrite).toBeDefined();
+      expect(identityCookieWrite).toContain('; domain=.example.com');
+    });
+  });
+
+  test('cross-subdomain journey with a host-matching cookieDomain keeps ONE distinct id', () => {
+    // jsdom accepts domain=.localhost (matches the origin), so the cookie truly
+    // round-trips — a second adapter (a different subdomain, same domain scope)
+    // reads back the identity the first minted. cookie mode so the id lives in
+    // the domain-scoped cookie, not localStorage.
+    const key = freshKey();
+    new BrowserAdapter({ key, persistence: 'cookie' }).setConsentState('granted');
+
+    const first = new BrowserAdapter({
+      key,
+      persistence: 'cookie',
+      cookieDomain: 'localhost',
+    });
+    const mintedId = first.getDistinctId();
+    window.dispatchEvent(new Event('beforeunload'));
+
+    const secondSubdomain = new BrowserAdapter({
+      key,
+      persistence: 'cookie',
+      cookieDomain: 'localhost',
+    });
+
+    expect(secondSubdomain.getDistinctId()).toBe(mintedId);
+  });
+
+  test('with cookieDomain set, the public-suffix probe does NOT run (config authoritative)', () => {
+    const key = freshKey();
+    new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('granted');
+
+    withCookieWriteSpy((writes) => {
+      new BrowserAdapter({
+        key,
+        persistence: 'localStorage+cookie',
+        cookieDomain: 'example.com',
+        crossSubdomainCookie: true,
+      });
+
+      // No throwaway probe cookie was written — the config domain short-circuits it.
+      expect(writes.some((w) => w.includes('domain_probe_'))).toBe(false);
+    });
+  });
+
+  test('opted-out (denied): the probe writes ZERO throwaway cookies (gated by the consent-first read)', () => {
+    const key = freshKey();
+    new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('denied');
+
+    withCookieWriteSpy((writes) => {
+      new BrowserAdapter({
+        key,
+        persistence: 'localStorage+cookie',
+        crossSubdomainCookie: true,
+      });
+
+      // effectiveMode collapsed to memory ⇒ buildPropsBackend never resolved a
+      // domain ⇒ the probe never ran ⇒ zero throwaway cookies.
+      expect(writes.some((w) => w.includes('domain_probe_'))).toBe(false);
+      expect(writes).toHaveLength(0);
+    });
+  });
+
+  test('pending (default/unasked): the probe writes ZERO throwaway cookies', () => {
+    const key = freshKey();
+
+    withCookieWriteSpy((writes) => {
+      const adapter = new BrowserAdapter({
+        key,
+        persistence: 'localStorage+cookie',
+        crossSubdomainCookie: true,
+      });
+      expect(adapter.getConsentState()).toBe('pending');
+
+      expect(writes.some((w) => w.includes('domain_probe_'))).toBe(false);
+      expect(writes).toHaveLength(0);
+    });
+  });
+
+  test('granted + crossSubdomain requested + no cookieDomain: the probe path runs (may write a probe), then is gone', () => {
+    // Under jsdom the origin is localhost, so the probe short-circuits to empty and
+    // no probe cookie is stored — but the point of this test is the granted path is
+    // the ONLY place the probe is even reached. Contrast with the denied/pending
+    // tests above where zero cookies are written at all.
+    const key = freshKey();
+    new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('granted');
+
+    expect(() => {
+      new BrowserAdapter({
+        key,
+        persistence: 'localStorage+cookie',
+        crossSubdomainCookie: true,
+      });
+    }).not.toThrow();
   });
 });
 

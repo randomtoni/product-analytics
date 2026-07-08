@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   buildPropsBackend,
   cookieBackend,
+  createCookieBackend,
   createLocalStoragePlusCookieBackend,
   createMemoryBackend,
   DEFAULT_PERSISTENCE_MODE,
@@ -36,6 +37,62 @@ describe('cookieBackend', () => {
     cookieBackend.set('entry_c', { x: 1 });
     cookieBackend.remove('entry_c');
     expect(cookieBackend.parse('entry_c')).toBeNull();
+  });
+});
+
+describe('createCookieBackend with a resolved domain', () => {
+  // jsdom rejects a cookie whose domain= mismatches the current host (localhost),
+  // so cross-origin domains are asserted at the write string via a setter spy;
+  // domain=.localhost (host-matching) is used for a real round-trip.
+  function withCookieWriteSpy(run: (writes: string[]) => void): void {
+    const writes: string[] = [];
+    const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+    const spy = vi.spyOn(document, 'cookie', 'set').mockImplementation((value: string) => {
+      writes.push(value);
+    });
+    try {
+      run(writes);
+    } finally {
+      spy.mockRestore();
+      if (descriptor) {
+        Object.defineProperty(document, 'cookie', descriptor);
+      }
+    }
+  }
+
+  test('a configured domain is emitted as "; domain=.<d>" on every write', () => {
+    const backend = createCookieBackend({ domain: 'example.com' });
+
+    withCookieWriteSpy((writes) => {
+      backend.set('id_entry', { distinct_id: 'u-1' });
+      expect(writes.at(-1)).toContain('; domain=.example.com');
+    });
+  });
+
+  test('the same domain is emitted on remove — a cookie is deleted at the scope it was set', () => {
+    const backend = createCookieBackend({ domain: 'example.com' });
+
+    withCookieWriteSpy((writes) => {
+      backend.remove('id_entry');
+      expect(writes.at(-1)).toContain('; domain=.example.com');
+    });
+  });
+
+  test('no domain option ⇒ a host-only cookie, no domain= attribute', () => {
+    const backend = createCookieBackend();
+
+    withCookieWriteSpy((writes) => {
+      backend.set('id_entry', { distinct_id: 'u-1' });
+      expect(writes.at(-1)).not.toContain('domain=');
+    });
+  });
+
+  test('a host-matching domain round-trips through jsdom (domain=.localhost is accepted)', () => {
+    const backend = createCookieBackend({ domain: 'localhost' });
+
+    backend.set('scoped_entry', { distinct_id: 'shared-across-subdomains' });
+
+    expect(backend.parse('scoped_entry')).toEqual({ distinct_id: 'shared-across-subdomains' });
   });
 });
 
@@ -134,6 +191,81 @@ describe('buildPropsBackend', () => {
     backend.set('entry_i', { session_id: 's', report_count: 3 });
     expect(cookieBackend.parse('entry_i')).toEqual({ session_id: 's' });
     expect(localStorageBackend.parse('entry_i')).toEqual({ session_id: 's', report_count: 3 });
+  });
+
+  test('a config cookieDomain is authoritative and threaded into the cookie write — probe never runs', () => {
+    const before = document.cookie;
+    const writes: string[] = [];
+    const spy = vi.spyOn(document, 'cookie', 'set').mockImplementation((value: string) => {
+      writes.push(value);
+    });
+    try {
+      const backend = buildPropsBackend('cookie', createMemoryBackend(), {
+        cookieDomain: 'example.com',
+        crossSubdomainCookie: true,
+      });
+      backend.set('entry_domain', { device_id: 'd' });
+
+      // The identity cookie is written at the configured domain...
+      expect(writes.at(-1)).toContain('; domain=.example.com');
+      // ...and no throwaway probe cookie was ever written (config authoritative).
+      expect(writes.some((w) => w.includes('domain_probe_'))).toBe(false);
+    } finally {
+      spy.mockRestore();
+      const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+      if (descriptor) {
+        Object.defineProperty(document, 'cookie', descriptor);
+      }
+    }
+    // Sanity: mocked writes never landed in the real jar.
+    expect(document.cookie).toBe(before);
+  });
+
+  test('localStorage+cookie mode threads the configured domain into the identity mirror cookie', () => {
+    const writes: string[] = [];
+    const spy = vi.spyOn(document, 'cookie', 'set').mockImplementation((value: string) => {
+      writes.push(value);
+    });
+    try {
+      const backend = buildPropsBackend('localStorage+cookie', createMemoryBackend(), {
+        cookieDomain: 'example.com',
+      });
+      backend.set('entry_mirror', { device_id: 'd', report_count: 9 });
+
+      const cookieWrite = writes.find((w) => w.startsWith('entry_mirror='));
+      expect(cookieWrite).toBeDefined();
+      expect(cookieWrite).toContain('; domain=.example.com');
+    } finally {
+      spy.mockRestore();
+      const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+      if (descriptor) {
+        Object.defineProperty(document, 'cookie', descriptor);
+      }
+    }
+    // localStorage still holds the full bulk blob.
+    expect(localStorageBackend.parse('entry_mirror')).toEqual({ device_id: 'd', report_count: 9 });
+  });
+
+  test('no cookieDomain and no crossSubdomain ⇒ host-only cookie, no probe, no domain= attribute', () => {
+    const before = document.cookie;
+    const writes: string[] = [];
+    const spy = vi.spyOn(document, 'cookie', 'set').mockImplementation((value: string) => {
+      writes.push(value);
+    });
+    try {
+      const backend = buildPropsBackend('cookie', createMemoryBackend());
+      backend.set('entry_hostonly', { device_id: 'd' });
+
+      expect(writes.at(-1)).not.toContain('domain=');
+      expect(writes.some((w) => w.includes('domain_probe_'))).toBe(false);
+    } finally {
+      spy.mockRestore();
+      const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+      if (descriptor) {
+        Object.defineProperty(document, 'cookie', descriptor);
+      }
+    }
+    expect(document.cookie).toBe(before);
   });
 });
 

@@ -20,6 +20,8 @@ export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
     : new BrowserAdapter({
         key: config.key,
         persistence: config.persistence,
+        cookieDomain: config.cookieDomain,
+        crossSubdomainCookie: config.crossSubdomainCookie,
         sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
         sessionMaxLengthMs: config.sessionMaxLengthMs,
       });
