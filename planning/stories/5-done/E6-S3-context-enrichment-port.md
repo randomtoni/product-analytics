@@ -54,3 +54,17 @@ Auto-enriched context (page url/path/host, device/browser/OS, referrer, timezone
 - Library-computed enrichment is trusted; only consumer-supplied values are allowlist-gated (the E4-S7 / E3.4 distinction). — architect (2026-07-07): epic §E6.4.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08): `screen_*`/`viewport_*` are written unconditionally once `screen`/`win` exist (even if `0`) — faithful to posthog's unconditional build, but the other groups conditionally omit falsy values, so the module is slightly inconsistent. Add a `> 0` guard if "absent-when-zero" is wanted later.
+- > Reviewer suggestion (2026-07-08, cosmetic): the brave hint uses `nav?.brave` (typed `unknown`) truthiness — `Boolean(nav?.brave)` / `!= null` would document intent better.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08. (Builder's self-report was lost to a transient API 500 during report generation; the work landed complete and all gates were independently confirmed green, then reviewer-verified against every AC.)
+
+- **Files added (browser):** `user-agent.ts` (PURE DOM-free `parseUserAgent(ua, hints?)` → `{browser, browser_version, os, os_version}` via `detectBrowser`/`detectBrowserVersion`/`detectOS`; de-branded from `@posthog/core` user-agent-utils) + test; `context-enrichment.ts` (`buildContext` — fresh-per-event neutral page/device/referrer/timezone/lib bag; does ALL env reads + passes signals into the pure parser; `device_type` from screen signals; `$direct`→internal `'direct'`) + test
+- **Files changed:** `browser-adapter.ts` (`enrichContext` slotted as OUTERMOST wrap in `runCapturePipeline` = `enrichContext(mergeSuperProperties(stampSessionId(event)))`, after super-props; consumer/super-prop props win via `{...context, ...event.properties}`)
+- **New public API:** none — enrichment adapter-internal; context keys neutral (no `$`), library-computed ⇒ trusted (NOT allowlist-gated). Seam UNCHANGED.
+- **Tests added:** browser +34 (user-agent purity + Chrome/FF/Safari/mobile/Edge/Brave/unknown coverage; context fresh-per-event, non-DOM no-throw, consumer/super-prop override, not-gated-under-restrictive-allowlist end-to-end) → 467; seam 139
+- **Commit:** `E6-S3-context-enrichment-port — Page + device/browser + referrer context enrichment` on `core-cycle`
+- **Reviewer notes:** 0 critical, 3 suggestions (screen/viewport zero-guard consistency; brave Boolean cast; checkbox housekeeping)
+- **Cross-story seams exposed:** **S4** adds the set-once/session-entry layer (`$initial_*`/`$session_entry_*` equivalents) + reads referrer/UTM — composes with this fresh-per-event layer, don't conflate. **S5** makes each enrichment (page/device/referrer) individually disable-able — `buildContext` is structured so S5 can toggle groups independently; also owns the `capturePageleave` rewire. **S6** adds `country` (consumer-supplied ⇒ gated, via facade `register`). `parseUserAgent` is DOM-free and hoistable to the seam if E7 (node) needs UA parsing — kept SEPARATE from `bot-detection.ts`.

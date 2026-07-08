@@ -59,9 +59,13 @@ test('the capture pipeline stamps a UUIDv7 sessionId with no super-props registe
   const result = adapter.runCapturePipeline(event);
 
   expect(result.sessionId).toMatch(UUID_V7);
-  // No consumer super-props registered ⇒ properties bag is unchanged (identity keys
-  // in the store are reserved and never merged in).
-  expect(result.properties).toBeUndefined();
+  // No consumer super-props registered ⇒ the only keys in the bag are the E6-S3
+  // library-computed context; no reserved identity key merges in.
+  expect(result.properties).not.toHaveProperty(DISTINCT_ID_KEY);
+  expect(result.properties).not.toHaveProperty(DEVICE_ID_KEY);
+  expect(result.properties).not.toHaveProperty(IDENTITY_STATE_KEY);
+  // The bag now carries the always-on context (lib), not consumer super-props.
+  expect(result.properties).toHaveProperty('lib');
 });
 
 test('the capture pipeline stamps a fresh sessionId even when the event carried one — the adapter is authoritative', () => {
@@ -74,7 +78,8 @@ test('the capture pipeline stamps a fresh sessionId even when the event carried 
   // The adapter owns the session id; a value the caller happened to set is overwritten.
   expect(result.sessionId).toMatch(UUID_V7);
   expect(result.sessionId).not.toBe('stale-caller-value');
-  expect(result.properties).toEqual({ plan: 'pro', a: 1 });
+  // Super-prop + consumer prop both ride through (alongside the E6-S3 context bag).
+  expect(result.properties).toMatchObject({ plan: 'pro', a: 1 });
 });
 
 test('a fresh store reads back nothing for a never-written key', () => {
@@ -297,9 +302,9 @@ describe('super-property registration (S7)', () => {
 
     // Persisted (S2 storage).
     expect(adapter.getPersistedProperty('plan')).toBe('pro');
-    // Merged downstream into the event property bag.
+    // Merged downstream into the event property bag (alongside the E6-S3 context bag).
     const result = adapter.runCapturePipeline(makeEvent({ properties: { a: 1 } }));
-    expect(result.properties).toEqual({ plan: 'pro', a: 1 });
+    expect(result.properties).toMatchObject({ plan: 'pro', a: 1 });
   });
 
   test('register overwrites an existing super-prop', () => {
@@ -328,7 +333,8 @@ describe('super-property registration (S7)', () => {
 
     expect(adapter.getPersistedProperty('plan')).toBeUndefined();
     const result = adapter.runCapturePipeline(makeEvent());
-    expect(result.properties).toBeUndefined();
+    // The unregistered super-prop no longer merges (the context bag is still present).
+    expect(result.properties).not.toHaveProperty('plan');
   });
 
   test('a per-call event property WINS over a registered super-prop of the same key (super-props are defaults)', () => {
@@ -337,7 +343,8 @@ describe('super-property registration (S7)', () => {
 
     const result = adapter.runCapturePipeline(makeEvent({ properties: { plan: 'pro' } }));
 
-    expect(result.properties).toEqual({ plan: 'pro' });
+    // The per-call value wins over the super-prop default (the context bag rides alongside).
+    expect(result.properties).toMatchObject({ plan: 'pro' });
   });
 
   test('identity / library-computed keys are NEVER merged into events — the reserved-key exemption holds', () => {
@@ -348,8 +355,9 @@ describe('super-property registration (S7)', () => {
 
     const result = adapter.runCapturePipeline(makeEvent());
 
-    // Only the consumer super-prop rides on the event — the reserved identity keys do not.
-    expect(result.properties).toEqual({ plan: 'pro' });
+    // The consumer super-prop rides on the event — the reserved identity keys do not
+    // (the E6-S3 context bag rides alongside; the identity keys stay excluded).
+    expect(result.properties).toMatchObject({ plan: 'pro' });
     expect(result.properties).not.toHaveProperty(DISTINCT_ID_KEY);
     expect(result.properties).not.toHaveProperty(DEVICE_ID_KEY);
     expect(result.properties).not.toHaveProperty(IDENTITY_STATE_KEY);
@@ -363,7 +371,8 @@ describe('super-property registration (S7)', () => {
 
     const result = adapter.runCapturePipeline(makeEvent({ properties: { a: 1 } }));
 
-    expect(result.properties).toEqual({ plan: 'pro', theme: 'dark', a: 1 });
+    // All super-props + the consumer prop merge (alongside the E6-S3 context bag).
+    expect(result.properties).toMatchObject({ plan: 'pro', theme: 'dark', a: 1 });
   });
 });
 
@@ -814,7 +823,8 @@ describe('identify — client-side anon→identified merge (S6)', () => {
     // as a consumer super-prop.
     const later = adapter.runCapturePipeline(makeEvent());
     expect(later.properties).not.toHaveProperty(ANONYMOUS_DISTINCT_ID_KEY);
-    expect(later.properties).toEqual({ plan: 'pro' });
+    // The super-prop rides through; the retained anon id does not (context rides alongside).
+    expect(later.properties).toMatchObject({ plan: 'pro' });
   });
 });
 
@@ -2960,11 +2970,173 @@ describe('pageview-state substrate (E6-S1)', () => {
 
     const result = adapter.runCapturePipeline(pageEvent({ properties: { ref: 'nav' } }));
 
-    // The event carries only what the caller supplied; pageViewId/pathname stay internal.
+    // The record's internal `pageViewId` never leaks onto the event. (`pathname` DOES
+    // appear on the event — as an E6-S3 context key, computed independently of the
+    // record — so it is no longer an internal-leak assertion.)
     expect(result.properties ?? {}).not.toHaveProperty('pageViewId');
-    expect(result.properties ?? {}).not.toHaveProperty('pathname');
+    expect(result.properties?.ref).toBe('nav');
     for (const key of Object.keys(result.properties ?? {})) {
       expect(key).not.toContain('$');
+    }
+  });
+});
+
+describe('per-event context enrichment (E6-S3)', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  const liveAdapters: BrowserAdapter[] = [];
+  function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
+    const adapter = new BrowserAdapter(options);
+    liveAdapters.push(adapter);
+    return adapter;
+  }
+
+  const beaconCleanups: (() => void)[] = [];
+  function spyBeacon(): { url: string; body: string | Uint8Array; contentType: string }[] {
+    beaconMock.calls.length = 0;
+    beaconMock.returns = true;
+    const nav = navigator as unknown as { sendBeacon?: (url: string) => boolean };
+    const had = 'sendBeacon' in nav;
+    const prior = nav.sendBeacon;
+    nav.sendBeacon = () => true;
+    beaconCleanups.push(() => {
+      if (had) nav.sendBeacon = prior;
+      else delete nav.sendBeacon;
+    });
+    return beaconMock.calls;
+  }
+
+  function wireEventsInBeacons(
+    beacons: { body: string | Uint8Array }[]
+  ): Record<string, unknown>[] {
+    const events: Record<string, unknown>[] = [];
+    for (const beacon of beacons) {
+      const text = typeof beacon.body === 'string' ? beacon.body : '';
+      for (const e of (JSON.parse(text) as { data: Record<string, unknown>[] }).data) {
+        events.push(e);
+      }
+    }
+    return events;
+  }
+
+  afterEach(() => {
+    for (const adapter of liveAdapters.splice(0)) {
+      (adapter as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    }
+    for (const cleanup of beaconCleanups.splice(0)) cleanup();
+    beaconMock.calls.length = 0;
+    vi.restoreAllMocks();
+  });
+
+  test('an event through the pipeline carries neutral page/device/browser/referrer/timezone/lib context — none $-prefixed (bar A)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    const props = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+    // Page (jsdom location), device/browser (jsdom navigator UA), referrer, timezone, lib.
+    expect(props).toHaveProperty('current_url');
+    expect(props).toHaveProperty('host');
+    expect(props).toHaveProperty('pathname');
+    expect(props).toHaveProperty('browser');
+    expect(props).toHaveProperty('device_type');
+    expect(props).toHaveProperty('screen_width');
+    expect(props).toHaveProperty('viewport_width');
+    expect(props).toHaveProperty('referrer');
+    expect(props).toHaveProperty('referring_domain');
+    expect(props).toHaveProperty('timezone_offset');
+    expect(props.lib).toBe(adapter.getLibraryId());
+    expect(props.lib_version).toBe(adapter.getLibraryVersion());
+
+    for (const key of Object.keys(props)) {
+      expect(key.startsWith('$')).toBe(false);
+    }
+  });
+
+  test('context is computed FRESH per event — a location change between captures is reflected', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    window.history.pushState({}, '', '/first');
+    try {
+      const first = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+      window.history.pushState({}, '', '/second');
+      const second = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+      expect(first.pathname).toBe('/first');
+      expect(second.pathname).toBe('/second');
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
+  });
+
+  test('a per-call consumer prop WINS over a context key of the same key (context is a default)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    const props = adapter
+      .runCapturePipeline(makeEvent({ properties: { browser: 'MyOwnBrowser', current_url: 'consumer://x' } }))
+      .properties as Record<string, unknown>;
+
+    expect(props.browser).toBe('MyOwnBrowser');
+    expect(props.current_url).toBe('consumer://x');
+  });
+
+  test('a registered super-prop also wins over a context key (super-props merge before context)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.register({ browser: 'SuperPropBrowser' });
+
+    const props = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+    expect(props.browser).toBe('SuperPropBrowser');
+  });
+
+  test('context keys are NOT allowlist-gated — they survive a restrictive facade allowlist (library-computed ⇒ trusted, bar A + E3)', () => {
+    // The allowlist is a FACADE-level gate. Context is computed INSIDE the adapter,
+    // downstream of that gate — so a restrictive allowlist that omits the context keys
+    // must not strip them. Drive the full facade→adapter→wire path to prove it.
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const analytics = createAnalytics(
+      { allowlist: ['ref'], onViolation: 'drop-and-error-log', consentDefault: 'granted' },
+      adapter
+    );
+    const beacons = spyBeacon();
+
+    analytics.track('signed_up', { ref: 'nav' });
+    adapter.unload();
+
+    const events = wireEventsInBeacons(beacons).filter((e) => e.event === 'signed_up');
+    expect(events).toHaveLength(1);
+    const props = events[0].properties as Record<string, unknown>;
+    // The consumer-supplied prop passed the allowlist; the computed context rode through
+    // ungated alongside it.
+    expect(props.ref).toBe('nav');
+    expect(props).toHaveProperty('current_url');
+    expect(props).toHaveProperty('browser');
+    expect(props).toHaveProperty('lib');
+  });
+
+  test('capture with enrichment does NOT throw in a non-DOM context', () => {
+    const globalObj = globalThis as Record<string, unknown>;
+    const saved = {
+      navigator: globalObj.navigator,
+      window: globalObj.window,
+      document: globalObj.document,
+    };
+    try {
+      // Construct the adapter with the DOM present (its constructor binds unload
+      // listeners), then strip the DOM and drive the enrichment pipeline directly.
+      const adapter = new BrowserAdapter({ key: freshKey() });
+      delete globalObj.navigator;
+      delete globalObj.window;
+      delete globalObj.document;
+
+      expect(() => adapter.capture(makeEvent())).not.toThrow();
+      const props = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+      // The page/device keys are absent (no DOM), but lib still rides through.
+      expect(props).not.toHaveProperty('current_url');
+      expect(props).not.toHaveProperty('browser');
+      expect(props.lib).toBe('analytics-kit-browser');
+    } finally {
+      globalObj.navigator = saved.navigator;
+      globalObj.window = saved.window;
+      globalObj.document = saved.document;
     }
   });
 });

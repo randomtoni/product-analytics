@@ -46,6 +46,7 @@ import { interpretBodyBackPressure } from './back-pressure-interpreter';
 import { gzipCompress, gzipSyncFallback, isGzipSupported, isGzipData } from './gzip';
 import { appendCompressedQueryParams, GZIP_CONTENT_TYPE, JSON_CONTENT_TYPE } from './transport-wire';
 import { beaconSend, hasFetch, postViaXhr, KEEPALIVE_THRESHOLD_BYTES } from './transport';
+import { buildContext } from './context-enrichment';
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
@@ -414,7 +415,20 @@ export class BrowserAdapter implements AnalyticsAdapter {
   runCapturePipeline(event: NeutralEvent): NeutralEvent {
     const stamped = this.stampSessionId(event);
     this.trackPageview(stamped);
-    return this.mergeSuperProperties(stamped);
+    return this.enrichContext(this.mergeSuperProperties(stamped));
+  }
+
+  // Merge the fresh-per-event auto-context (page / device / referrer / timezone / lib)
+  // into the event as the OUTERMOST wrap, AFTER super-props. Context keys are library-
+  // computed ⇒ trusted (no allowlist re-gate). They are defaults: a per-call consumer
+  // prop (or a super-prop already merged in) of the same key WINS — the spread order
+  // (context first, incoming bag last) mirrors mergeSuperProperties.
+  private enrichContext(event: NeutralEvent): NeutralEvent {
+    const context = buildContext({
+      libraryId: this.getLibraryId(),
+      libraryVersion: this.getLibraryVersion(),
+    });
+    return { ...event, properties: { ...context, ...event.properties } };
   }
 
   // Maintain the current-pageview record off the session-stamped event. Rotation is
