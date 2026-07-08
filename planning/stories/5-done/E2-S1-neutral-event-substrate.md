@@ -59,3 +59,13 @@ Every other E2 story references the neutral event shape — the SPI's `capture` 
 - **Public-surface plumbing (E1 shipped shape):** the seam's only tsup entry + only export barrel is `src/index.ts` (E1-S2 shipped the exports triplet with **no `"type":"module"`**; `include:["src"]`). Put these types in their own module (e.g. `src/neutral-event.ts`) and **re-export them through `src/index.ts`** — a type that isn't reachable from `index.ts` won't appear in the build or the emitted `.d.ts`. Under `moduleResolution: Bundler`, intra-package relative imports take **no** `.js` extension (`from './neutral-event'`, not `'./neutral-event.js'`). This plumbing convention holds for every E2 story that adds a public type.
 
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-07.
+
+- **Files added:** `packages/analytics-kit/src/neutral-event.ts`
+- **Files changed:** `packages/analytics-kit/src/index.ts` (+ `export type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event'`)
+- **New public API:** `NeutralEvent` (interface), `NeutralProperties` (`Record<string, unknown>`), `NeutralTraits` (alias) — all reach the emitted `dist/index.d.ts`
+- **Tests added:** none (pure-types story; existing `version` test still green)
+- **Commit:** `E2-S1-neutral-event-substrate — Neutral event object + shared neutral data types` on `core-cycle`
+- **Reviewer notes:** none — 0 critical, 0 suggestions (clean)
+- **Cross-story seams exposed:** frozen `NeutralEvent` fields — `event: string` (req), `distinctId: string` (**req**, resolved above the adapter), `properties?: NeutralProperties`, `timestamp?: Date`, `dedupeId: string` (**req**, settled neutral name; `→ uuid` is adapter-internal `[WIRE]`), `sessionId?: string` (optional, browser-populated E4). S2 SPI `capture(event: NeutralEvent)` + identify/group/setTraits reuse `NeutralTraits` (don't redefine). Import from `./neutral-event` (no `.js`); any new public type re-exports through `src/index.ts`.
