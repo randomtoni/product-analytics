@@ -3,3 +3,7 @@
 posthog-js
 
 handoff.md
+
+node_modules
+dist
+.turbo
