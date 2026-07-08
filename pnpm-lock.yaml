@@ -53,6 +53,10 @@ importers:
       analytics-kit:
         specifier: workspace:*
         version: link:../analytics-kit
+    devDependencies:
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
 
   packages/react:
     dependencies:
