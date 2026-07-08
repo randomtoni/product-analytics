@@ -60,3 +60,10 @@ Closes the allowlist story. A consumer who already declared a taxonomy (S1) shou
 - **Commit:** `E3-S3-allowlist-source-derivation — Allowlist derivation + the consumer-supplied-value-gated path` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions (both improvement-pass test-hardening candidates) → see Technical notes
 - **Name-exclusion by construction:** walks `Object.values(events/groups)` → `Object.keys(PropDecl)`, so event NAMES + group-TYPE names are never reached (no denylist to keep in sync). One config field only (`config.allowlist`); NO library auto-derivation from `config.taxonomy` (create-analytics.ts + S2 guard untouched). Closes E3 → core cycle exit criteria met.
+
+## Follow-up
+
+> E3 post-close improvement pass, 2026-07-07 (commit follows). Reviewer-verified, no regression (93 tests green).
+
+- **Locked the `page`-exclusion with a test** — derives over `defineTaxonomy({ events: { e: {} }, page: { url: 'string' } })` and asserts `url` is absent, so a future refactor that walked `decl.page` fails. (Addresses reviewer suggestion #1.)
+- **Made the no-auto-derive contract self-documenting** — a named test asserts `createAnalytics({ taxonomy }, spy)` with no `allowlist` leaves the guard inactive (off-list key reaches the spy); a `@ts-expect-error` (verified genuinely consumed) encodes that the taxonomy makes the key a *compile* error while the *runtime* guard stays inactive — "typing decision ≠ privacy decision". (Addresses reviewer suggestion #2.) `allowlist.test.ts` 9 → 11 tests.

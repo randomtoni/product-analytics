@@ -197,3 +197,26 @@ test('a taxonomy with only traits or only groups derives just those keys', () =>
   );
   expect(new Set(groupsOnly)).toEqual(new Set(['tier']));
 });
+
+test('derivation excludes decl.page prop keys — page props never enter the derived allowlist', () => {
+  const derived = deriveAllowlistFromTaxonomy(
+    defineTaxonomy({ events: { e: {} }, page: { url: 'string' } })
+  );
+
+  expect(derived).not.toContain('url');
+  expect(derived).toEqual([]);
+});
+
+test('supplying a taxonomy does NOT auto-derive or activate the guard — a taxonomy is a typing decision, not a privacy decision', () => {
+  const spy = new SpyAdapter();
+  const analytics = createAnalytics({ taxonomy: fixtureTaxonomy }, spy);
+
+  // off_taxonomy_key is typed OUT of signed_up (a typing decision, rejected at compile time). With
+  // no allowlist supplied the runtime guard is inactive, so the key is NOT gated OUT (a separate
+  // privacy decision) — it still reaches the adapter. Typing decision ≠ privacy decision.
+  // @ts-expect-error off_taxonomy_key is not part of signed_up's declared props
+  analytics.track('signed_up', { off_taxonomy_key: 1 });
+
+  expect(spy.captured).toHaveLength(1);
+  expect(spy.captured[0].properties).toEqual({ off_taxonomy_key: 1 });
+});

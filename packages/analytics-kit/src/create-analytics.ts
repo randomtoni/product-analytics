@@ -1,5 +1,9 @@
 import type { AnalyticsAdapter } from './adapter';
-import { AnalyticsProviderImpl, type AnalyticsProvider } from './analytics-provider';
+import {
+  AnalyticsProviderImpl,
+  type AnalyticsProvider,
+  type ViolationPolicy,
+} from './analytics-provider';
 import { NoopAdapter } from './noop-adapter';
 import type { ShapeOf, Taxonomy, TaxonomyDecl } from './taxonomy';
 
@@ -7,7 +11,7 @@ export interface AnalyticsConfig {
   key?: string;
   taxonomy?: Taxonomy<TaxonomyDecl>;
   allowlist?: string[];
-  onViolation?: 'throw' | 'drop-and-error-log';
+  onViolation?: ViolationPolicy;
 }
 
 export function createAnalytics<const T extends TaxonomyDecl>(

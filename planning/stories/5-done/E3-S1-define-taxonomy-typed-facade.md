@@ -97,3 +97,10 @@ The typed-taxonomy mechanism is one half of "mechanism from the library, content
 - **Commit:** `E3-S1-define-taxonomy-typed-facade — defineTaxonomy() runtime object + type brand + typed facade signatures` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions → see Technical notes (remove dead `DefaultTaxonomyDecl`; reconsider `'page'` reserved literal). Bar B + typed safety independently verified by the reviewer.
 - **Cross-story seams exposed:** **S3** walks `defineTaxonomy(decl).decl` (runtime registry: `Object.keys` over events/traits/groups/page prop names; `TaxonomyDecl`/`Taxonomy<T>` exported). **S2** attaches its guard to the guarded verbs on the non-generic `AnalyticsProviderImpl` (single call boundary); `AnalyticsConfig` already threads through `createAnalytics` for S2's `allowlist?`/`onViolation?` additions. `AnalyticsProviderImpl` stays non-generic (runtime untouched); `ShapeOf<T>` threads only the specific overload's return.
+
+## Follow-up
+
+> E3 post-close improvement pass, 2026-07-07 (commit follows). Reviewer-verified, no regression (93 tests green, public surface unchanged).
+
+- **Removed dead `DefaultTaxonomyDecl`** (`taxonomy.ts`) — declared + module-exported but referenced nowhere (vestige of the pre-overload design). `DefaultTaxonomyShape` (distinct, still public) untouched. (Addresses this story's reviewer suggestion #1.)
+- **Skipped with reason:** the `RESERVED_PAGE_EVENT='page'` reserved-literal reconsideration remains captured in Technical notes — it changes the emitted `page()` event name and is E6's semantic domain (page enrichment); not an E3 improvement-pass change. Deferred to E6.

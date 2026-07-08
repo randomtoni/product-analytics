@@ -13,13 +13,6 @@ export type TaxonomyDecl = {
   page?: PropDecl;
 };
 
-export type DefaultTaxonomyDecl = {
-  events: Record<string, PropDecl>;
-  traits: PropDecl;
-  groups: Record<string, PropDecl>;
-  page: PropDecl;
-};
-
 export type Taxonomy<T extends TaxonomyDecl> = { readonly decl: T };
 
 export function defineTaxonomy<const T extends TaxonomyDecl>(decl: T): Taxonomy<T> {

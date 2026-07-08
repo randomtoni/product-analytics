@@ -77,3 +77,10 @@ The payload allowlist is the library's vendor-neutral privacy contract: only con
 - **Commit:** `E3-S2-allowlist-guard — Payload allowlist guard at the facade call-boundary` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions → see Technical notes (consolidate `onViolation` union; top-level-keys-only documented limitation)
 - **Cross-story seams exposed (for S3):** the guard reads `config.allowlist` — a single flat `string[]`. S3's `deriveAllowlistFromTaxonomy` returns a `string[]` the consumer SPREADS into that one `allowlist` (`allowlist: [...derive(tx), ...superProps]`); no guard change to compose. Load-bearing: a derived-empty `[]` from a keyless taxonomy ACTIVATES an allow-nothing policy (`!== undefined`), not "no policy" — S3 must account for it. Error message: `analytics-kit: property "<key>" is not on the payload allowlist`.
+
+## Follow-up
+
+> E3 post-close improvement pass, 2026-07-07 (commit follows). Reviewer-verified, no regression (93 tests green, public surface unchanged).
+
+- **Consolidated the `onViolation` union** — one canonical `ViolationPolicy` alias (`analytics-provider.ts`) now referenced by both `AnalyticsConfig.onViolation` (`create-analytics.ts`) and the impl; the "locked seam" can't drift. Kept internal (bundled into `.d.ts`, NOT added to the export list), so the public surface + the `AnalyticsConfig` structural shape-pin are unchanged. (Addresses this story's reviewer suggestion #1.)
+- **Skipped with reason:** the top-level-keys-only allowlist boundary (nested `{user:{ssn}}` passes if `user` on-list) is a recorded DELIBERATE limitation, not a defect — deep/nested-key allowlisting is a future design extension (own story), not an E3 fix. Surfaced to the user in the run's final report.

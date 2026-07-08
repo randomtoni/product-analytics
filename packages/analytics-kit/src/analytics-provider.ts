@@ -8,7 +8,7 @@ import { generateUuid } from './uuid';
 
 const ANONYMOUS_DISTINCT_ID = 'anonymous';
 
-type ViolationPolicy = 'throw' | 'drop-and-error-log';
+export type ViolationPolicy = 'throw' | 'drop-and-error-log';
 
 type ConsoleLike = { error(...args: unknown[]): void };
 
