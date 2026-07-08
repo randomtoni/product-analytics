@@ -8,6 +8,7 @@ export { NoopAdapter } from './noop-adapter';
 export { createAnalytics } from './create-analytics';
 export type { AnalyticsConfig } from './create-analytics';
 export { defineTaxonomy } from './taxonomy';
+export { deriveAllowlistFromTaxonomy } from './allowlist';
 export type {
   Taxonomy,
   TaxonomyDecl,

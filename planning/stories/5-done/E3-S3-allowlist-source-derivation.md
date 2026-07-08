@@ -46,5 +46,17 @@ Closes the allowlist story. A consumer who already declared a taxonomy (S1) shou
 - **Union composition — consumer-side, not a library merge (PM 2026-07-07; tightened — architect 2026-07-07, Q4):** there is only ONE config input (`config.allowlist`). The consumer composes derived keys + explicit super-prop keys into it via array spread; the **guard builds a `Set` from that single array** (dedup + lookup). Do NOT implement a library-level merge of two config sources, and do NOT auto-derive from `config.taxonomy` — that would re-introduce the coupling the "separable" note rules out. "When both are present they combine as a union" means the consumer's spread, deduped by the guard's Set.
 - **Empty-list edge meets opt-in (— architect 2026-07-07):** `deriveAllowlistFromTaxonomy` returns `[]` for a taxonomy with events but no prop keys. A consumer spreading only that produces `allowlist: []`, which under S2's pinned `allowlist !== undefined` activation predicate ACTIVATES the guard (empty policy = allow nothing → everything throws). This is intended, but call it out in the derivation test so the interaction is visible, not a surprise. Cross-check the S2 activation-predicate note.
 - **No posthog-js analogue** — the allowlist and its derivation are entirely the library's own surface. Ground in the S1 `Taxonomy`/`TaxonomyDecl` shape and the S2 guard, not in `posthog-js`.
+- > Reviewer suggestion (2026-07-07, improvement-pass candidate): `decl.page` exclusion is structural-only, not test-locked. Add a test deriving over `defineTaxonomy({ events: { e: {} }, page: { url: 'string' } })` asserting `url` is absent — closes the loop on the page-exclusion AC so a future refactor adding `page` to the walk can't pass silently.
+- > Reviewer suggestion (2026-07-07, improvement-pass candidate): the "no auto-derivation from `config.taxonomy`" contract is proven only incidentally (by a typing test in `taxonomy.test.ts`). Add a dedicated named test in `allowlist.test.ts` — `createAnalytics({ taxonomy: fixtureTaxonomy })` with no `allowlist`, then `track('signed_up', { off_taxonomy_key: 1 })` passes — named to state "supplying a taxonomy does NOT auto-activate the guard" (self-documents the typing≠privacy seam).
 
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-07.
+
+- **Files added:** `packages/analytics-kit/src/allowlist.ts` (`deriveAllowlistFromTaxonomy`), `src/allowlist.test.ts` (9 tests)
+- **Files changed:** `src/index.ts` (export `deriveAllowlistFromTaxonomy`), `src/index.test.ts` (export regression)
+- **New public API:** `deriveAllowlistFromTaxonomy(taxonomy: Taxonomy<TaxonomyDecl>): string[]`
+- **Tests added:** 9 (deduped derivation; event-name + group-type-name exclusion; consumer-side composition; consumer-supplied-value gated both directions; library-computed-trusted downstream via `EnrichingAdapter`; `[]`-activates edge; traits/groups-only). 91 total in package.
+- **Commit:** `E3-S3-allowlist-source-derivation — Allowlist derivation + the consumer-supplied-value-gated path` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (both improvement-pass test-hardening candidates) → see Technical notes
+- **Name-exclusion by construction:** walks `Object.values(events/groups)` → `Object.keys(PropDecl)`, so event NAMES + group-TYPE names are never reached (no denylist to keep in sync). One config field only (`config.allowlist`); NO library auto-derivation from `config.taxonomy` (create-analytics.ts + S2 guard untouched). Closes E3 → core cycle exit criteria met.
