@@ -58,3 +58,20 @@ Turns the buffered queue into real delivery: a node-internal wire-mapper lays ea
 - api_impact additive.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08): the outer `deliver` re-slice at `configuredMaxBatchSize` is redundant on the non-413 path (queue already slices) but load-bearing for the 413 re-slice — a one-line note so a future reader doesn't "simplify" it away and break halving.
+- > Reviewer suggestion (2026-07-08, for S6/config-validation): an unset `ingestHost` yields a host-less `/batch/` path → global `fetch` throws → status 0 → retried 4× then dropped silently. Correct-by-design for R1 (no vendor host default), but a construction-time warning when `ingestHost` is absent would stop a misconfigured consumer silently dropping every batch. Out of S4 scope.
+- > Reviewer note (2026-07-08): `create-analytics.ts` casts `config.fetch ?? fetch as NodeFetch` — sound (a `Response` is a read-supertype of `{status}`); the cast is the one spot the "reads only `.status`" contract is convention not type. Leave as-is.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08. `touches: [adapters]` — the node backend adapter's wire/transport layer (de-branded PostHog-compatible capture wire per REFERENCE-BACKEND.md).
+
+- **Files added (node):** `wire-mapper.ts` (node-OWN `mapEventToWire`: `dedupeId`→top-level `uuid` VERBATIM, NO `$insert_id`, `distinctId`→`distinct_id`, plain event/properties/timestamp — no browser toggles; `assembleBatchEnvelope` → `{api_key, batch, sent_at}`), `gzip.ts` (node-OWN `gzipSync` from `node:zlib`, `mtime:0` deterministic, returns Buffer; NOT browser `CompressionStream`/`fflate`), `send-batch.ts` (`createSendBatch`: envelope→gzip→injectable fetch→per-delivery 413-halving→fixed-delay transient retry; node's OWN minimal `NodeFetch` reads only `.status`; resolves on give-up)
+- **Files changed:** `create-analytics.ts` (wires real `createSendBatch(config.fetch ?? global fetch)` into the queue's injected `send`)
+- **New public API:** none — all wire (`WireEvent`/envelope/`/batch/` path/gzip headers/`uuid` mapping/`NodeFetch`/`SendBatch`) adapter-internal (bar A). Consumers inject via existing `config.fetch`.
+- **Behavior:** gzip default-on + raw-JSON fallback (omits `Content-Encoding`) if gzip null; 413 halves maxBatchSize (min-1 floor, provably terminates) re-sends SAME records per-delivery (not persisted to queue); transient network/status-0/5xx/408/429 retry (fixed 3000ms × 3), non-413 4xx dropped; `ingestHost`+`ingestPath` config, no vendor host default
+- **Deliberate reference divergence:** `node:zlib` over posthog's shared-core `CompressionStream` (isolation bar + no `fflate` + sync C-backed + deterministic); fixed-delay retry (matches reference) not browser's exponential+jitter
+- **Tests added:** node +30 (wire-mapper 8: dedupeId→uuid verbatim + idempotent, no-`$insert_id`, browser-fields-never-leak, envelope; send-batch 22: gzip round-trip via gunzipSync, POST to ingestHost+`/batch/` + path override + no-vendor-default, 413-halving same-records + lone-record floor + not-retry-backoff, transient retry 503→503→200 + each status + give-up-resolves-drops, non-413-4xx-dropped, 3000ms fake-timer, gzip-empty→raw-fallback, injected-vs-global fetch) → 80; seam 166 unchanged
+- **Commit:** `E7-S4-batch-delivery-wire — Batch delivery: gzip envelope, node wire-mapper, 413-halving` on `core-cycle`
+- **Reviewer notes:** 0 critical, 3 suggestions (redundant-slice comment; ingestHost-absent warning for S6; fetch-cast note)
+- **Cross-story seams exposed:** **S5** trait/group events ride this SAME `mapEventToWire`+`assembleBatchEnvelope`+`createSendBatch` path — S5 extends `WireEvent` (lift trait bags to top-level wire keys, as browser does `set_traits`/`set_traits_once`); envelope/gzip/transport/413/retry are SETTLED. **S6** force-drains the queue whose `send` is this delivery closure (`flushNow()`/`drain()` from S3); resolve-on-give-up means a drain settles cleanly even on permanent-failure batches.
