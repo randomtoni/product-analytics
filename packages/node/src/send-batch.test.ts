@@ -288,6 +288,47 @@ describe('injected vs global fetch (via createAnalytics)', () => {
     expect(decodeBody(calls[0].body).batch[0].uuid).toBe('dd-inj');
   });
 
+  test('a setTraits update rides the same gzipped transport (nested `set` key round-trips)', async () => {
+    const { createAnalytics } = await import('./create-analytics');
+    const { fetchImpl, calls } = mockFetch([200]);
+
+    const analytics = createAnalytics({
+      ...baseConfig,
+      flushAt: 1,
+      fetch: fetchImpl as unknown as typeof fetch,
+    });
+    analytics.setTraits('user-1', { plan: 'pro' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].body).toBeInstanceOf(Uint8Array);
+    const envelope = decodeBody(calls[0].body);
+    expect(envelope.batch[0].event).toBe('set_traits');
+    expect(envelope.batch[0].properties).toEqual({ set: { plan: 'pro' } });
+  });
+
+  test('a setGroupTraits update rides the same gzipped transport (nested group keys round-trip)', async () => {
+    const { createAnalytics } = await import('./create-analytics');
+    const { fetchImpl, calls } = mockFetch([200]);
+
+    const analytics = createAnalytics({
+      ...baseConfig,
+      flushAt: 1,
+      fetch: fetchImpl as unknown as typeof fetch,
+    });
+    analytics.setGroupTraits('company', 'acme', { name: 'Acme' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const envelope = decodeBody(calls[0].body);
+    expect(envelope.batch[0].event).toBe('set_group_traits');
+    expect(envelope.batch[0].distinct_id).toBe('company_acme');
+    expect(envelope.batch[0].properties).toEqual({
+      group_type: 'company',
+      group_key: 'acme',
+      group_set: { name: 'Acme' },
+    });
+  });
+
   test('createAnalytics falls back to the global fetch when none is injected', async () => {
     const { createAnalytics } = await import('./create-analytics');
     const globalSpy = vi

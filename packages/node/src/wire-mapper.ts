@@ -1,5 +1,24 @@
 import type { NeutralEvent, NeutralProperties } from 'analytics-kit';
 
+// Reserved internal event NAMES the trait verbs mint under — node's own, never a
+// consumer event (mirrors the browser's `MERGE_EVENT = 'identify'` adapter-internal
+// name and the seam's reserved-name string-constant pattern). The wire-mapper keys
+// off these to apply the trait/group [WIRE] normalization; the consumer reaches these
+// paths through the `setTraits`/`setGroupTraits` verbs, never by typing the string.
+export const SET_TRAITS_EVENT = 'set_traits';
+export const SET_GROUP_TRAITS_EVENT = 'set_group_traits';
+
+// Adapter-internal [WIRE] property key names, de-branded from posthog-js NODE's
+// `$set`/`$set_once` (person) and `$group_type`/`$group_key`/`$group_set` (group).
+// Node NESTS these inside wire `properties` (NOT the browser's top-level lift). The
+// trait verbs stash the raw bags under these keys at mint; the neutral surface never
+// sees them.
+export const WIRE_SET_KEY = 'set';
+export const WIRE_SET_ONCE_KEY = 'set_once';
+export const WIRE_GROUP_TYPE_KEY = 'group_type';
+export const WIRE_GROUP_KEY_KEY = 'group_key';
+export const WIRE_GROUP_SET_KEY = 'group_set';
+
 // The [WIRE] shape of a single server-side captured event and its batch envelope —
 // node's OWN de-branded mapping, re-implemented (the seam defines no canonical wire
 // format). Node's envelope is `{ api_key, batch, sent_at }`, entirely distinct from
@@ -29,12 +48,46 @@ export interface WireBatchEnvelope {
 }
 
 export function mapEventToWire(event: NeutralEvent): WireEvent {
-  return {
+  const wire: WireEvent = {
     uuid: event.dedupeId,
     event: event.event,
     distinct_id: event.distinctId,
     properties: event.properties,
     timestamp: event.timestamp?.toISOString(),
+  };
+
+  if (event.event === SET_TRAITS_EVENT) {
+    wire.properties = mapTraitProperties(event.properties);
+  } else if (event.event === SET_GROUP_TRAITS_EVENT) {
+    wire.properties = mapGroupProperties(event.properties);
+  }
+
+  return wire;
+}
+
+// Rename the neutral wrapper keys the `setTraits` verb stashed the raw bags under
+// (SET_KEY/SET_ONCE_KEY) into the de-branded [WIRE] `set`/`set_once` nested keys.
+// Only the present bag is emitted (an absent `once` bag yields no `set_once` key).
+function mapTraitProperties(properties: NeutralProperties | undefined): NeutralProperties {
+  const props = properties ?? {};
+  const wire: NeutralProperties = {};
+  if (WIRE_SET_KEY in props) {
+    wire[WIRE_SET_KEY] = props[WIRE_SET_KEY];
+  }
+  if (WIRE_SET_ONCE_KEY in props) {
+    wire[WIRE_SET_ONCE_KEY] = props[WIRE_SET_ONCE_KEY];
+  }
+  return wire;
+}
+
+// Rename the neutral wrapper keys the `setGroupTraits` verb stashed into the
+// de-branded [WIRE] group-identify nested keys (group_type/group_key/group_set).
+function mapGroupProperties(properties: NeutralProperties | undefined): NeutralProperties {
+  const props = properties ?? {};
+  return {
+    [WIRE_GROUP_TYPE_KEY]: props[WIRE_GROUP_TYPE_KEY],
+    [WIRE_GROUP_KEY_KEY]: props[WIRE_GROUP_KEY_KEY],
+    [WIRE_GROUP_SET_KEY]: props[WIRE_GROUP_SET_KEY],
   };
 }
 

@@ -4,11 +4,21 @@ import {
   enforceAllowlist,
   type NeutralEvent,
   type NeutralProperties,
+  type NeutralTraits,
   type PropDecl,
   type TaxonomyShape,
 } from 'analytics-kit';
 import type { NodeAnalyticsConfig, ViolationPolicy } from './config';
 import { BatchQueue } from './batch-queue';
+import {
+  SET_GROUP_TRAITS_EVENT,
+  SET_TRAITS_EVENT,
+  WIRE_GROUP_KEY_KEY,
+  WIRE_GROUP_SET_KEY,
+  WIRE_GROUP_TYPE_KEY,
+  WIRE_SET_KEY,
+  WIRE_SET_ONCE_KEY,
+} from './wire-mapper';
 
 export type CaptureOptions = { dedupeId?: string };
 
@@ -41,6 +51,12 @@ export interface NodeCapture<TX extends TaxonomyShape> {
 
 export interface NodeAnalytics<TX extends TaxonomyShape> {
   capture: NodeCapture<TX>;
+  setTraits(distinctId: string, traits: TX['traits'], once?: boolean): void;
+  setGroupTraits<G extends keyof TX['groups'] & string>(
+    groupType: G,
+    groupKey: string,
+    traits: TX['groups'][G]
+  ): void;
   flush(): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -116,6 +132,51 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
       return { dedupeId: (propsOrOptions as CaptureOptions).dedupeId };
     }
     return { props: propsOrOptions as NeutralProperties };
+  }
+
+  // Set person properties server-side. The raw trait bag is gated BEFORE minting (an
+  // off-list key fails loudly, bar A), then stashed under the neutral wrapper key at
+  // mint; the wire-mapper renames it to the de-branded nested `[set]`/`[set_once]`.
+  // `once === true` routes the bag to the set-once (first-touch) key, else the set key.
+  setTraits(distinctId: string, traits: NeutralTraits, once?: boolean): void {
+    if (!enforceAllowlist(this.allowlist, this.onViolation, traits)) return;
+
+    const properties: NeutralProperties = {
+      [once === true ? WIRE_SET_ONCE_KEY : WIRE_SET_KEY]: traits,
+    };
+    this.enqueueInternal(SET_TRAITS_EVENT, distinctId, properties);
+  }
+
+  // Set group/cohort properties server-side. `distinctId` defaults to the de-branded
+  // `${groupType}_${groupKey}` composite (no persisted server identity). The raw trait
+  // bag is gated before minting; groupType/groupKey are routing identifiers, not
+  // consumer properties, so they are not gated. The wire-mapper renames the wrapper
+  // keys to the de-branded `[group_type]`/`[group_key]`/`[group_set]` nested shape.
+  setGroupTraits(groupType: string, groupKey: string, traits: NeutralTraits): void {
+    if (!enforceAllowlist(this.allowlist, this.onViolation, traits)) return;
+
+    const properties: NeutralProperties = {
+      [WIRE_GROUP_TYPE_KEY]: groupType,
+      [WIRE_GROUP_KEY_KEY]: groupKey,
+      [WIRE_GROUP_SET_KEY]: traits,
+    };
+    this.enqueueInternal(SET_GROUP_TRAITS_EVENT, `${groupType}_${groupKey}`, properties);
+  }
+
+  // Mint + enqueue an adapter-internal event (trait/group), riding the SAME queue and
+  // delivery as capture — a minted dedupeId feeds the wire `uuid`.
+  private enqueueInternal(
+    event: string,
+    distinctId: string,
+    properties: NeutralProperties
+  ): void {
+    this.queue.enqueue({
+      event,
+      distinctId,
+      properties,
+      timestamp: new Date(),
+      dedupeId: randomUUID(),
+    });
   }
 
   // Real force-drain body lands in E7-S6.

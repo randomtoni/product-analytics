@@ -9,6 +9,10 @@ const analytics = createAnalytics({
       order_placed: { amount: 'number' },
       logged_out: {},
     },
+    traits: { plan: 'string', seats: 'number' },
+    groups: {
+      company: { name: 'string', size: 'number' },
+    },
   }),
 });
 
@@ -53,6 +57,33 @@ const _bareUntypedCaptures = (): void => {
   loose.capture('user-1', 'any_event');
 };
 
+const _setTraitsTypedOffTaxonomy = (): void => {
+  analytics.setTraits('user-1', { plan: 'pro', seats: 5 });
+  analytics.setTraits('user-1', { plan: 'pro', seats: 5 }, true);
+};
+
+const _rejectsWrongTraits = (): void => {
+  // @ts-expect-error seats must be a number, not a string
+  analytics.setTraits('user-1', { seats: 'lots' });
+  // @ts-expect-error rogue is not a declared trait
+  analytics.setTraits('user-1', { rogue: 'x' });
+  // @ts-expect-error once is a boolean flag, not a second trait bag
+  analytics.setTraits('user-1', { plan: 'pro' }, { plan: 'pro' });
+};
+
+const _setGroupTraitsTypedOffTaxonomy = (): void => {
+  analytics.setGroupTraits('company', 'acme', { name: 'Acme', size: 200 });
+};
+
+const _rejectsWrongGroupTraits = (): void => {
+  // @ts-expect-error 'team' is not a declared group type
+  analytics.setGroupTraits('team', 'acme', { name: 'Acme' });
+  // @ts-expect-error size must be a number, not a string
+  analytics.setGroupTraits('company', 'acme', { size: 'big' });
+  // @ts-expect-error rogue is not a declared trait of the company group
+  analytics.setGroupTraits('company', 'acme', { rogue: 'x' });
+};
+
 test('taxonomy-typing compile-time pins are present (validated by tsc, not executed)', () => {
   expect([
     _declaredEventTypeChecks,
@@ -61,13 +92,19 @@ test('taxonomy-typing compile-time pins are present (validated by tsc, not execu
     _noPropsEventIsOptional,
     _distinctIdRequired,
     _bareUntypedCaptures,
-  ]).toHaveLength(6);
+    _setTraitsTypedOffTaxonomy,
+    _rejectsWrongTraits,
+    _setGroupTraitsTypedOffTaxonomy,
+    _rejectsWrongGroupTraits,
+  ]).toHaveLength(10);
 });
 
 // --- separate NodeAnalytics surface pin (does NOT touch the frozen-15 AnalyticsProvider) ---
 
 test('NodeAnalytics exposes exactly its own narrow server surface', () => {
-  expectTypeOf<keyof NodeAnalytics<never>>().toEqualTypeOf<'capture' | 'flush' | 'shutdown'>();
+  expectTypeOf<keyof NodeAnalytics<never>>().toEqualTypeOf<
+    'capture' | 'setTraits' | 'setGroupTraits' | 'flush' | 'shutdown'
+  >();
   expectTypeOf<NodeAnalytics<never>['flush']>().returns.toEqualTypeOf<Promise<void>>();
   expectTypeOf<NodeAnalytics<never>['shutdown']>().returns.toEqualTypeOf<Promise<void>>();
 });

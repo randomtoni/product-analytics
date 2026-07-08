@@ -1,6 +1,11 @@
 import type { NeutralEvent } from 'analytics-kit';
 import { expect, test } from 'vitest';
-import { assembleBatchEnvelope, mapEventToWire } from './wire-mapper';
+import {
+  assembleBatchEnvelope,
+  mapEventToWire,
+  SET_GROUP_TRAITS_EVENT,
+  SET_TRAITS_EVENT,
+} from './wire-mapper';
 
 function neutral(overrides: Partial<NeutralEvent> = {}): NeutralEvent {
   return {
@@ -58,6 +63,94 @@ test('browser-only NeutralEvent fields never leak onto the wire (plain pass-thro
   expect(serialized).not.toContain('sessionId');
   expect(serialized).not.toContain('enrichmentProfile');
   expect(serialized).not.toContain('geoip');
+});
+
+// --- trait-event wire mapping (node's nested $set convention, NOT the browser lift) ---
+
+test('a set-traits event maps its stashed bag to the nested wire `set` key', () => {
+  const wire = mapEventToWire(
+    neutral({
+      event: SET_TRAITS_EVENT,
+      properties: { set: { plan: 'pro', seats: 5 } },
+    })
+  );
+
+  expect(wire.properties).toEqual({ set: { plan: 'pro', seats: 5 } });
+  expect(wire.event).toBe(SET_TRAITS_EVENT);
+});
+
+test('a set-once traits event maps its stashed bag to the nested wire `set_once` key', () => {
+  const wire = mapEventToWire(
+    neutral({
+      event: SET_TRAITS_EVENT,
+      properties: { set_once: { first_seen: 'today' } },
+    })
+  );
+
+  expect(wire.properties).toEqual({ set_once: { first_seen: 'today' } });
+  expect(wire.properties).not.toHaveProperty('set');
+});
+
+test('trait bags nest inside wire properties — never lifted to the top level (node, not browser)', () => {
+  const wire = mapEventToWire(
+    neutral({ event: SET_TRAITS_EVENT, properties: { set: { plan: 'pro' } } })
+  );
+
+  expect(wire).not.toHaveProperty('set');
+  expect(wire).not.toHaveProperty('set_traits');
+  expect(wire.properties?.set).toEqual({ plan: 'pro' });
+});
+
+test('a group-traits event maps to the nested group_type/group_key/group_set wire keys', () => {
+  const wire = mapEventToWire(
+    neutral({
+      event: SET_GROUP_TRAITS_EVENT,
+      distinctId: 'company_acme',
+      properties: {
+        group_type: 'company',
+        group_key: 'acme',
+        group_set: { name: 'Acme', size: 200 },
+      },
+    })
+  );
+
+  expect(wire.properties).toEqual({
+    group_type: 'company',
+    group_key: 'acme',
+    group_set: { name: 'Acme', size: 200 },
+  });
+});
+
+test('no $-prefixed vocab and no browser top-level lift key appears on trait/group wire events', () => {
+  const traitWire = mapEventToWire(
+    neutral({ event: SET_TRAITS_EVENT, properties: { set: { plan: 'pro' } } })
+  );
+  const groupWire = mapEventToWire(
+    neutral({
+      event: SET_GROUP_TRAITS_EVENT,
+      properties: { group_type: 'company', group_key: 'acme', group_set: {} },
+    })
+  );
+
+  for (const wire of [traitWire, groupWire]) {
+    const serialized = JSON.stringify(wire);
+    // No de-branded `$`-vocabulary leaks (the ported posthog tokens are stripped).
+    expect(serialized).not.toContain('$set');
+    expect(serialized).not.toContain('$group');
+    // The browser's TOP-LEVEL lift keys must NOT appear at the wire root — node nests.
+    expect(wire).not.toHaveProperty('set_traits');
+    expect(wire).not.toHaveProperty('set_traits_once');
+    expect(wire).not.toHaveProperty('set');
+    expect(wire).not.toHaveProperty('group_set');
+  }
+});
+
+test('a consumer event named like a trait bag key is NOT mapped as a trait event (reserved-name recognizer)', () => {
+  const wire = mapEventToWire(
+    neutral({ event: 'order_placed', properties: { set: 'a real consumer prop' } })
+  );
+
+  expect(wire.properties).toEqual({ set: 'a real consumer prop' });
 });
 
 test('assembleBatchEnvelope wraps mapped events in { api_key, batch, sent_at }', () => {

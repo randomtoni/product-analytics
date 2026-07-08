@@ -2,11 +2,16 @@ import { defineTaxonomy } from 'analytics-kit';
 import type { NeutralEvent } from 'analytics-kit';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { NodeAnalyticsClient, type SendBatch } from './node-analytics';
+import { mapEventToWire } from './wire-mapper';
 
 const taxonomy = defineTaxonomy({
   events: {
     order_placed: { amount: 'number' },
     logged_out: {},
+  },
+  traits: { plan: 'string', seats: 'number' },
+  groups: {
+    company: { name: 'string', size: 'number' },
   },
 });
 
@@ -262,6 +267,141 @@ test('config.maxBatchSize threads into the queue: a deep buffer slices per deliv
   flush();
 
   expect(sink.batches.map((b) => b.length)).toEqual([2, 2, 1]);
+});
+
+// --- setTraits / setGroupTraits: mint through the same queue + wire ---
+
+test('setTraits mints a set-traits event that rides the same queue (delivered gzipped-batch path)', () => {
+  const { client, sink } = keyedClient();
+
+  client.setTraits('user-1', { plan: 'pro', seats: 5 });
+  flush();
+
+  const [event] = sink.delivered;
+  expect(event.event).toBe('set_traits');
+  expect(event.distinctId).toBe('user-1');
+  const wire = mapEventToWire(event);
+  expect(wire.properties).toEqual({ set: { plan: 'pro', seats: 5 } });
+});
+
+test('setTraits(once=true) routes the bag to the set-once key at the wire, not set', () => {
+  const { client, sink } = keyedClient();
+
+  client.setTraits('user-1', { plan: 'pro' }, true);
+  flush();
+
+  const [event] = sink.delivered;
+  const wire = mapEventToWire(event);
+  expect(wire.properties).toEqual({ set_once: { plan: 'pro' } });
+  expect(wire.properties).not.toHaveProperty('set');
+});
+
+test('setTraits(once=false or omitted) routes the bag to the set key', () => {
+  const { client, sink } = keyedClient();
+
+  client.setTraits('user-1', { plan: 'pro' });
+  client.setTraits('user-1', { plan: 'pro' }, false);
+  flush();
+
+  for (const event of sink.delivered) {
+    const wire = mapEventToWire(event);
+    expect(wire.properties).toEqual({ set: { plan: 'pro' } });
+    expect(wire.properties).not.toHaveProperty('set_once');
+  }
+});
+
+test('setTraits mints a dedupeId → wire uuid (idempotent transport, same as capture)', () => {
+  const { client, sink } = keyedClient();
+
+  client.setTraits('user-1', { plan: 'pro' });
+  flush();
+
+  const [event] = sink.delivered;
+  const wire = mapEventToWire(event);
+  expect(typeof wire.uuid).toBe('string');
+  expect(wire.uuid.length).toBeGreaterThan(0);
+});
+
+test('setGroupTraits mints a group event with the composite distinctId default', () => {
+  const { client, sink } = keyedClient();
+
+  client.setGroupTraits('company', 'acme', { name: 'Acme', size: 200 });
+  flush();
+
+  const [event] = sink.delivered;
+  expect(event.event).toBe('set_group_traits');
+  expect(event.distinctId).toBe('company_acme');
+  const wire = mapEventToWire(event);
+  expect(wire.properties).toEqual({
+    group_type: 'company',
+    group_key: 'acme',
+    group_set: { name: 'Acme', size: 200 },
+  });
+});
+
+test('setTraits off-list trait key throws under the default policy — nothing minted', () => {
+  const { client, sink } = keyedClient();
+  const offList = { plan: 'pro', rogue: 'x' } as { plan: string };
+
+  expect(() => client.setTraits('user-1', offList)).toThrow(/not on the payload allowlist/);
+  flush();
+  expect(sink.delivered).toHaveLength(0);
+});
+
+test('setTraits off-list trait key under drop-and-error-log drops + logs — nothing minted', () => {
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const { client, sink } = keyedClient({ onViolation: 'drop-and-error-log' });
+  const offList = { plan: 'pro', rogue: 'x' } as { plan: string };
+
+  client.setTraits('user-1', offList);
+  flush();
+
+  expect(sink.delivered).toHaveLength(0);
+  expect(spy).toHaveBeenCalledWith(expect.stringContaining('not on the payload allowlist'));
+});
+
+test('setGroupTraits off-list trait key throws under the default policy — nothing minted', () => {
+  const { client, sink } = keyedClient();
+  const offList = { name: 'Acme', rogue: 'x' } as { name: string };
+
+  expect(() => client.setGroupTraits('company', 'acme', offList)).toThrow(
+    /not on the payload allowlist/
+  );
+  flush();
+  expect(sink.delivered).toHaveLength(0);
+});
+
+test('the raw wrapper key (`set`) is not itself allowlist-gated — the raw trait keys are', () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient(
+    { key: 'k', allowlist: ['plan'], flushAt: 1 },
+    sink.send
+  );
+
+  client.setTraits('user-1', { plan: 'pro' });
+  flush();
+  expect(sink.delivered).toHaveLength(1);
+});
+
+test('traits and captures ride the SAME queue and batch together', () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient({ key: 'k', taxonomy, flushAt: 3 }, sink.send);
+
+  client.capture('user-1', 'order_placed', { amount: 1 });
+  client.setTraits('user-1', { plan: 'pro' });
+  flush();
+  expect(sink.batches).toHaveLength(0);
+
+  client.setGroupTraits('company', 'acme', { name: 'Acme' });
+  flush();
+
+  expect(sink.batches).toHaveLength(1);
+  expect(sink.delivered).toHaveLength(3);
+  expect(sink.delivered.map((e) => e.event)).toEqual([
+    'order_placed',
+    'set_traits',
+    'set_group_traits',
+  ]);
 });
 
 // --- lifecycle skeletons resolve (real bodies E7-S6) ---
