@@ -1,11 +1,11 @@
 ---
 id: E5-CAP-transport
-status: planned
+status: active
 area: capture
 touches: [adapters, browser]
 api_impact: additive
 blocked_by: [E4-ID-identity-persistence]
-updated: 2026-07-07
+updated: 2026-07-08
 ---
 
 # E5-CAP-transport — Browser transport & reliability
@@ -26,15 +26,28 @@ Every browser event a consumer captures has to survive flaky networks, tab close
 
 ## Stories
 
-- **E5-S1 ingest transport config** *(additive, no deps)* — neutral `ingestHost` (+ optional `ingestPath`); NO region/vendor-host defaulting; the adapter appends its wire path internally. The one clear neutral-surface touch.
-- **E5-S2 request/batch queue** *(additive, no deps)* — port `request-queue`: time-based flush plus a size trigger for node parity; expose `flushInterval`/`flushAt`.
-- **E5-S3 retry queue + backoff** *(additive, depends on E5-S2)* — port `retry-queue`: exponential backoff ±50% jitter with a cap; retry network/5xx only, never 4xx; online/offline listeners; drain on unload via sendBeacon.
-- **E5-S4 client rate-limiter** *(additive, depends on E5-S2)* — port `rate-limiter` token bucket; neutralize back-pressure so the adapter interprets whatever signal its backend sends.
-- **E5-S5 compression** *(additive, depends on E5-S2)* — native `CompressionStream('gzip')` with fflate sync fallback + output validation; toggleable.
-- **E5-S6 transport selection + keepalive-on-unload** *(additive, depends on E5-S2, E5-S3)* — transport preference fetch → XHR → sendBeacon; keepalive for POSTs under the size cap; unload flushes both queues.
-- **E5-S7 bot/crawler filtering** *(additive, no deps)* — port the UA-substring denylist + webdriver/`navigator.webdriver` check; consumer-extendable list; config opt-out.
-- **E5-S8 per-event dedupe id** *(additive, no deps)* — settle the single neutral `dedupeId` field mapping to the wire top-level `uuid` (NOT `$insert_id`, and emit no random `$insert_id`); shared name with node (E7).
-- **E5-S9 offline queue persistence (NEW WORK)** *(additive, depends on E5-S3)* — a persisted-queue wrapper (localStorage/IndexedDB) around the retry logic so buffered events survive reloads, flushed on next load. **Not a port** — carries its own design note (PostHog's retry queue is in-memory only).
+Drafted to `stories/2-ready-for-dev/` (promoted by `/implement-epics E5`). Dependency graph:
+
+```
+E5-S1 (config) ─┐
+E5-S8 (dedupe) ─┴─► E5-S2 (batch queue) ─┬─► E5-S3 (retry) ─┬─► E5-S6 (transport/unload)
+                                         │                  └─► E5-S9 (offline persist, NEW WORK)
+                                         ├─► E5-S4 (rate-limiter)
+                                         └─► E5-S5 (compression)
+E5-S7 (bot filter) — no code deps (gates cap() upstream of the queue)
+```
+
+Topo-sortable order: **S1, S8, S7 → S2 → S3, S4, S5 → S6, S9**.
+
+- **[E5-S1](../stories/2-ready-for-dev/E5-S1-ingest-transport-config.md)** *(additive, no deps)* — neutral `ingestHost` (+ optional `ingestPath`) on config; NO region/vendor-host defaulting; the adapter resolves + stores the ingest URL and appends its wire path internally. The one clear neutral-surface touch. Touches `AnalyticsConfig` + `BrowserAdapter`.
+- **[E5-S8](../stories/2-ready-for-dev/E5-S8-per-event-dedupe-id.md)** *(additive, no deps)* — settle the neutral `dedupeId` → wire top-level `uuid` mapping (NOT `$insert_id`; emit no random `$insert_id`); shared name with node (E7). Adds the adapter-internal wire-mapper hook (shared with S2). Touches `BrowserAdapter` wire-mapper.
+- **[E5-S2](../stories/2-ready-for-dev/E5-S2-request-batch-queue.md)** *(additive, depends on S1 + S8)* — port `request-queue` de-branded: time-based flush + a size trigger; expose `flushInterval`/`flushAt`; `capture()` stops dropping and enqueues; real `flush()` POSTs the `data:[]` envelope via the SPI; the shared wire-mapper (keyed off `MERGE_EVENT`) + the E4-S3 opt-out drop-not-flush hook. Carries the `NeutralFetchResponse` header/compression forward note.
+- **[E5-S3](../stories/2-ready-for-dev/E5-S3-retry-queue-backoff.md)** *(additive, depends on S2)* — port `retry-queue` de-branded: exponential backoff ±50% jitter + cap; retry network/5xx only, never 4xx; online/offline listeners; in-memory (matches PostHog); exposes the unload-drain entry point.
+- **[E5-S4](../stories/2-ready-for-dev/E5-S4-client-rate-limiter.md)** *(additive, depends on S2)* — port `rate-limiter` token bucket; neutralize back-pressure so the adapter interprets whatever signal its backend sends (may extend `NeutralFetchResponse` per the S2 note).
+- **[E5-S5](../stories/2-ready-for-dev/E5-S5-compression.md)** *(additive, depends on S2)* — port `gzip`: native `CompressionStream('gzip')` + fflate sync fallback + output validation; neutral `compression` toggle; `[WIRE]` query params/headers adapter-internal.
+- **[E5-S6](../stories/2-ready-for-dev/E5-S6-transport-selection-keepalive.md)** *(additive, depends on S2 + S3)* — transport preference fetch → XHR → sendBeacon behind the `fetch()` SPI; keepalive for POSTs under ~52 KB; unload handler flushes BOTH queues via sendBeacon.
+- **[E5-S7](../stories/2-ready-for-dev/E5-S7-bot-crawler-filtering.md)** *(additive, no deps)* — port the UA-substring denylist + `navigator.webdriver` check; suppression at capture time (upstream of the queue); consumer-extendable list; config opt-out.
+- **[E5-S9](../stories/2-ready-for-dev/E5-S9-offline-queue-persistence.md)** *(additive, depends on S3)* — **NEW WORK, not a port** — a persisted-queue wrapper (localStorage; IndexedDB seam left open) around the S3 retry logic so buffered events survive a reload, rehydrated + flushed on next load. Reuses the E4 `StorageBackend` seam under its own store name; leans on S8's `uuid` dedupe for idempotent double-send.
 
 ## Out of scope
 

@@ -1,0 +1,47 @@
+---
+id: E5-S1-ingest-transport-config
+epic: E5-CAP-transport
+status: ready-for-dev
+area: capture
+touches: [browser, adapters]
+depends_on: []
+api_impact: additive
+---
+
+# E5-S1-ingest-transport-config — Neutral ingest host/path config
+
+## Why
+
+The one clear neutral-surface touch of the whole transport layer: a consumer points the library at a first-party reverse-proxy ingest endpoint by config alone (bar B). Everything downstream (batch queue, retry, compression) POSTs to the URL this story resolves.
+
+## Scope
+
+### In
+
+- Add `ingestHost` (required-ish for real delivery; a bare origin, e.g. `https://analytics.example.com`) and optional `ingestPath` to the neutral `AnalyticsConfig` in `packages/analytics-kit/src/create-analytics.ts`, both optional at the type level (an unkeyed / no-op client needs neither).
+- Thread both through `resolveAdapter` in `packages/browser/src/create-analytics.ts` into `BrowserAdapterOptions` on `packages/browser/src/browser-adapter.ts`.
+- Add an internal URL resolver in the browser adapter: given `ingestHost` (+ optional `ingestPath`), produce the ingest URL the transport POSTs to. The adapter appends its own wire path (the `[WIRE]` capture path, e.g. `/batch/`) when `ingestPath` is not overridden. Trailing-slash normalization on the host.
+- No delivery yet — this story only resolves and stores the target URL; S2 consumes it. `capture()` still drops post-pipeline.
+
+### Out
+
+- The actual POST / batch envelope / query params — S2 + S5 (`[WIRE]`).
+- Any region classification, vendor-host default, or `i.posthog.com` fallback — explicitly rejected (see Technical notes).
+- `dedupeId` → `uuid` wire mapping — E5-S8.
+
+## Acceptance criteria
+
+- [ ] `AnalyticsConfig` exposes `ingestHost?: string` and `ingestPath?: string`; both are optional and carry no default host value.
+- [ ] Pointing `ingestHost` at any first-party origin requires zero library-source change — verified by a test constructing the adapter with two different hosts and asserting the resolved URL differs accordingly (bar B).
+- [ ] No vendor hostname, region string, or `i.posthog.com`-style default appears anywhere in library source (grep-clean).
+- [ ] The resolved ingest URL is adapter-internal: the neutral surface exposes only `ingestHost`/`ingestPath` on config — no wire path, envelope, or query param leaks onto the neutral types (bar A).
+- [ ] Host trailing-slash + path joining is normalized (no `//` or missing `/` in the resolved URL); unit-tested.
+
+## Technical notes
+
+- **The one neutral-surface touch.** Transport is otherwise adapter-internal; only `ingestHost`/`ingestPath` (this story) and the per-event `dedupeId` (E5-S8) are neutral. — architect (2026-07-07): §E5 neutral-seam note.
+- **No region/vendor-host defaulting.** PostHog resolves everything off `config.api_host` via `request-router.ts` (region classification + `endpointFor`, analytics path `/e/`). De-brand to an explicit `ingestHost` (+ optional `ingestPath`) with **no** region or `i.posthog.com` defaulting (`posthog-js/packages/browser/src/request-router.ts:18,29-35` is `[WIRE]`) — a bare host the consumer points at their first-party reverse proxy; the adapter appends its wire path internally. — architect (2026-07-07): §E5.9.
+- Reference for the URL-building shape (path append, query params): `posthog-js/packages/browser/src/request.ts` (the `compression=`/`ver=`/`_=` query params there are `[WIRE]` and belong to S5, not this story).
+- Storage: the resolved URL lives on the `BrowserAdapter` instance (constructor-time), not in the property store — it is config, not persisted state.
+
+## Shipped
