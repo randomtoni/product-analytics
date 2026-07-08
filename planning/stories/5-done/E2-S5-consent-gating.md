@@ -60,3 +60,10 @@ Consent has no single owner across epics — it must be decided at the seam so i
 - **Commit:** `E2-S5-consent-gating — Consent trio + opt-out routes to the whole-stack no-op` on `core-cycle`
 - **Reviewer notes:** 0 critical, 3 suggestions → see Technical notes (2 E4 forward notes: shutdown-routing + live-adapter-swap drift; 1 improvement-pass candidate: shared NoopAdapter)
 - **Cross-story seams exposed:** the interface + `AnalyticsProviderImpl` now carry the trio; opt-out swaps the whole delegate to `NoopAdapter` (structural whole-stack guarantee — no `disabled` flag, no per-verb conditional). **S6** must extend the `keyof AnalyticsProvider` type-pin 11→13 when it adds `flags?`/`replay?`.
+
+## Follow-up
+
+> E2 post-close improvement pass, 2026-07-07 (commit follows). Reviewer-verified, behavior unchanged, 55 tests green.
+
+- **`optOut()` reuses a single `NoopAdapter`** — replaced per-call `new NoopAdapter()` with a per-facade-instance `readonly noopAdapter` field (NoopAdapter is stateless, so reuse is observationally identical; opt-out/opt-in/idempotence tests unchanged). (Addresses this story's reviewer suggestion #3.)
+- **Skipped with reason:** the two E4 forward notes (opted-out `shutdown()` routing to noop = lifecycle-vs-consent decision; live-adapter-swap must move `liveAdapter` too) remain captured in Technical notes for E4 to decide deliberately — not addressable in E2 (they're E4-scope design decisions, not E2 defects).

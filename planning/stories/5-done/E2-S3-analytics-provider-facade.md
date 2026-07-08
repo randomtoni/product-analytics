@@ -77,3 +77,9 @@ The `AnalyticsProvider` facade is the contract consumers code against — the ba
 - **Commit:** `E2-S3-analytics-provider-facade — AnalyticsProvider facade (the §1 consumer surface, delegating)` on `core-cycle`
 - **Reviewer notes:** 0 critical, 3 suggestions → see Technical notes (1 improvement-pass candidate: consolidate the distinctId stub accessor)
 - **Cross-story seams exposed:** internal class `AnalyticsProviderImpl` in `src/analytics-provider.ts` (`new AnalyticsProviderImpl(adapter: AnalyticsAdapter)`, exported from the module but NOT from `index.ts`). Adapter held in a **reassignable** private field — S4 injects resolved-or-Noop; S5 swaps to Noop on optOut. S5/S6 augment BOTH the interface AND this class (and must extend the `keyof AnalyticsProvider` type-pin test). E4 hook spots: `ANONYMOUS_DISTINCT_ID` + empty `reset()` body. Neutral page fallback = `'page'` (no `$`-token).
+
+## Follow-up
+
+> E2 post-close improvement pass, 2026-07-07 (commit follows). Reviewer-verified, behavior unchanged, 55 tests green.
+
+- **Consolidated the distinctId stub behind one accessor** — `buildEvent` and `setTraits` now route through a single private `currentDistinctId()` on `AnalyticsProviderImpl`; `ANONYMOUS_DISTINCT_ID` has exactly one reader. Confines E4's stub→real-resolver swap to one method body. (Addresses this story's reviewer suggestion #3.)

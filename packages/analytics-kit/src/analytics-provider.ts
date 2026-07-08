@@ -26,6 +26,7 @@ export interface AnalyticsProvider {
 export class AnalyticsProviderImpl implements AnalyticsProvider {
   private adapter: AnalyticsAdapter;
   private liveAdapter: AnalyticsAdapter;
+  private readonly noopAdapter = new NoopAdapter();
   private optedOut = false;
 
   constructor(adapter: AnalyticsAdapter) {
@@ -51,9 +52,9 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
 
   setTraits(traits: NeutralTraits, once?: boolean): void {
     if (once) {
-      this.adapter.identify(ANONYMOUS_DISTINCT_ID, undefined, traits);
+      this.adapter.identify(this.currentDistinctId(), undefined, traits);
     } else {
-      this.adapter.identify(ANONYMOUS_DISTINCT_ID, traits);
+      this.adapter.identify(this.currentDistinctId(), traits);
     }
   }
 
@@ -62,7 +63,7 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
   }
 
   optOut(): void {
-    this.adapter = new NoopAdapter();
+    this.adapter = this.noopAdapter;
     this.optedOut = true;
   }
 
@@ -83,10 +84,14 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
     return this.adapter.shutdown();
   }
 
+  private currentDistinctId(): string {
+    return ANONYMOUS_DISTINCT_ID;
+  }
+
   private buildEvent(event: string, props?: NeutralProperties): NeutralEvent {
     return {
       event,
-      distinctId: ANONYMOUS_DISTINCT_ID,
+      distinctId: this.currentDistinctId(),
       properties: props,
       timestamp: new Date(),
       dedupeId: generateUuid(),

@@ -7,6 +7,8 @@ export interface AnalyticsConfig {
 }
 
 export function createAnalytics(
+  // Unused in the seam by design: the target entry (browser/node) reads config.key to pick its
+  // adapter, and E3+ facade concerns (allowlist/taxonomy) will consume config here.
   config: AnalyticsConfig,
   adapter?: AnalyticsAdapter
 ): AnalyticsProvider {

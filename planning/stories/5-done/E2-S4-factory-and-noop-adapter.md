@@ -61,3 +61,9 @@ The config-selected factory is bar B ("new-app adoption = config only, zero libr
 - **Commit:** `E2-S4-factory-and-noop-adapter — createAnalytics factory machinery + whole-stack NoopAdapter` on `core-cycle`
 - **Reviewer notes:** 0 critical, 1 suggestion (config-param forward-note comment) → see Technical notes; inward-only rule verified clean (no `@analytics-kit/*` import, no dep in package.json)
 - **Cross-story seams exposed:** `NoopAdapter` exists as the whole-stack null-object **S5** routes to on `optOut` (facade adapter field is reassignable per S3). `createAnalytics` constructs `AnalyticsProviderImpl` internally, so **S5/S6** interface+class augmentations flow through the factory with no factory change. Adapter-arg is a sketch (`adapter?: AnalyticsAdapter`) — refinable to an adapter-set/factory when E5/E7 supply real target adapters. `AnalyticsConfig` extends additively (E3 taxonomy/allowlist, E4 cookie/persistence, E5 ingest).
+
+## Follow-up
+
+> E2 post-close improvement pass, 2026-07-07 (commit follows). Reviewer-verified, behavior unchanged, 55 tests green.
+
+- **Commented the intentionally-unused `config` param** in `createAnalytics(config, adapter?)` — one non-obvious-gotcha comment explaining it's the seam's forward slot (target reads `config.key` to pick its adapter; E3+ facade concerns consume `config` here; unused in E2 by design). (Addresses this story's reviewer suggestion.)
