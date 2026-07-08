@@ -1,6 +1,6 @@
 ---
 id: E3-CORE-taxonomy-allowlist
-status: planned
+status: active
 area: core
 touches: [privacy]
 api_impact: additive
@@ -18,15 +18,17 @@ The typed-taxonomy mechanism and the payload allowlist are the two "mechanism fr
 
 - `defineTaxonomy<T>()` returns a **runtime object** (not a bare generic) that carries the event/prop/group declaration at runtime and brands the type — one declaration powers both compile-time typing and the runtime key registry.
 - Typing flows through the facade: `track<K extends keyof T['events']>(event: K, props: T['events'][K])`, `group<G>(...)`, `page` as a reserved taxonomy slot, traits via an optional `T['traits']` map.
-- The allowlist guard runs at the facade call-boundary, synchronously, **PRE-enrichment**, inside `track`/`identify`/`group`/`setTraits`; it **throws** on an off-list consumer key by default (`onViolation: 'throw' | 'drop-and-error-log'`, default `throw`).
+- The allowlist guard runs at the facade call-boundary, synchronously, **PRE-enrichment**, inside `track`/`page`/`identify`/`group`/`setTraits`; it **throws** on an off-list consumer key by default (`onViolation: 'throw' | 'drop-and-error-log'`, default `throw`). (`page` carries consumer-supplied props and routes through the same capture path, so its props keys are gated identically — architect 2026-07-07, correcting an earlier enumeration that omitted `page`.)
 - Library-generated enrichment keys are **implicitly allowed** (added downstream of the guard, inside the adapter); consumer-supplied values (event props, traits, injected enrichment such as the E6 country source) are gated.
 - Allowlist source is an explicit `allowlist: string[]` config field with an optional `deriveAllowlistFromTaxonomy(taxonomy)` convenience — kept separable because super-props live outside any single event's taxonomy entry.
 
 ## Stories
 
-- `defineTaxonomy<T>()` — runtime object + type brand; wire the typed method signatures (`track`/`group`/`page`/traits) onto the facade.
-- Allowlist guard at the facade call-boundary (pre-enrichment, throw-by-default, `onViolation` config).
-- Allowlist source: explicit `allowlist: string[]` + `deriveAllowlistFromTaxonomy`; the "consumer-supplied value ⇒ gated" path (anticipating E6's injected country source).
+Dependency shape: a linear chain — **S1 → S2 → S3** (S3 also uses S1's runtime taxonomy object directly).
+
+- **[E3-S1](../stories/2-ready-for-dev/E3-S1-define-taxonomy-typed-facade.md)** *(additive, no deps)* — `defineTaxonomy(decl)` runtime object + `const` type brand; make `AnalyticsProvider<TX>` generic (loose default) with typed `track`/`group`/`page`/traits signatures; reserve the `page` slot + rename the neutral page fallback to a non-colliding `RESERVED_PAGE_EVENT`.
+- **[E3-S2](../stories/2-ready-for-dev/E3-S2-allowlist-guard.md)** *(additive, depends on E3-S1)* — the payload-allowlist guard at the facade call-boundary: synchronous, pre-enrichment, gating `track`/`page`/`identify`/`group`/`setTraits` prop/trait keys; `allowlist?`/`onViolation?` config (throw by default); opt-in when unconfigured.
+- **[E3-S3](../stories/2-ready-for-dev/E3-S3-allowlist-source-derivation.md)** *(additive, depends on E3-S1 + E3-S2)* — `deriveAllowlistFromTaxonomy` convenience (separable from + composable with explicit `allowlist`) and the "library computes ⇒ trusted; consumer supplies ⇒ gated" seam that E6's injected country source conforms to.
 
 ## Out of scope
 
@@ -42,7 +44,7 @@ The typed-taxonomy mechanism and the payload allowlist are the two "mechanism fr
 - — architect (2026-07-07): Enrichment keys are IMPLICITLY allowed because they're added downstream of the guard (inside the adapter, after the facade allowlist has run) and are each independently opt-out-able in E6. Rule: keys the library **computes** are trusted; keys OR values the consumer **supplies** (event props, traits, injected enrichment) are gated. Exception — the consumer-injected country source (E6) carries consumer data, so its key must be on-list; design this "consumer-supplied value ⇒ gated" path here, not as an E6 afterthought.
 - — architect (2026-07-07): Allowlist source = a separate explicit `allowlist: string[]` config field + an optional `deriveAllowlistFromTaxonomy(taxonomy)` convenience; keep them separable because global/registered super-props exist outside any single event's taxonomy entry.
 - — architect (2026-07-07, E-cross): Groups typing threads E3↔E6↔E2 — ensure `group()` typing flows through `defineTaxonomy` (E3), the capture path (E6), and the SPI (E2); don't let it fall between the identity and capture epics.
-- — planning flag (2026-07-07): the initial `T` shape ships `events` / `traits` / `groups` (+ the reserved `page` slot). Typed **super-properties** and typed **page-slot props** are Expansion-path-additive (below) — they extend `T` without moving the guard. **At story drafting, PM decides whether the first `T` includes them or defers**, checked against the example consumer's (Fernly) needs. Default: **defer** — ship the minimal `T`, add these additively when a real consumer needs them. Not a build blocker; called out so it isn't rediscovered mid-build.
+- — planning flag (2026-07-07): the initial `T` shape ships `events` / `traits` / `groups` (+ the reserved `page` slot). Typed **super-properties** and typed **page-slot props** are Expansion-path-additive (below) — they extend `T` without moving the guard. **At story drafting, PM decides whether the first `T` includes them or defers**, checked against the example consumer's (Fernly) needs. Default: **defer** — ship the minimal `T`, add these additively when a real consumer needs them. Not a build blocker; called out so it isn't rediscovered mid-build. **Resolved at drafting (PM, 2026-07-07): DEFER.** The example consumer (Fernly, E10) declares 7 typed `events`, maps role→trait and workspace/team→`group()`, and uses manual `page()` — but declares NO typed super-properties and NO typed page-specific props. The minimal `T` (`events` / `traits?` / `groups?` + reserved `page` slot) covers Fernly end-to-end; typed super-props and typed page-slot props stay additive expansions until a real consumer needs them. Recorded in E3-S1 Technical notes.
 - Confidence: high (E3).
 
 ## Expansion path
