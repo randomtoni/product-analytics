@@ -1,8 +1,10 @@
 import { generateUuidV7 } from './uuid-v7';
 import {
+  ANONYMOUS_DISTINCT_ID_KEY,
   ANONYMOUS_IDENTITY_STATE,
   DEVICE_ID_KEY,
   DISTINCT_ID_KEY,
+  IDENTIFIED_IDENTITY_STATE,
   IDENTITY_STATE_KEY,
   type IdentityState,
 } from './persistence-keys';
@@ -74,5 +76,24 @@ export class IdentityStore {
   // S6's anon→identified merge guard, which reads this to decide whether to merge.
   getIdentityState(): IdentityState {
     return this.state;
+  }
+
+  // Bind the anonymous actor to `distinctId` and retain the prior anon id. Snapshot
+  // the prior id FIRST, then update the cached + persisted distinct id in lockstep,
+  // persist the prior id under ANONYMOUS_DISTINCT_ID_KEY (retain, don't swap — so a
+  // later in-flight call keeps the merge linkage), and flip state to identified.
+  // Returns the retained prior anon id, which the merge event carries as its [WIRE]
+  // link. The caller guards that this runs only from the anonymous state on a real
+  // id change, so `distinctId` always differs from the returned prior id.
+  merge(distinctId: string): string {
+    const priorDistinctId = this.distinctId;
+    this.distinctId = distinctId;
+    this.store.register({
+      [DISTINCT_ID_KEY]: distinctId,
+      [ANONYMOUS_DISTINCT_ID_KEY]: priorDistinctId,
+      [IDENTITY_STATE_KEY]: IDENTIFIED_IDENTITY_STATE,
+    });
+    this.state = IDENTIFIED_IDENTITY_STATE;
+    return priorDistinctId;
   }
 }

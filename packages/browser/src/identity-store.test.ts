@@ -107,6 +107,46 @@ test('an injected device-id generator swaps the id scheme without touching disti
   expect(identity.getDistinctId()).not.toBe('device-scheme-x');
 });
 
+describe('merge (S6 — anon→identified)', () => {
+  test('swaps the cached + persisted distinct id in lockstep and flips state to identified', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+
+    identity.merge('user-1');
+
+    expect(identity.getDistinctId()).toBe('user-1');
+    expect(store.getProperty(DISTINCT_ID_KEY)).toBe('user-1');
+    expect(identity.getIdentityState()).toBe('identified');
+    expect(store.getProperty(IDENTITY_STATE_KEY)).toBe('identified');
+  });
+
+  test('retains the prior anon id under ANONYMOUS_DISTINCT_ID_KEY and returns it (retain, not swap)', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+    const anonId = identity.getDistinctId();
+
+    const returned = identity.merge('user-1');
+
+    expect(returned).toBe(anonId);
+    expect(store.getProperty(ANONYMOUS_DISTINCT_ID_KEY)).toBe(anonId);
+    // The device id is untouched by the merge (it is not the distinct id).
+    expect(store.getProperty(DEVICE_ID_KEY)).not.toBe('user-1');
+  });
+
+  test('a merged identity is reused across a reconstruct (same backing store)', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+    const anonId = identity.getDistinctId();
+    identity.merge('user-1');
+
+    const reloaded = new IdentityStore({ store });
+
+    expect(reloaded.getDistinctId()).toBe('user-1');
+    expect(reloaded.getIdentityState()).toBe('identified');
+    expect(store.getProperty(ANONYMOUS_DISTINCT_ID_KEY)).toBe(anonId);
+  });
+});
+
 describe('neutral-surface hygiene', () => {
   test('persists under de-branded keys — no $-prefixed name is written', () => {
     const store = freshStore();

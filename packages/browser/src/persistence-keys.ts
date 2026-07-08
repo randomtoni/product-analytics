@@ -10,6 +10,19 @@ export type IdentityState = 'anonymous' | 'identified';
 export const ANONYMOUS_IDENTITY_STATE: IdentityState = 'anonymous';
 export const IDENTIFIED_IDENTITY_STATE: IdentityState = 'identified';
 
+// The reserved event name for the anon→identified merge the adapter emits inside
+// identify(). Adapter-internal wire vocabulary the consumer never types (unlike the
+// neutral RESERVED_PAGE_EVENT) — the E5 wire-mapper maps it to the vendor merge
+// event. De-branded — no `$`-prefixed name.
+export const MERGE_EVENT = 'identify';
+
+// Adapter-internal [WIRE] property names carried on the merge / traits event only —
+// the retained prior anon id (the merge link) and the two person-trait bags. The
+// E5 wire-mapper normalizes these to the vendor conventions; the neutral surface
+// never sees a `$`-prefixed name.
+export const SET_TRAITS_KEY = 'set_traits';
+export const SET_TRAITS_ONCE_KEY = 'set_traits_once';
+
 // The small identity/session keys that the cookie half mirrors so they can be
 // shared across subdomains; the bulk of the props blob stays in localStorage.
 // The value minters land in later slices (S5/S8) — this store only routes them.

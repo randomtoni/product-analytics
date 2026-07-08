@@ -3,6 +3,7 @@ import type {
   ConsentState,
   NeutralEvent,
   NeutralProperties,
+  NeutralTraits,
   NeutralFetchOptions,
   NeutralFetchResponse,
   RegisterOptions,
@@ -15,11 +16,21 @@ import {
   type PersistenceMode,
   type StorageBackend,
 } from './storage-backends';
-import { consentStoreName, storeName, RESERVED_EVENT_KEYS } from './persistence-keys';
+import {
+  consentStoreName,
+  storeName,
+  ANONYMOUS_DISTINCT_ID_KEY,
+  ANONYMOUS_IDENTITY_STATE,
+  MERGE_EVENT,
+  RESERVED_EVENT_KEYS,
+  SET_TRAITS_KEY,
+  SET_TRAITS_ONCE_KEY,
+} from './persistence-keys';
 import { ConsentStore } from './consent';
 import { PersistenceStore } from './persistence-store';
 import { IdentityStore, type IdGenerator } from './identity-store';
 import { SessionIdManager } from './session-id-manager';
+import { generateUuidV7 } from './uuid-v7';
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
@@ -146,8 +157,70 @@ export class BrowserAdapter implements AnalyticsAdapter {
     this.store.unregister(key);
   }
 
-  identify(): void {
-    // The anon→identified merge + traits land in S6; S5 ships only the resolver.
+  identify(distinctId: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {
+    // Client-side anon→identified merge guard (de-branded). Merge ONLY when the id
+    // differs AND the actor is still anonymous: the identity store retains the prior
+    // anon id and flips state to identified, and we emit a merge event carrying that
+    // retained id as the [WIRE] link. A same-id re-identify, or a new id while
+    // already identified, does NOT merge — it only carries the trait bags.
+    const priorDistinctId = this.identity.getDistinctId();
+    const shouldMerge =
+      distinctId !== priorDistinctId &&
+      this.identity.getIdentityState() === ANONYMOUS_IDENTITY_STATE;
+
+    if (shouldMerge) {
+      const retainedAnonId = this.identity.merge(distinctId);
+      this.capture(this.buildMergeEvent(distinctId, retainedAnonId, traits, traitsOnce));
+      return;
+    }
+
+    // No merge (same id, or a new id while already identified): update traits only.
+    // Nothing to do when the caller supplied no traits — a bare re-identify is a
+    // no-op (the traits-only path fires only when traits are present).
+    if (traits === undefined && traitsOnce === undefined) {
+      return;
+    }
+    this.capture(this.buildTraitsEvent(this.identity.getDistinctId(), traits, traitsOnce));
+  }
+
+  // The merge / traits event carries the two person-trait bags as adapter-internal
+  // [WIRE] payload (mutable `traits` → set_traits, first-touch `traitsOnce` →
+  // set_traits_once). On a key collision the mutable bag wins, mirroring
+  // register / register_once precedence; the E5 wire-mapper normalizes the keys.
+  private buildTraitsEvent(
+    distinctId: string,
+    traits?: NeutralTraits,
+    traitsOnce?: NeutralTraits
+  ): NeutralEvent {
+    return {
+      event: MERGE_EVENT,
+      distinctId,
+      properties: this.traitBags(traits, traitsOnce),
+      timestamp: new Date(),
+      dedupeId: generateUuidV7(),
+    };
+  }
+
+  private buildMergeEvent(
+    distinctId: string,
+    retainedAnonId: string,
+    traits?: NeutralTraits,
+    traitsOnce?: NeutralTraits
+  ): NeutralEvent {
+    return {
+      ...this.buildTraitsEvent(distinctId, traits, traitsOnce),
+      properties: {
+        [ANONYMOUS_DISTINCT_ID_KEY]: retainedAnonId,
+        ...this.traitBags(traits, traitsOnce),
+      },
+    };
+  }
+
+  private traitBags(traits?: NeutralTraits, traitsOnce?: NeutralTraits): NeutralProperties {
+    const bags: NeutralProperties = {};
+    if (traits !== undefined) bags[SET_TRAITS_KEY] = { ...traits };
+    if (traitsOnce !== undefined) bags[SET_TRAITS_ONCE_KEY] = { ...traitsOnce };
+    return bags;
   }
 
   getDistinctId(): string {

@@ -49,8 +49,20 @@ api_impact: additive
 - **No new SPI verb (Q2):** the merge rides the existing `identify()` — no adapter-contract growth here. (So this story does NOT touch the SPI or the seam test doubles — unlike S3/S5/S7/S9.)
 - **Cross-subdomain AC assumes S4 (refiner 2026-07-08):** AC #7's cross-subdomain-journey check relies on S4's shared identity cookie. `depends_on` lists only S5 (the merge's hard dep), but the locked build order (`… → S4 → S6 → S9`) sequences S4 before S6, so S4 is shipped by the time this lands and the AC is satisfiable. If S6 is ever pulled ahead of S4, drop the cross-subdomain clause to the merge-only assertion (identify keeps ONE distinct id within a single context).
 - reference: `posthog-js/packages/browser/posthog-core.ts` `identify()` + `packages/core`; de-brand.
+- **traitsOnce = wire contract (reviewer-concurred, — architect 2026-07-08):** `traits`/`traitsOnce` ride the identify/merge event as de-branded `set_traits`/`set_traits_once` bags, persisting NOTHING client-side. `traitsOnce` "kept on repeat" is a WIRE `$set_once` contract resolved by the downstream person-props layer (E5+/server) — matches posthog-js exactly (it re-emits `$set_once` on every identify, no client dedupe). Deliberately keeps person-traits OFF the every-event super-prop path (Q6). Within a call, `traits` wins on key collision (register precedence — the only precedence the client can authoritatively resolve).
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate): `buildMergeEvent` calls `this.traitBags(...)` twice (spreads `buildTraitsEvent` then overwrites `properties` re-deriving the bags). Correct + cheap but redundant — compose from one shared `traitBags` local.
+- > Reviewer note (2026-07-08, for E5): `MERGE_EVENT` value is the literal `'identify'` (de-brands to the vendor merge event downstream). No collision today (adapter-emitted, never consumer-typed). E5's wire-mapper must key off the adapter-emitted `MERGE_EVENT`, not a consumer `track('identify')` string, so the two can't conflate. Also document that `traitsOnce` immutability is a wire/server contract so a later slice doesn't "fix" the every-identify re-emit with client dedupe.
 
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files changed (browser-only):** `browser-adapter.ts` (three-branch merge guard in `identify()` + merge/traits event builders via `capture()`), `identity-store.ts` (`merge(distinctId)`: snapshot prior → lockstep cache+persist swap → retain prior anon id → flip state → return link), `persistence-keys.ts` (de-branded `MERGE_EVENT`/`SET_TRAITS_KEY`/`SET_TRAITS_ONCE_KEY`)
+- **New public API:** none — merge rides the existing `identify()` SPI verb; seam UNCHANGED (no SPI growth, no test-double edits, both bars trivially preserved)
+- **Tests added:** browser +18 (3 branches + no-op bare re-identify; retain-prior-anon-id [WIRE] + no-`$`; merge-link can't ride a later event; traits/traitsOnce bags + collision precedence + copy-not-alias; cross-subdomain one-id; reload survival) → 165; seam 126 (unchanged)
+- **Commit:** `E4-S6-identify-merge-traits — Client-side anon→identified merge (rides identify()) + traits / traitsOnce` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions + concurred traitsOnce verdict → see Technical notes
+- **Cross-story seams exposed (S9 reset):** `reset()` must re-anonymize — regenerate the anon distinct id (fresh v7) updating cache+`DISTINCT_ID_KEY` in lockstep, flip state back to `anonymous`, CLEAR the retained `ANONYMOUS_DISTINCT_ID_KEY` (S6 sets it at merge — a stale link must not survive logout), keep `DEVICE_ID_KEY` unless `resetDevice`. Natural home: a new `IdentityStore.reset(options?)` sibling to `merge()` (it owns the cache↔persistence lockstep + state field).
 
 <!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/
 (files changed/added, new public API, tests added, commit, reviewer notes). Do not hand-edit. -->

@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { AnalyticsAdapter, NeutralEvent } from 'analytics-kit';
 import { BrowserAdapter } from './browser-adapter';
-import { DEVICE_ID_KEY, DISTINCT_ID_KEY, IDENTITY_STATE_KEY, storeName } from './persistence-keys';
+import {
+  ANONYMOUS_DISTINCT_ID_KEY,
+  DEVICE_ID_KEY,
+  DISTINCT_ID_KEY,
+  IDENTITY_STATE_KEY,
+  MERGE_EVENT,
+  SET_TRAITS_KEY,
+  SET_TRAITS_ONCE_KEY,
+  storeName,
+} from './persistence-keys';
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -581,5 +590,222 @@ describe('session id stamping (S8)', () => {
     for (const key of Object.keys(result.properties ?? {})) {
       expect(key).not.toContain('$');
     }
+  });
+});
+
+describe('identify — client-side anon→identified merge (S6)', () => {
+  test('a NEW id while anonymous performs the merge and transitions state to identified', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const anonId = adapter.getDistinctId();
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-1');
+
+    // The distinct id is swapped to the identified id (cache + persisted in lockstep).
+    expect(adapter.getDistinctId()).toBe('user-1');
+    expect(adapter.getPersistedProperty(DISTINCT_ID_KEY)).toBe('user-1');
+    // State flipped anonymous → identified (persisted).
+    expect(adapter.getPersistedProperty(IDENTITY_STATE_KEY)).toBe('identified');
+    // A merge event was emitted carrying the new distinct id.
+    expect(capture).toHaveBeenCalledTimes(1);
+    const merge = capture.mock.calls[0][0];
+    expect(merge.event).toBe(MERGE_EVENT);
+    expect(merge.distinctId).toBe('user-1');
+    // The id genuinely changed from the anonymous one.
+    expect(anonId).not.toBe('user-1');
+  });
+
+  test('the merge carries the RETAINED prior anonymous id as an adapter-internal [WIRE] payload', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const anonId = adapter.getDistinctId();
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-1');
+
+    const merge = capture.mock.calls[0][0];
+    // The prior anon id rides the merge event as the de-branded link property.
+    expect(merge.properties?.[ANONYMOUS_DISTINCT_ID_KEY]).toBe(anonId);
+    // And it is RETAINED in persistence (not just swapped) so a later in-flight call
+    // keeps the merge linkage.
+    expect(adapter.getPersistedProperty(ANONYMOUS_DISTINCT_ID_KEY)).toBe(anonId);
+  });
+
+  test('no `$`-prefixed name appears on the merge event or its properties (neutral-surface hygiene)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-1', { plan: 'pro' }, { signup_date: '2026-07-08' });
+
+    const merge = capture.mock.calls[0][0];
+    expect(merge.event).not.toContain('$');
+    for (const key of Object.keys(merge.properties ?? {})) {
+      expect(key).not.toContain('$');
+    }
+    // Nested trait-bag keys are de-branded too.
+    for (const bag of [SET_TRAITS_KEY, SET_TRAITS_ONCE_KEY]) {
+      for (const key of Object.keys((merge.properties?.[bag] as object) ?? {})) {
+        expect(key).not.toContain('$');
+      }
+    }
+  });
+
+  test('the SAME id updates traits only — no re-merge, no state churn, prior anon id untouched', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.identify('user-1');
+    const retainedAnon = adapter.getPersistedProperty(ANONYMOUS_DISTINCT_ID_KEY);
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-1', { plan: 'pro' });
+
+    // No new merge event names; the distinct id and retained anon id are unchanged.
+    expect(adapter.getDistinctId()).toBe('user-1');
+    expect(adapter.getPersistedProperty(ANONYMOUS_DISTINCT_ID_KEY)).toBe(retainedAnon);
+    // A traits-only event fired, carrying NO merge-link property.
+    expect(capture).toHaveBeenCalledTimes(1);
+    const evt = capture.mock.calls[0][0];
+    expect(evt.properties).not.toHaveProperty(ANONYMOUS_DISTINCT_ID_KEY);
+    expect(evt.properties?.[SET_TRAITS_KEY]).toEqual({ plan: 'pro' });
+  });
+
+  test('a bare same-id re-identify with no traits is a no-op (no event emitted)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.identify('user-1');
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-1');
+
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  test('a NEW id while ALREADY identified does NOT merge client-side', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.identify('user-1');
+    const retainedAnon = adapter.getPersistedProperty(ANONYMOUS_DISTINCT_ID_KEY);
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-2', { plan: 'pro' });
+
+    // The client-side distinct id does NOT switch to user-2 (no second merge), and
+    // the retained anon id is not re-pointed.
+    expect(adapter.getDistinctId()).toBe('user-1');
+    expect(adapter.getPersistedProperty(ANONYMOUS_DISTINCT_ID_KEY)).toBe(retainedAnon);
+    // The traits-only event that fires carries no merge-link property.
+    const evt = capture.mock.calls[0][0];
+    expect(evt.properties).not.toHaveProperty(ANONYMOUS_DISTINCT_ID_KEY);
+  });
+
+  test('traits (mutable) ride set_traits; traitsOnce (first-touch) ride set_traits_once', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-1', { plan: 'pro' }, { signup_date: '2026-07-08' });
+
+    const merge = capture.mock.calls[0][0];
+    expect(merge.properties?.[SET_TRAITS_KEY]).toEqual({ plan: 'pro' });
+    expect(merge.properties?.[SET_TRAITS_ONCE_KEY]).toEqual({ signup_date: '2026-07-08' });
+  });
+
+  test('on a key collision the mutable trait wins over the first-touch trait (register precedence)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.identify('user-1');
+    const capture = vi.spyOn(adapter, 'capture');
+
+    // Same key in both bags: the mutable value is authoritative on the event.
+    adapter.identify('user-1', { plan: 'pro' }, { plan: 'free' });
+
+    const evt = capture.mock.calls[0][0];
+    // Both bags are emitted verbatim; the E5 wire-mapper resolves $set over $set_once.
+    // The client encodes the precedence by carrying the mutable value on set_traits.
+    expect(evt.properties?.[SET_TRAITS_KEY]).toEqual({ plan: 'pro' });
+    expect((evt.properties?.[SET_TRAITS_KEY] as Record<string, unknown>).plan).toBe('pro');
+  });
+
+  test('the merge event omits an absent trait bag rather than emitting an empty object', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-1', { plan: 'pro' });
+
+    const merge = capture.mock.calls[0][0];
+    expect(merge.properties?.[SET_TRAITS_KEY]).toEqual({ plan: 'pro' });
+    expect(merge.properties).not.toHaveProperty(SET_TRAITS_ONCE_KEY);
+  });
+
+  test('the trait bag is copied, not aliased — mutating the caller bag after identify does not change the event', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const capture = vi.spyOn(adapter, 'capture');
+    const traits = { plan: 'pro' };
+
+    adapter.identify('user-1', traits);
+    traits.plan = 'mutated';
+
+    const merge = capture.mock.calls[0][0];
+    expect(merge.properties?.[SET_TRAITS_KEY]).toEqual({ plan: 'pro' });
+  });
+
+  test('the merge distinct id survives a reload — a merged identity re-reads as ONE id, still identified', () => {
+    const key = freshKey();
+    new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('granted');
+    const writer = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+    writer.identify('user-1');
+    window.dispatchEvent(new Event('beforeunload'));
+
+    const reloaded = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+
+    expect(reloaded.getDistinctId()).toBe('user-1');
+    expect(reloaded.getPersistedProperty(IDENTITY_STATE_KEY)).toBe('identified');
+    // A same-id re-identify after reload does NOT re-merge (still identified).
+    const capture = vi.spyOn(reloaded, 'capture');
+    reloaded.identify('user-1');
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  test('a simulated cross-subdomain journey (S4) + identify keeps ONE merged distinct id', () => {
+    // A host-matching cookieDomain truly round-trips the identity cookie (jsdom
+    // accepts domain=.localhost), so a second adapter on a different subdomain reads
+    // back the merged id — one distinct id across the journey.
+    const key = freshKey();
+    new BrowserAdapter({ key, persistence: 'cookie' }).setConsentState('granted');
+
+    const first = new BrowserAdapter({ key, persistence: 'cookie', cookieDomain: 'localhost' });
+    first.identify('user-1');
+    window.dispatchEvent(new Event('beforeunload'));
+
+    const secondSubdomain = new BrowserAdapter({
+      key,
+      persistence: 'cookie',
+      cookieDomain: 'localhost',
+    });
+
+    expect(secondSubdomain.getDistinctId()).toBe('user-1');
+    expect(secondSubdomain.getPersistedProperty(IDENTITY_STATE_KEY)).toBe('identified');
+  });
+
+  test('the merge event flows the normal capture pipeline (session-stamped like any event)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
+
+    adapter.identify('user-1');
+
+    // identify routes through capture() → runCapturePipeline, so E5 transport wraps
+    // it uniformly and S8 session stamping already applies.
+    expect(pipeline).toHaveBeenCalledTimes(1);
+    const stamped = pipeline.mock.results[0].value as NeutralEvent;
+    expect(stamped.sessionId).toMatch(UUID_V7);
+  });
+
+  test('registered super-props are NOT clobbered by the merge, and the merge-link is not a super-prop', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.register({ plan: 'pro' });
+
+    adapter.identify('user-1');
+
+    // The merge did not disturb the consumer super-prop store.
+    expect(adapter.getPersistedProperty('plan')).toBe('pro');
+    // The retained anon id is a reserved key, so it never merges into a later event
+    // as a consumer super-prop.
+    const later = adapter.runCapturePipeline(makeEvent());
+    expect(later.properties).not.toHaveProperty(ANONYMOUS_DISTINCT_ID_KEY);
+    expect(later.properties).toEqual({ plan: 'pro' });
   });
 });
