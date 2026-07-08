@@ -31,6 +31,7 @@ import { ConsentStore } from './consent';
 import { PersistenceStore } from './persistence-store';
 import { IdentityStore, type IdGenerator } from './identity-store';
 import { SessionIdManager } from './session-id-manager';
+import { resolveIngestUrl } from './ingest-url';
 import { generateUuidV7 } from './uuid-v7';
 
 const LIBRARY_ID = 'analytics-kit-browser';
@@ -54,6 +55,11 @@ export interface BrowserAdapterOptions {
   deviceIdGenerator?: IdGenerator;
   sessionIdleTimeoutMs?: number;
   sessionMaxLengthMs?: number;
+  // The bare ingest origin (e.g. https://analytics.example.com) the transport
+  // POSTs to, plus an optional path override; the adapter appends its own [WIRE]
+  // capture path when ingestPath is absent. No vendor host / region default.
+  ingestHost?: string;
+  ingestPath?: string;
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
@@ -62,8 +68,18 @@ export class BrowserAdapter implements AnalyticsAdapter {
   private readonly store: PersistenceStore;
   private readonly identity: IdentityStore;
   private readonly session: SessionIdManager;
+  // Resolved at construction from config (host + optional path override), NOT the
+  // property store — it is config, not persisted state. undefined when no
+  // ingestHost is supplied (an unkeyed / no-delivery client). S2's POST reads this
+  // via ingestUrl(); S5 appends its [WIRE] query params to the value it returns.
+  private readonly resolvedIngestUrl: string | undefined;
 
   constructor(options: BrowserAdapterOptions) {
+    this.resolvedIngestUrl = resolveIngestUrl({
+      ingestHost: options.ingestHost,
+      ingestPath: options.ingestPath,
+    });
+
     const mode = options.persistence ?? DEFAULT_PERSISTENCE_MODE;
     // One memory backend per client, shared by the consent read and the property
     // store so a pre-store read and later writes see the same instance.
@@ -275,6 +291,13 @@ export class BrowserAdapter implements AnalyticsAdapter {
     } else {
       this.store.register({ [key]: value });
     }
+  }
+
+  /** @internal The resolved ingest target for the transport POST; consumed by the
+   * batch queue in E5-S2 (and the [WIRE] query params appended in E5-S5). Adapter-
+   * internal — never on the neutral surface. undefined when no ingestHost is set. */
+  ingestUrl(): string | undefined {
+    return this.resolvedIngestUrl;
   }
 
   getLibraryId(): string {

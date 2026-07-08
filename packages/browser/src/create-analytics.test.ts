@@ -73,6 +73,36 @@ test("consentDefault 'granted' + pending: capture runs, yet cookies stay suppres
   expect(document.cookie).not.toContain(key);
 });
 
+test('pointing ingestHost at two different first-party origins resolves two different URLs (bar B: config only, zero library change)', () => {
+  const a = resolveAdapter({ key: 'ingest-a', ingestHost: 'https://a.example.com' });
+  const b = resolveAdapter({ key: 'ingest-b', ingestHost: 'https://b.example.com' });
+
+  expect(a).toBeInstanceOf(BrowserAdapter);
+  expect(b).toBeInstanceOf(BrowserAdapter);
+  const urlA = (a as BrowserAdapter).ingestUrl();
+  const urlB = (b as BrowserAdapter).ingestUrl();
+
+  expect(urlA).toBe('https://a.example.com/batch/');
+  expect(urlB).toBe('https://b.example.com/batch/');
+  expect(urlA).not.toBe(urlB);
+});
+
+test('ingestPath threads through config to override the wire path on the resolved URL', () => {
+  const adapter = resolveAdapter({
+    key: 'ingest-path',
+    ingestHost: 'https://analytics.example.com',
+    ingestPath: '/ingest/',
+  }) as BrowserAdapter;
+
+  expect(adapter.ingestUrl()).toBe('https://analytics.example.com/ingest/');
+});
+
+test('a keyed client with no ingestHost has no resolved ingest URL (no vendor-host default)', () => {
+  const adapter = resolveAdapter({ key: 'no-ingest-host' }) as BrowserAdapter;
+
+  expect(adapter.ingestUrl()).toBeUndefined();
+});
+
 test('omitting persistence yields the durable default (localStorage+cookie survives a reload)', () => {
   const key = 'mode-key-default';
   // Persistence is gated on consent (S3): grant durably before the durable write.

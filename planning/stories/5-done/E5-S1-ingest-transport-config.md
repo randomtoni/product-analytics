@@ -47,3 +47,17 @@ The one clear neutral-surface touch of the whole transport layer: a consumer poi
 - **Resolver signature note.** `resolveAdapter` in `packages/browser/src/create-analytics.ts` currently passes an explicit whitelist of fields into `BrowserAdapterOptions` (it does not spread `config`), so thread `ingestHost`/`ingestPath` through both the `AnalyticsConfig` type AND the explicit `resolveAdapter` construction — a config field added to the type alone never reaches the adapter.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate): `resolveIngestUrl` accepts an empty/whitespace-only `ingestHost` → returns a relative `/batch/` URL. Add a `if (host === '') return undefined;` guard after trim (+ test) so a blank host resolves to no-target like an omitted one.
+- > Reviewer suggestion (2026-07-08): `ingestPath` override isn't trailing-slash-normalized (default `/batch/` has one, override `/ingest` doesn't). Fine (S2 owns the POST), but document `ingestPath` is passed verbatim (leading slash guaranteed) or normalize both for a uniform resolved shape.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files changed (seam):** `create-analytics.ts` (+`AnalyticsConfig.ingestHost?`/`ingestPath?`) + shape-pin extended
+- **Files added (browser):** `ingest-url.ts` (`resolveIngestUrl` — host+path→URL|undefined, trailing-slash norm, appends `[WIRE]` `/batch/` when no `ingestPath`) + test; **changed:** `browser-adapter.ts` (resolve URL at construction, `@internal ingestUrl()`), `browser/create-analytics.ts` (thread through whitelist)
+- **New public API:** `AnalyticsConfig.ingestHost?: string` + `ingestPath?: string` (additive, no default host)
+- **Tests added:** browser +12 (ingest-url 9 normalization + config 3: two-hosts bar-B, ingestPath override, no-host→undefined) → 190; seam 128 (shape-pin extended)
+- **Commit:** `E5-S1-ingest-transport-config — Neutral ingest host/path config` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (edge-case hardening) → see Technical notes
+- **Cross-story seams exposed:** **S2** reads `BrowserAdapter.ingestUrl(): string | undefined` (`@internal`) for the POST — `undefined` = no delivery target (skip/drop, don't default). `capture()` still drops post-pipeline (S2 flips to enqueue). **S5** appends `[WIRE]` query params (`compression=`/`ver=`/`_=`) to the string `ingestUrl()` returns. Default wire path is the module-private `DEFAULT_WIRE_CAPTURE_PATH='/batch/'` (adapter-internal — the single adjust point).

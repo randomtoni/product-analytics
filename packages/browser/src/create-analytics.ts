@@ -24,6 +24,8 @@ export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
         crossSubdomainCookie: config.crossSubdomainCookie,
         sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
         sessionMaxLengthMs: config.sessionMaxLengthMs,
+        ingestHost: config.ingestHost,
+        ingestPath: config.ingestPath,
       });
 }
 

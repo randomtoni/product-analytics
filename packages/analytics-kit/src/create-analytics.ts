@@ -18,6 +18,8 @@ export interface AnalyticsConfig {
   crossSubdomainCookie?: boolean;
   sessionIdleTimeoutMs?: number;
   sessionMaxLengthMs?: number;
+  ingestHost?: string;
+  ingestPath?: string;
 }
 
 interface AnalyticsDeps {
