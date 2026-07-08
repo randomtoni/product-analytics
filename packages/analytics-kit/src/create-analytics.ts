@@ -12,6 +12,7 @@ export interface AnalyticsConfig {
   taxonomy?: Taxonomy<TaxonomyDecl>;
   allowlist?: string[];
   onViolation?: ViolationPolicy;
+  persistence?: 'cookie' | 'localStorage+cookie' | 'memory';
 }
 
 interface AnalyticsDeps {

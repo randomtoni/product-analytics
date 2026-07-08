@@ -29,3 +29,23 @@ test('createAnalytics returns a working provider when unkeyed (config-only adopt
 test('the browser supplies a crypto-backed generator (a v4, distinct from the identity/session v7)', () => {
   expect(cryptoRandomId()).toMatch(V4);
 });
+
+test('the persistence config selects the mode: memory mode persists nothing across a reload', () => {
+  const key = 'mode-key-memory';
+  resolveAdapter({ key, persistence: 'memory' }).setPersistedProperty('device_id', 'ephemeral');
+
+  const reloaded = resolveAdapter({ key, persistence: 'memory' });
+
+  expect(reloaded.getPersistedProperty('device_id')).toBeUndefined();
+});
+
+test('omitting persistence yields the durable default (localStorage+cookie survives a reload)', () => {
+  const key = 'mode-key-default';
+  resolveAdapter({ key }).setPersistedProperty('device_id', 'durable');
+  // A real reload fires the unload flush first, landing the debounced write.
+  window.dispatchEvent(new Event('beforeunload'));
+
+  const reloaded = resolveAdapter({ key });
+
+  expect(reloaded.getPersistedProperty('device_id')).toBe('durable');
+});

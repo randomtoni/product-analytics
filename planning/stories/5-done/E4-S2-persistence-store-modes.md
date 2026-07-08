@@ -50,7 +50,22 @@ Every identity / session / super-prop value E4 mints must survive reloads throug
 - **Separate low-level backends for consent (Q5a):** expose the raw storage primitives so S3's consent read can run a dedicated side-effect-free read BEFORE the property store (and its domain probe) is constructed — reading consent through the persistence you're gating is circular.
 - **Config field is additive (bar A):** `persistence?` on `AnalyticsConfig` is optional with a default — provider-swap stays zero-consumer-change; a non-browser target ignores it.
 - reference: `posthog-js/packages/browser/src/storage.ts` + `posthog-persistence.ts`; de-brand.
+- > Reviewer suggestion (2026-07-08): storage keys `distinct_id`/`anonymous_distinct_id` keep "distinct_id" (PostHog/Mixpanel-origin) vocabulary. NOTE (orchestrator): the library already committed to `distinctId` as its OWN neutral term across the whole seam (E2 — NeutralEvent.distinctId, SPI getDistinctId, identify(distinctId,…)); the storage key matches that shipped public vocabulary, and `grep posthog` is clean. Changing storage to `user_id` would DESYNC from the public API. Skip-with-reason (consistent with the library's own neutral term).
+- > Reviewer suggestion (2026-07-08, forward-fix for S3): `BrowserAdapter` ctor constructs `createMemoryBackend()` inline and discards the reference. S3's memory-mode consent read needs the SAME instance — hoist it to a `private readonly` field. Clean additive fix, not an S2 blocker.
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate): `PersistenceStore` adds permanent `beforeunload`/`pagehide` window listeners with no teardown (faithful to posthog, but they accumulate when the library is instantiated repeatedly — tests already create dozens). Consider a `dispose()`/teardown or listener dedupe.
+- > Reviewer suggestion (2026-07-08): the mode union is duplicated — seam `AnalyticsConfig.persistence` inline literal vs browser `PersistenceMode`. Inherent (seam can't import the browser package without layering inversion); the seam shape-pin guards seam-side drift. Noting two sources of truth; layering-inherent, no clean fix.
 
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (browser):** `persistence-keys.ts` (neutral role-named keys + `COOKIE_MIRRORED_KEYS` + `storeName`), `storage-backends.ts` (cookie/localStorage/memory backends + `buildPropsBackend`), `persistence-store.ts` (store + register/registerOnce/unregister + debounce + unload flush) + tests
+- **Files changed:** `browser-adapter.ts` (ctor `{key,persistence?}` + SPI backing), `browser/create-analytics.ts` (thread mode), `analytics-kit/create-analytics.ts` (+`AnalyticsConfig.persistence?`) + shape-pin
+- **New public API:** `AnalyticsConfig.persistence?: 'cookie' | 'localStorage+cookie' | 'memory'` (additive, default `localStorage+cookie`)
+- **Tests added:** browser 28 new (storage-backends 17, persistence-store 11) + adapter/entry mode tests → 60 total; seam 99 (extended shape-pin)
+- **Commit:** `E4-S2-persistence-store-modes — Persistence store + config-selectable modes behind the SPI` on `core-cycle`
+- **Reviewer notes:** 0 critical, 4 suggestions → see Technical notes (S1's de-brand held; the one flagged vocab is consistent with the library's own `distinctId`)
+- **Cross-story seams exposed:** `PersistenceStore` API (`getProperty`/`register`/`registerOnce(props,defaultValue?)`/`unregister`/`flush`/`clear`) backs the SPI. Mode plumbing: `AnalyticsConfig.persistence?` → `resolveAdapter` → `BrowserAdapterOptions` → `buildPropsBackend(mode, memoryBackend)`. **S3 consent-read seam:** raw `cookieBackend`/`localStorageBackend`/`createMemoryBackend()` (side-effect-free single-entry get/parse/set/remove) — read a dedicated consent entry BEFORE constructing the store; in memory mode share the adapter's memory instance (hoist it — see suggestion). **Neutral keys** in `persistence-keys.ts` (`DISTINCT_ID_KEY`/`DEVICE_ID_KEY`/`SESSION_ID_KEY`/`ANONYMOUS_DISTINCT_ID_KEY`/`IDENTITY_STATE_KEY`) — S5/S8 import, don't re-declare (on-disk contract).
 ## Shipped
 
 <!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/

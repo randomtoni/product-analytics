@@ -15,7 +15,9 @@ export function cryptoRandomId(): string {
 }
 
 export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
-  return config.key === undefined ? new NoopAdapter() : new BrowserAdapter();
+  return config.key === undefined
+    ? new NoopAdapter()
+    : new BrowserAdapter({ key: config.key, persistence: config.persistence });
 }
 
 export function createAnalytics<const T extends TaxonomyDecl>(
