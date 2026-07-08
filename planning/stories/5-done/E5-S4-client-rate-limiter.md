@@ -42,3 +42,18 @@ A runaway loop or a backend under load must not hammer the ingest endpoint. A cl
 - Reference: `posthog-js/packages/browser/src/rate-limiter.ts`.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, forward note): `RateLimiterOptions.eventsPerSecond`/`burstLimit` are dead config until a later additive-knob story wires them through `BrowserAdapterOptions`/`AnalyticsConfig` (defaults-only this story — correct). Note so the option surface isn't mistaken for already-wired.
+- > Reviewer suggestion (2026-07-08, cosmetic): `interpretBackPressure` doc says "called for EVERY response" — a network THROW from `this.fetch` propagates before it runs (correct — no body to interpret). Tighten to "every completed response".
+- > Reviewer note (2026-07-08, forward note for S6): `interpretBackPressure` consumes the response body via `text()` once inside `postBatch` (single-use stream). Today only `status` is read upward — no conflict. If S6 needs to read the body upward too, it must tee/cache.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (browser):** `rate-limiter.ts` (`RateLimiter`: token bucket 10/s burst-100 `consumeToken()` + per-scope cool-off `isCoolingOff(scope)`/`interpretBackPressure(response)` keyed by neutral `DEFAULT_BATCH_SCOPE`; `[WIRE]` body-interpretation INJECTED as `BackPressureInterpreter`), `back-pressure-interpreter.ts` (the ONE `[WIRE]` module: reads `quota_limited` off `response.text()`, confined to one `const LIMITED_SCOPES_FIELD`) + tests
+- **Files changed:** `browser-adapter.ts` (token gate in `capture()` PRE-enqueue peer to bot gate; cool-off gate at top of `postBatch()` returns `undefined`=no-op to S3; body-read after `fetch`). SPI unchanged.
+- **New public API:** none — all rate-limit state adapter-internal (bar A); defaults-only (no consumer knob)
+- **Tests added:** browser +27 (rate-limiter 12: burst/refill/ceiling/runaway/cool-off/**bar-A second-interpreter `retry_after_ms`**; interpreter 7: named-scope/collapse/empty/non-JSON; adapter 8: 101st-dropped-pre-queue, refill, body-signal-blocks-60s, clean-body-no-cooloff, read-off-text-not-header, no-neutral-vocab) → 327; seam 128 unchanged
+- **Commit:** `E5-S4-client-rate-limiter — Client token bucket + neutralized back-pressure` on `core-cycle`
+- **Reviewer notes:** 0 critical, 3 suggestions (dead knob options, doc wording, S6 body single-use); S2/S3/E4 green
+- **Cross-story seams exposed:** S4 sits at two orthogonal seams leaving the pipeline intact — token gate (pre-enqueue, peer to bot) + cool-off gate + body-read (inside `postBatch`, ABOVE the fetch so a cooled-off batch never reaches **S5** compression). `undefined=nothing-sent` is the only cross-path signal (no `RequestQueue`/`RetryQueue`/`send` touch). **S6:** a `sendBeacon` path with no readable body → `text()`=''→ no cool-off (correct fire-and-forget); body is single-use in `postBatch` (tee if reading upward). Bar-A back-pressure seam = the injected `BackPressureInterpreter` (a 2nd adapter swaps only that).

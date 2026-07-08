@@ -37,6 +37,8 @@ import { RequestQueue } from './request-queue';
 import { RetryQueue, isRetryableStatus, maxRetriesForStatus } from './retry-queue';
 import { generateUuidV7 } from './uuid-v7';
 import { isLikelyBot } from './bot-detection';
+import { RateLimiter, DEFAULT_BATCH_SCOPE } from './rate-limiter';
+import { interpretBodyBackPressure } from './back-pressure-interpreter';
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
@@ -101,10 +103,17 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // exponential retry; a 4xx is a permanent rejection and is never re-enqueued. The
   // retry state is entirely adapter-internal — it never reaches the neutral surface.
   private readonly retryQueue: RetryQueue<WireEvent>;
+  // The client rate limiter. Two gates, both adapter-internal: a token bucket
+  // throttles capture PROACTIVELY (over-limit events dropped before the queue), and
+  // a per-scope server cool-off honours the backend's body-borne back-pressure
+  // signal (read via the injected interpreter — the one [WIRE] place a backend's
+  // signal field name lives). Neither reaches the neutral surface.
+  private readonly rateLimiter: RateLimiter;
 
   constructor(options: BrowserAdapterOptions) {
     this.botFilterEnabled = options.botFilter !== false;
     this.blockedUserAgents = options.blockedUserAgents ?? [];
+    this.rateLimiter = new RateLimiter({ interpretBackPressure: interpretBodyBackPressure });
     this.retryQueue = new RetryQueue<WireEvent>({
       send: (batch, attempt) => this.sendBatchWithRetry(batch, attempt),
     });
@@ -171,6 +180,12 @@ export class BrowserAdapter implements AnalyticsAdapter {
     // Bot/crawler suppression gates capture BEFORE the enrichment pipeline and
     // before the enqueue — a blocked client's event never enters the queue.
     if (this.isBot()) {
+      return;
+    }
+    // Client rate limit: a token bucket throttles proactively. An over-limit event
+    // (a runaway loop) is dropped here — before the enrichment cost, before the
+    // queue — rather than flooding the endpoint. Sits alongside the bot gate.
+    if (!this.rateLimiter.consumeToken()) {
       return;
     }
     // Run the enrichment pipeline (S7 super-props + S8 session stamp), map to the
@@ -360,19 +375,28 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // The adapter-owned batch POST: build the [WIRE] `data:[]` envelope and POST it
   // (uncompressed JSON) to the S1-resolved ingest URL via the neutral fetch() SPI,
   // returning the neutral response so the retry wrapper can read its status. When no
-  // ingest target is configured, or the batch is empty, nothing is sent (an unkeyed
-  // / no-delivery client) and undefined is returned. S4 rate-limits this; S5
-  // compresses the body — all below this seam.
+  // ingest target is configured, the batch is empty, or the scope is inside its
+  // server cool-off window, nothing is sent and undefined is returned — which the
+  // retry wrapper already treats as an indistinguishable no-op, keeping the
+  // proactive cool-off from tangling with S3's reactive retry. After a completed
+  // POST, the backend's back-pressure signal is read off the response body (via the
+  // injected interpreter) and arms the affected scope's cool-off. S5 compresses the
+  // body — below this seam.
   private async postBatch(batch: WireEvent[]): Promise<NeutralFetchResponse | undefined> {
     const url = this.ingestUrl();
     if (url === undefined || batch.length === 0) {
       return undefined;
     }
-    return this.fetch(url, {
+    if (this.rateLimiter.isCoolingOff(DEFAULT_BATCH_SCOPE)) {
+      return undefined;
+    }
+    const response = await this.fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: assembleBatchBody(batch, Date.now()),
     });
+    await this.rateLimiter.interpretBackPressure(response);
+    return response;
   }
 
   getConsentState(): ConsentState {

@@ -1421,3 +1421,184 @@ describe('retry queue with backoff (S3)', () => {
     return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
   }
 });
+
+describe('client rate limiter + neutralized back-pressure (S4)', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  type Recorded = { url: string; options: NeutralFetchOptions };
+
+  // A mock fetch resolving a benign 200 with an EMPTY body (no back-pressure) —
+  // the common case; the token bucket is what's under test here.
+  function mockFetch(adapter: BrowserAdapter): Recorded[] {
+    const calls: Recorded[] = [];
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+    return calls;
+  }
+
+  // A mock fetch whose response BODY carries the backend's body-borne back-pressure
+  // signal from a scripted list (last entry repeats once exhausted). The adapter's
+  // injected interpreter reads this off text() — the neutral response type is
+  // unchanged; only the body content models the signal.
+  function mockFetchBodies(adapter: BrowserAdapter, bodies: string[]): Recorded[] {
+    const calls: Recorded[] = [];
+    let i = 0;
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      const body = bodies[Math.min(i, bodies.length - 1)];
+      i += 1;
+      return { status: 200, text: async () => body, json: async () => (body ? JSON.parse(body) : {}) };
+    });
+    return calls;
+  }
+
+  function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
+    return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
+  }
+
+  test('the token bucket throttles capture/enqueue at the ported burst — the 101st event is dropped before the queue (fake timers)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter);
+
+    // Fire 150 events in a tight loop (no time advancing) — only the 100-token burst
+    // enters the queue; the rest are dropped at capture, before enqueue.
+    for (let i = 0; i < 150; i += 1) {
+      adapter.capture(makeEvent({ dedupeId: `burst-${i}` }));
+    }
+    await adapter.flush();
+
+    // Every POST'd event across all batches — exactly the burst count made it through.
+    const delivered = calls.flatMap((c) => batchOf(c.options));
+    expect(delivered).toHaveLength(100);
+    expect(delivered[0].uuid).toBe('burst-0');
+    expect(delivered[99].uuid).toBe('burst-99');
+  });
+
+  test('the bucket refills at the ported 10/s rate — 1s of elapsed time re-admits exactly 10 events (fake timers)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter);
+
+    // Drain the burst.
+    for (let i = 0; i < 100; i += 1) {
+      adapter.capture(makeEvent({ dedupeId: `d-${i}` }));
+    }
+    // Now throttled — further captures are dropped.
+    for (let i = 0; i < 50; i += 1) {
+      adapter.capture(makeEvent({ dedupeId: `dropped-${i}` }));
+    }
+
+    // 1s later, the bucket has refilled 10 tokens — 10 more captures are admitted.
+    vi.advanceTimersByTime(1000);
+    for (let i = 0; i < 50; i += 1) {
+      adapter.capture(makeEvent({ dedupeId: `refill-${i}` }));
+    }
+    await adapter.flush();
+
+    const uuids = calls.flatMap((c) => batchOf(c.options)).map((e) => e.uuid);
+    // 100 from the burst + exactly 10 from the refill = 110; none of the dropped ones.
+    expect(uuids).toHaveLength(110);
+    expect(uuids.filter((u) => String(u).startsWith('refill-'))).toHaveLength(10);
+    expect(uuids.some((u) => String(u).startsWith('dropped-'))).toBe(false);
+  });
+
+  test('a below-limit capture rate never throttles — steady traffic flows unimpeded', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter);
+
+    // 5 events/s for 3s — well under 10/s and the burst — nothing is dropped.
+    for (let s = 0; s < 3; s += 1) {
+      for (let i = 0; i < 5; i += 1) {
+        adapter.capture(makeEvent({ dedupeId: `s${s}-${i}` }));
+      }
+      vi.advanceTimersByTime(1000);
+    }
+    await adapter.flush();
+
+    expect(calls.flatMap((c) => batchOf(c.options))).toHaveLength(15);
+  });
+
+  test('a body-borne back-pressure signal blocks the affected batch for the cool-off window (fake timers)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1 });
+    // First POST's body signals back-pressure; every later response is clean.
+    const calls = mockFetchBodies(adapter, [JSON.stringify({ quota_limited: ['events'] }), '']);
+
+    // First event flushes (flushAt=1) and its response arms the cool-off.
+    adapter.capture(makeEvent({ dedupeId: 'first' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1);
+
+    // While cooling off, the next flush's POST is SKIPPED — no new fetch fires.
+    adapter.capture(makeEvent({ dedupeId: 'during-cooloff' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1);
+
+    // Just short of the 60s window — still cooling off, still skipped.
+    vi.advanceTimersByTime(60 * 1000 - 1);
+    adapter.capture(makeEvent({ dedupeId: 'still-cooling' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1);
+
+    // Past the window — sending resumes; the next flush POSTs again.
+    vi.advanceTimersByTime(1);
+    adapter.capture(makeEvent({ dedupeId: 'after-cooloff' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(2);
+    expect(batchOf(calls[1].options).map((e) => e.uuid)).toContain('after-cooloff');
+  });
+
+  test('a clean response body arms NO cool-off — steady delivery continues (regression of the no-back-pressure path)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1 });
+    const calls = mockFetchBodies(adapter, ['']); // every response body is empty
+
+    adapter.capture(makeEvent({ dedupeId: 'a' }));
+    await adapter.flush();
+    adapter.capture(makeEvent({ dedupeId: 'b' }));
+    await adapter.flush();
+
+    // No cool-off armed — both POSTs fired.
+    expect(calls).toHaveLength(2);
+  });
+
+  test('the back-pressure signal is read off the response BODY, not a header — the neutral fetch response type is unchanged (bar A)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1 });
+
+    // The response the adapter reads exposes exactly the shipped neutral SPI —
+    // status + text() + json(), NO header accessor. The signal is body-borne.
+    let readText = false;
+    vi.spyOn(adapter, 'fetch').mockImplementation(async () => ({
+      status: 200,
+      text: async () => {
+        readText = true;
+        return JSON.stringify({ quota_limited: ['events'] });
+      },
+      json: async () => ({ quota_limited: ['events'] }),
+    }));
+
+    adapter.capture(makeEvent({ dedupeId: 'body-read' }));
+    await adapter.flush();
+
+    // The adapter interpreted the signal off text() (the body), not off any header.
+    expect(readText).toBe(true);
+  });
+
+  test('rate-limit state stays adapter-internal — no back-pressure vocabulary on the neutral surface (bar A)', () => {
+    const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+
+    // The neutral AnalyticsAdapter surface carries NO rate-limit / back-pressure
+    // member: no quota field, no cool-off, no token-bucket accessor. It all lives
+    // inside the adapter behind capture()/flush().
+    const surface = adapter as unknown as Record<string, unknown>;
+    expect(surface.quota_limited).toBeUndefined();
+    expect(surface.isCoolingOff).toBeUndefined();
+    expect(surface.consumeToken).toBeUndefined();
+    expect(surface.rateLimiter).toBeDefined(); // present, but a private impl field
+  });
+});
