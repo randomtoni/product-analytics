@@ -1,10 +1,10 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-08 — E1, E2, E3 all closed; **core cycle exit criteria met** (awaiting user promotion to the `identify` area)
+Last updated: 2026-07-08 — core cycle closed; promoted to identify
 
 ## Status
 
-Greenfield, pre-1.0. Zero focus cycles complete. Current focus: the **`core`** cycle — standing up the vendor-neutral seam (workspace scaffold, the `AnalyticsProvider` contract + config-selected factory, and the typed-taxonomy + allowlist mechanisms) that every other area depends on. Closed epics archive to `epics/done/`; longer cycle narrative lives in `planning/HISTORY.md`.
+Pre-1.0. **One focus cycle complete (`core`)** — the vendor-neutral seam is v1. Current focus: the **`identify`** cycle. Closed epics archive to [`epics/done/`](epics/done/); cycle narrative lives in [`planning/HISTORY.md`](HISTORY.md).
 
 ## Sequencing principle
 
@@ -20,28 +20,20 @@ The **adoption** cycle (`E10`, `E11`) closes: the example consumer needs the tar
 
 ## NOW
 
-**Focus area: `core`** — the vendor-neutral seam. This cycle stabilizes the workspace, the provider contract + config-selected factory, and the taxonomy + allowlist mechanisms to v1. No consumer-facing capture yet; this is the substrate every target and adapter builds on.
+**Focus area: `identify`** — anonymous identity and the context bound to every event. This cycle stabilizes anonymous id generation + persistence (config-supplied cookie domain/scope, memory mode), the anonymous→identified merge, session id assignment + expiry, and `reset()` to v1 — the identity substrate every captured event carries.
 
-- **[E1-CORE-workspace-scaffold](epics/done/E1-CORE-workspace-scaffold.md)** *(done)* — pnpm + turbo workspace with all four gates (typecheck / lint / test / build) green on empty packages.
-- **[E2-CORE-provider-seam](epics/done/E2-CORE-provider-seam.md)** *(done)* — the `AnalyticsProvider` contract + config-selected factory + no-op adapter (silent when unkeyed).
-- **[E3-CORE-taxonomy-allowlist](epics/done/E3-CORE-taxonomy-allowlist.md)** *(done)* — typed-taxonomy mechanism (`defineTaxonomy<T>()`) + payload-allowlist enforcement hook.
-
-Dependency graph: `E1 → E2 → E3`. E2 and E3 gate every downstream area.
+_Epics pending validation — the epic-validation step fills this block._
 
 ## UPCOMING
 
-**Focus area: `identify`** — anonymous identity and the context bound to every event.
+**Focus area: `capture`** — the capture primitive and the queue → batch → flush → retry transport seam that carries every consumer-facing event. Hardens the delivery substrate — batching, retry with backoff, offline durability, unload-safe flush — and the capture/enrichment surface layered on top of it.
 
-- **[E4-ID-identity-persistence](epics/E4-ID-identity-persistence.md)** — anonymous id generation + persistence, config-supplied cookie domain/scope, memory mode, anonymous→identified merge, session id assignment + expiry, `reset()`.
+- **[E5-CAP-transport](epics/E5-CAP-transport.md)** — batching + compression, retry with backoff, offline queue (survives reloads), sendBeacon/keepalive on unload, config-supplied ingest host/path, dedupe ids, bot/crawler filtering.
+- **[E6-CAP-capture-enrichment](epics/E6-CAP-capture-enrichment.md)** — `track` / `page` / pageleave, page + UTM + device/browser context (each opt-out-able), pluggable country source, per-context capture profiles, autocapture opt-in.
 
 ## LATER
 
 Identified, not yet committed. Listed in closing order; the lanes in [Sequencing principle](#sequencing-principle) are what may overlap.
-
-**`capture` cycle**
-
-- **[E5-CAP-transport](epics/E5-CAP-transport.md)** — batching + compression, retry with backoff, offline queue (survives reloads), sendBeacon/keepalive on unload, config-supplied ingest host/path, dedupe ids, bot/crawler filtering.
-- **[E6-CAP-capture-enrichment](epics/E6-CAP-capture-enrichment.md)** — `track` / `page` / pageleave, page + UTM + device/browser context (each opt-out-able), pluggable country source, per-context capture profiles, autocapture opt-in.
 
 **`node` cycle**
 
@@ -64,7 +56,7 @@ Identified, not yet committed. Listed in closing order; the lanes in [Sequencing
 
 | Cycle (area) | Closed | Epics |
 |---|---|---|
-| _none yet_ | | |
+| `core` | 2026-07-08 | E1, E2, E3 → [`epics/done/`](epics/done/) |
 
 ## How to read this file
 
