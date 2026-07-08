@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-08 — core shipped (E1–E3); all remaining epics (E4–E11) promoted to NOW
+Last updated: 2026-07-08 — E4 (identity) shipped; NOW = E5–E11
 
 ## Status
 
@@ -22,7 +22,7 @@ A valid build order honoring every `blocked_by`: **E4 → E5 → E6 → E7 → E
 
 Every remaining epic is committed. `/implement-epics all` builds them in the dependency order above.
 
-- **[E4-ID-identity-persistence](epics/E4-ID-identity-persistence.md)** *(active)* — anonymous UUIDv7 distinct id + separate device id, config-selectable persistence (`cookie` | `localStorage+cookie` | `memory`), cross-subdomain cookie domain/scope, anonymous→identified merge (rides `identify()`; identity state adapter-internal), super-property registration (allowlist-gated at registration), session id assignment + expiry, durable tri-state consent (`granted`/`denied`/`pending`, DNT-folded), and `reset()`.
+- **[E4-ID-identity-persistence](epics/done/E4-ID-identity-persistence.md)** *(done)* — anonymous UUIDv7 distinct id + separate device id, config-selectable persistence (`cookie` | `localStorage+cookie` | `memory`), cross-subdomain cookie domain/scope, anonymous→identified merge (rides `identify()`; identity state adapter-internal), super-property registration (allowlist-gated at registration), session id assignment + expiry, durable tri-state consent (`granted`/`denied`/`pending`, DNT-folded), and `reset()`.
 - **[E5-CAP-transport](epics/E5-CAP-transport.md)** *(planned, ← E4)* — batching + compression, retry with backoff, offline queue (survives reloads), sendBeacon/keepalive on unload, config-supplied ingest host/path, dedupe ids, bot/crawler filtering.
 - **[E6-CAP-capture-enrichment](epics/E6-CAP-capture-enrichment.md)** *(planned, ← E5)* — `track` / `page` / pageleave, page + UTM + device/browser context (each opt-out-able), pluggable country source, per-context capture profiles, autocapture opt-in.
 - **[E7-NODE-server-capture](epics/E7-NODE-server-capture.md)** *(planned, ← core)* — server-side `capture` + trait / group-trait updates, idempotency (caller-suppliable `dedupeId`), no-op without key.
