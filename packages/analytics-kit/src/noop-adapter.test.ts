@@ -28,6 +28,15 @@ test('register and unregister are silent no-ops that do not throw', () => {
   }).not.toThrow();
 });
 
+test('reset is a silent no-op that does not throw — zero-arg and with resetDevice', () => {
+  const adapter: AnalyticsAdapter = new NoopAdapter();
+
+  expect(() => {
+    adapter.reset();
+    adapter.reset({ resetDevice: true });
+  }).not.toThrow();
+});
+
 test('flush and shutdown resolve to undefined', async () => {
   const adapter: AnalyticsAdapter = new NoopAdapter();
 

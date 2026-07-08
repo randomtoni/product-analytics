@@ -809,3 +809,98 @@ describe('identify — client-side anon→identified merge (S6)', () => {
     expect(later.properties).toEqual({ plan: 'pro' });
   });
 });
+
+describe('reset — clear identity/persistence/session, keep device id (S9)', () => {
+  test('regenerates the anonymous id: getDistinctId returns a NEW anon id after reset', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.identify('user-1');
+    expect(adapter.getDistinctId()).toBe('user-1');
+
+    adapter.reset();
+
+    const reAnonId = adapter.getDistinctId();
+    expect(reAnonId).toMatch(UUID_V7);
+    expect(reAnonId).not.toBe('user-1');
+    // Identity is cleared: state is back to anonymous, and the retained merge link is gone.
+    expect(adapter.getPersistedProperty(IDENTITY_STATE_KEY)).toBe('anonymous');
+    expect(adapter.getPersistedProperty(ANONYMOUS_DISTINCT_ID_KEY)).toBeUndefined();
+    expect(adapter.getPersistedProperty(DISTINCT_ID_KEY)).toBe(reAnonId);
+  });
+
+  test('clears persistence — a registered super-prop does not survive reset', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.register({ plan: 'pro' });
+    expect(adapter.getPersistedProperty('plan')).toBe('pro');
+
+    adapter.reset();
+
+    expect(adapter.getPersistedProperty('plan')).toBeUndefined();
+  });
+
+  test('clears the session — the next captured event mints a FRESH session id', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const before = adapter.runCapturePipeline(makeEvent()).sessionId;
+
+    adapter.reset();
+    const after = adapter.runCapturePipeline(makeEvent()).sessionId;
+
+    expect(after).toMatch(UUID_V7);
+    expect(after).not.toBe(before);
+  });
+
+  test('KEEPS the device id across reset by default', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const deviceIdBefore = adapter.getPersistedProperty<string>(DEVICE_ID_KEY);
+
+    adapter.reset();
+
+    expect(adapter.getPersistedProperty(DEVICE_ID_KEY)).toBe(deviceIdBefore);
+  });
+
+  test('reset({ resetDevice: true }) regenerates the device id', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const deviceIdBefore = adapter.getPersistedProperty<string>(DEVICE_ID_KEY);
+
+    adapter.reset({ resetDevice: true });
+
+    const deviceIdAfter = adapter.getPersistedProperty<string>(DEVICE_ID_KEY);
+    expect(deviceIdAfter).toMatch(UUID_V7);
+    expect(deviceIdAfter).not.toBe(deviceIdBefore);
+  });
+
+  test('a reset actor survives a reload — the re-anonymized identity is persisted, not just cached', () => {
+    const key = freshKey();
+    new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('granted');
+    const writer = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+    writer.identify('user-1');
+    writer.reset();
+    const reAnonId = writer.getDistinctId();
+    window.dispatchEvent(new Event('beforeunload'));
+
+    const reloaded = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+
+    expect(reloaded.getDistinctId()).toBe(reAnonId);
+    expect(reloaded.getPersistedProperty(IDENTITY_STATE_KEY)).toBe('anonymous');
+  });
+
+  test('reset while opted-out (denied) still clears identity AND writes no cookie', () => {
+    const key = freshKey();
+    // Durably deny consent, then reconstruct: the adapter is memory-backed (S3 gate),
+    // so every write — including reset's — stays out of cookies/localStorage.
+    new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('denied');
+    const adapter = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+    adapter.identify('user-1');
+    expect(adapter.getDistinctId()).toBe('user-1');
+
+    adapter.reset();
+    window.dispatchEvent(new Event('beforeunload'));
+
+    // Identity IS cleared (reset is effective under opt-out — routed to the live adapter).
+    const reAnonId = adapter.getDistinctId();
+    expect(reAnonId).toMatch(UUID_V7);
+    expect(reAnonId).not.toBe('user-1');
+    expect(adapter.getPersistedProperty(IDENTITY_STATE_KEY)).toBe('anonymous');
+    // The denied posture suppresses every durable write — zero cookies.
+    expect(document.cookie).not.toContain(key);
+  });
+});

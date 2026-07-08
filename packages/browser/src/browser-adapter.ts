@@ -7,6 +7,7 @@ import type {
   NeutralFetchOptions,
   NeutralFetchResponse,
   RegisterOptions,
+  ResetOptions,
 } from 'analytics-kit';
 import {
   buildPropsBackend,
@@ -221,6 +222,17 @@ export class BrowserAdapter implements AnalyticsAdapter {
     if (traits !== undefined) bags[SET_TRAITS_KEY] = { ...traits };
     if (traitsOnce !== undefined) bags[SET_TRAITS_ONCE_KEY] = { ...traitsOnce };
     return bags;
+  }
+
+  reset(options?: ResetOptions): void {
+    // Clear identity + persistence + session as one transition. The identity store
+    // owns the [WIRE] keys: it snapshots the device id, clears the store, re-mints
+    // the anonymous distinct id (keeping the device id unless resetDevice), and
+    // flips state to anonymous. Then reset the session so the next captured event
+    // mints a fresh id. All storage writes ride the (consent-gated) property store,
+    // so an opted-out client writes nothing to durable storage.
+    this.identity.reset(options);
+    this.session.resetSessionId();
   }
 
   getDistinctId(): string {

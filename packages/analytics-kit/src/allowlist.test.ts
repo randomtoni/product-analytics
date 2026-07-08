@@ -31,6 +31,7 @@ class SpyAdapter implements AnalyticsAdapter {
   unregister(key: string): void {
     this.unregistered.push(key);
   }
+  reset(): void {}
   getDistinctId(): string {
     return 'anonymous';
   }

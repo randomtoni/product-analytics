@@ -13,6 +13,7 @@ export class NoopAdapter implements AnalyticsAdapter {
   identify(): void {}
   register(): void {}
   unregister(): void {}
+  reset(): void {}
   getDistinctId(): string {
     return ANONYMOUS_DISTINCT_ID;
   }

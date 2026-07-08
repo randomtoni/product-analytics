@@ -28,6 +28,7 @@ class RecordingAdapter implements AnalyticsAdapter {
   }
   register(): void {}
   unregister(): void {}
+  reset(): void {}
   getDistinctId(): string {
     return 'anonymous';
   }

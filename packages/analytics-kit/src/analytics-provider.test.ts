@@ -5,6 +5,7 @@ import type {
   NeutralFetchOptions,
   NeutralFetchResponse,
   RegisterOptions,
+  ResetOptions,
 } from './adapter';
 import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 import { AnalyticsProviderImpl, type AnalyticsProvider } from './analytics-provider';
@@ -43,6 +44,10 @@ class RecordingAdapter implements AnalyticsAdapter {
   }
   unregister(key: string): void {
     this.unregistered.push(key);
+  }
+  resets: Array<ResetOptions | undefined> = [];
+  reset(options?: ResetOptions): void {
+    this.resets.push(options);
   }
   getDistinctId(): string {
     this.distinctIdReads += 1;
@@ -270,18 +275,30 @@ test('shutdown delegates to adapter.shutdown and resolves', async () => {
   expect(adapter.didShutdown).toBe(true);
 });
 
-test('reset is a no-op skeleton in E2 — it touches no adapter verb', () => {
+test('reset() delegates to liveAdapter.reset — with the options bag and with none (E4-S9)', () => {
   const adapter = new RecordingAdapter();
   const analytics = new AnalyticsProviderImpl(adapter);
 
   analytics.reset();
+  analytics.reset({ resetDevice: true });
 
+  expect(adapter.resets).toEqual([undefined, { resetDevice: true }]);
+  // The delegated verb is the SPI reset — no capture / identify side effect.
   expect(adapter.captured).toHaveLength(0);
   expect(adapter.identified).toHaveLength(0);
-  expect(adapter.grouped).toHaveLength(0);
-  expect(adapter.aliased).toHaveLength(0);
-  expect(adapter.flushed).toBe(0);
-  expect(adapter.didShutdown).toBe(false);
+});
+
+test('reset() routes to the LIVE adapter while opted out — clears identity even when the no-op is active', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  analytics.reset();
+
+  // Routed to liveAdapter, not the consent-swapped no-op: a logout during opt-out
+  // still reaches the real adapter (whose consent posture suppresses any write).
+  expect(adapter.resets).toEqual([undefined]);
+  expect(analytics.hasOptedOut()).toBe(true);
 });
 
 test('installAdapter swaps the active delegate via the single derivation path', () => {
@@ -645,7 +662,12 @@ test('AnalyticsProvider method signatures are pinned (compile-time)', () => {
   expectTypeOf<AnalyticsProvider['page']>().toEqualTypeOf<
     (name?: string, props?: NeutralProperties) => void
   >();
-  expectTypeOf<AnalyticsProvider['reset']>().toEqualTypeOf<() => void>();
+  // Widened additively (E4-S9): optional resetDevice flag; zero-arg callers still compile.
+  expectTypeOf<AnalyticsProvider['reset']>().toEqualTypeOf<
+    (options?: { resetDevice?: boolean }) => void
+  >();
+  expectTypeOf<AnalyticsProvider['reset']>().toBeCallableWith();
+  expectTypeOf<AnalyticsProvider['reset']>().toBeCallableWith({ resetDevice: true });
   expectTypeOf<AnalyticsProvider['optIn']>().toEqualTypeOf<() => void>();
   expectTypeOf<AnalyticsProvider['optOut']>().toEqualTypeOf<() => void>();
   expectTypeOf<AnalyticsProvider['hasOptedOut']>().toEqualTypeOf<() => boolean>();

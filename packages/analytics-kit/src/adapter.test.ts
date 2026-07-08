@@ -25,6 +25,7 @@ class RecordingAdapter implements AnalyticsAdapter {
   }
   register(): void {}
   unregister(): void {}
+  reset(): void {}
   getDistinctId(): string {
     return 'anonymous';
   }
@@ -183,6 +184,9 @@ test('SPI signatures are pinned to the neutral types (compile-time)', () => {
   expectTypeOf<AnalyticsAdapter['register']>().returns.toEqualTypeOf<void>();
   expectTypeOf<AnalyticsAdapter['unregister']>().parameters.toEqualTypeOf<[string]>();
   expectTypeOf<AnalyticsAdapter['unregister']>().returns.toEqualTypeOf<void>();
+  expectTypeOf<AnalyticsAdapter['reset']>().toBeCallableWith();
+  expectTypeOf<AnalyticsAdapter['reset']>().toBeCallableWith({ resetDevice: true });
+  expectTypeOf<AnalyticsAdapter['reset']>().returns.toEqualTypeOf<void>();
   expectTypeOf<AnalyticsAdapter['group']>().returns.toEqualTypeOf<void>();
   expectTypeOf<AnalyticsAdapter['alias']>().returns.toEqualTypeOf<void>();
   expectTypeOf<AnalyticsAdapter['flush']>().returns.toEqualTypeOf<Promise<void>>();

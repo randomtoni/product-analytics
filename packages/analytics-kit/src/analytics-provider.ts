@@ -28,7 +28,7 @@ export interface AnalyticsProvider<TX extends TaxonomyShape = DefaultTaxonomySha
     key: string,
     props?: TX['groups'][G]
   ): void;
-  reset(): void;
+  reset(options?: { resetDevice?: boolean }): void;
   setTraits(traits: Partial<TX['traits']>, once?: boolean): void;
   register(props: NeutralProperties, options?: { once?: boolean }): void;
   unregister(key: string): void;
@@ -118,8 +118,12 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
     this.adapter.unregister(key);
   }
 
-  reset(): void {
-    // Real behavior (clear identity + regenerate anon id) lands in E4; no-op skeleton for now.
+  reset(options?: { resetDevice?: boolean }): void {
+    // Route to the live adapter, NOT the consent-swapped one: a logout during
+    // opt-out must still clear identity (routing to the no-op would leave stale
+    // identity — a privacy footgun). The live adapter's own consent posture keeps
+    // persistence suppressed, so no cookie is written while opted out.
+    this.liveAdapter.reset(options);
   }
 
   optOut(): void {

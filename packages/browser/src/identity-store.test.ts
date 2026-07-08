@@ -147,6 +147,84 @@ describe('merge (S6 — anon→identified)', () => {
   });
 });
 
+describe('reset (S9 — re-anonymize on logout)', () => {
+  test('mints a NEW anonymous distinct id and flips state back to anonymous', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+    identity.merge('user-1');
+    const identifiedId = identity.getDistinctId();
+
+    identity.reset();
+
+    const nextId = identity.getDistinctId();
+    expect(nextId).toMatch(UUID_V7);
+    expect(nextId).not.toBe(identifiedId);
+    expect(nextId).not.toBe('user-1');
+    expect(identity.getIdentityState()).toBe('anonymous');
+    expect(store.getProperty(DISTINCT_ID_KEY)).toBe(nextId);
+    expect(store.getProperty(IDENTITY_STATE_KEY)).toBe('anonymous');
+  });
+
+  test('keeps the device id by default across reset', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+    const deviceIdBefore = store.getProperty<string>(DEVICE_ID_KEY);
+
+    identity.reset();
+
+    expect(store.getProperty(DEVICE_ID_KEY)).toBe(deviceIdBefore);
+  });
+
+  test('reset({ resetDevice: true }) re-mints the device id', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+    const deviceIdBefore = store.getProperty<string>(DEVICE_ID_KEY);
+
+    identity.reset({ resetDevice: true });
+
+    const deviceIdAfter = store.getProperty<string>(DEVICE_ID_KEY);
+    expect(deviceIdAfter).toMatch(UUID_V7);
+    expect(deviceIdAfter).not.toBe(deviceIdBefore);
+  });
+
+  test('clears the retained anon-id merge link — it must not survive logout', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+    identity.merge('user-1');
+    expect(store.getProperty(ANONYMOUS_DISTINCT_ID_KEY)).toBeDefined();
+
+    identity.reset();
+
+    expect(store.getProperty(ANONYMOUS_DISTINCT_ID_KEY)).toBeUndefined();
+  });
+
+  test('resetDevice re-mints via the injected device-id generator, not the distinct-id scheme', () => {
+    const store = freshStore();
+    let n = 0;
+    const identity = new IdentityStore({ store, deviceIdGenerator: () => `dev-${n++}` });
+    expect(store.getProperty(DEVICE_ID_KEY)).toBe('dev-0');
+
+    identity.reset({ resetDevice: true });
+
+    expect(store.getProperty(DEVICE_ID_KEY)).toBe('dev-1');
+    // The fresh distinct id uses the UUIDv7 scheme, not the device-id generator.
+    expect(identity.getDistinctId()).toMatch(UUID_V7);
+  });
+
+  test('the re-anonymized identity survives a reconstruct (persisted, not just cached)', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+    identity.merge('user-1');
+    identity.reset();
+    const reAnonId = identity.getDistinctId();
+
+    const reloaded = new IdentityStore({ store });
+
+    expect(reloaded.getDistinctId()).toBe(reAnonId);
+    expect(reloaded.getIdentityState()).toBe('anonymous');
+  });
+});
+
 describe('neutral-surface hygiene', () => {
   test('persists under de-branded keys — no $-prefixed name is written', () => {
     const store = freshStore();

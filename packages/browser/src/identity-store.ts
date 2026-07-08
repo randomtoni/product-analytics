@@ -96,4 +96,29 @@ export class IdentityStore {
     this.state = IDENTIFIED_IDENTITY_STATE;
     return priorDistinctId;
   }
+
+  // Re-anonymize on logout: mint a fresh anonymous distinct id, clear the whole
+  // persistence blob (identity + retained anon id + super-props + session tuple),
+  // flip state back to anonymous, and update the cache in lockstep. The device id
+  // is snapshotted BEFORE the clear and re-seeded so it survives — unless
+  // `resetDevice`, which re-mints it. `persistence.clear()` also drops the retained
+  // ANONYMOUS_DISTINCT_ID_KEY (an identify-time link that must not survive logout).
+  reset(options?: { resetDevice?: boolean }): void {
+    const priorDeviceId = this.store.getProperty<string>(DEVICE_ID_KEY);
+    const nextDeviceId =
+      options?.resetDevice || priorDeviceId === undefined
+        ? this.deviceIdGenerator()
+        : priorDeviceId;
+    const freshDistinctId = generateUuidV7();
+
+    this.store.clear();
+    this.store.register({ [DEVICE_ID_KEY]: nextDeviceId });
+    this.store.registerOnce({
+      [DISTINCT_ID_KEY]: freshDistinctId,
+      [IDENTITY_STATE_KEY]: ANONYMOUS_IDENTITY_STATE,
+    });
+
+    this.distinctId = freshDistinctId;
+    this.state = ANONYMOUS_IDENTITY_STATE;
+  }
 }

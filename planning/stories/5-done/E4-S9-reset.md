@@ -46,8 +46,20 @@ A consumer calls `reset()` on logout to clear the identified actor and start a f
 - **Two shipped facade tests must be updated for the reset widening (refiner 2026-07-08):** (a) the `reset` signature type-pin in `analytics-provider.test.ts` (~line 379, currently `expectTypeOf<AnalyticsProvider['reset']>().toEqualTypeOf<() => void>()`) becomes `(options?: { resetDevice?: boolean }) => void`; the exact-match `keyof AnalyticsProvider` union is unchanged (no new member — only the signature widens; the member count is whatever S7 left it, having already added `register`/`unregister`). (b) the E2 skeleton test `'reset is a no-op skeleton in E2 — it touches no adapter verb'` (~line 202) is now SUPERSEDED: the facade `reset()` delegates to `liveAdapter.reset(options)`, so a spy adapter WILL see a `reset` call — rewrite that test to assert delegation instead of no-op.
 - **SPI growth touches ALL in-repo adapter implementors (refiner 2026-07-08):** adding required `reset(options?)` breaks every `AnalyticsAdapter` implementor until updated — `NoopAdapter` (no-ops it) plus the five seam test doubles (`RecordingAdapter` ×3 in `analytics-provider.test.ts` / `adapter.test.ts` / `create-analytics.test.ts`, `SpyAdapter` ×2 in `allowlist.test.ts` / `allowlist-guard.test.ts`). Update them in this story to keep the 93 shipped tests typechecking/green.
 - reference: `posthog-js/packages/browser/posthog-core.ts` `reset()`; de-brand.
+- > Reviewer suggestion (2026-07-08, cosmetic): `IdentityStore.reset()` re-writes `device_id` via `register` even on the keep path (value unchanged) — correct (the value was wiped by `clear()` and must be re-seeded, matching the reference), just noting a reader might expect a no-op. Leave as is.
+- > Reviewer suggestion (2026-07-08): the reset ordering (`identity.reset()` before `session.resetSessionId()`) is order-independent today (disjoint keys; `clear()` already drops the session tuple) — incidental-correct rather than test-locked. Fine for this slice.
 
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files changed (seam):** `adapter.ts` (+`ResetOptions` + `reset(options?)` SPI), `noop-adapter.ts` (no-op), `analytics-provider.ts` (facade `reset(options?)`→`liveAdapter.reset()`, widened additively), `index.ts` (export `ResetOptions`) + 5 test doubles
+- **Files changed (browser):** `identity-store.ts` (`reset(options?)`: snapshot device BEFORE clear → `clear()` → re-seed device kept/re-minted → fresh v7 anon id → state→anonymous → lockstep cache; clears retained `ANONYMOUS_DISTINCT_ID_KEY`), `browser-adapter.ts` (`reset()` → `identity.reset()` + `session.resetSessionId()`)
+- **New public API:** SPI `reset(options?: { resetDevice?: boolean }): void`; `AnalyticsProvider.reset()` widened → `reset(options?)` (additive, zero-arg callers compile); `ResetOptions`
+- **Tests added:** seam +delegation/opted-out-routing + widened type-pin, rewrote the E2 skeleton test → delegation → 128; browser +13 (identity-store 6, adapter 7: new anon id, persistence/session cleared, device kept/resetDevice re-mints, merge-link cleared, opted-out clears-identity+zero-cookie, reload survival) → 178
+- **Commit:** `E4-S9-reset — reset(options?) SPI verb: clear identity/persistence/session, keep device id, effective under opt-out` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (both cosmetic/test-locking)
+- **E4 CLOSES:** all 9 stories shipped. Every E2/E3 hook filled — `currentDistinctId()`(S5), `reset()`(S9), `sessionId`(S8), durable consent + lifecycle routing(S3), super-prop registration(S7). E5 seam intact (`dedupeId` on every event incl. merge/traits; merge flows `capture()`→pipeline uniformly). E6 seam intact (`sessionId?` adapter-stamped; reset forces fresh session next capture).
 
 <!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/
 (files changed/added, new public API, tests added, commit, reviewer notes). Do not hand-edit. -->
