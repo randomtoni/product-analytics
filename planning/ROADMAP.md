@@ -1,10 +1,10 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-08 — E4 (identity) shipped; NOW = E5–E11
+Last updated: 2026-07-08 — E5 (transport) shipped; NOW = E6–E11
 
 ## Status
 
-Pre-1.0. The vendor-neutral **`core`** seam is v1 (E1–E3 shipped). NOW holds every remaining epic — **E4–E11** (identity, capture, node, query, react, adoption) — all committed for the current build push. Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
+Pre-1.0. The vendor-neutral **`core`** seam is v1 (E1–E3 shipped); **E4 (identity)** and **E5 (browser transport & reliability)** shipped. NOW holds the remaining epics — **E6–E11** (capture, node, query, react, adoption) — all committed for the current build push. Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
 
 ## Sequencing
 
@@ -23,7 +23,7 @@ A valid build order honoring every `blocked_by`: **E4 → E5 → E6 → E7 → E
 Every remaining epic is committed. `/implement-epics all` builds them in the dependency order above.
 
 - **[E4-ID-identity-persistence](epics/done/E4-ID-identity-persistence.md)** *(done)* — anonymous UUIDv7 distinct id + separate device id, config-selectable persistence (`cookie` | `localStorage+cookie` | `memory`), cross-subdomain cookie domain/scope, anonymous→identified merge (rides `identify()`; identity state adapter-internal), super-property registration (allowlist-gated at registration), session id assignment + expiry, durable tri-state consent (`granted`/`denied`/`pending`, DNT-folded), and `reset()`.
-- **[E5-CAP-transport](epics/E5-CAP-transport.md)** *(active, ← E4)* — batching + compression, retry with backoff, offline queue (survives reloads), sendBeacon/keepalive on unload, config-supplied ingest host/path, dedupe ids, bot/crawler filtering.
+- **[E5-CAP-transport](epics/done/E5-CAP-transport.md)** *(done)* — batching (time + size trigger) + gzip compression (native `CompressionStream` + fflate fallback), retry with exponential backoff+jitter (network/5xx-only), offline queue that survives reloads (the one BRIEF §4 gap PostHog doesn't fill), fetch→XHR→sendBeacon + keepalive/unload drain, config-supplied ingest host/path, `dedupeId`→wire `uuid`, client rate-limiter + neutralized back-pressure, bot/crawler filtering.
 - **[E6-CAP-capture-enrichment](epics/E6-CAP-capture-enrichment.md)** *(planned, ← E5)* — `track` / `page` / pageleave, page + UTM + device/browser context (each opt-out-able), pluggable country source, per-context capture profiles, autocapture opt-in.
 - **[E7-NODE-server-capture](epics/E7-NODE-server-capture.md)** *(planned, ← core)* — server-side `capture` + trait / group-trait updates, idempotency (caller-suppliable `dedupeId`), no-op without key.
 - **[E8-QRY-query-client](epics/E8-QRY-query-client.md)** *(planned, ← core)* — `AnalyticsQueryClient` (funnel / retention / trend / uniqueCount + `rawQuery` escape hatch), HTTP query adapter, warehouse stub.
