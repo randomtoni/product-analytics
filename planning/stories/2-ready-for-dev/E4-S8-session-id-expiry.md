@@ -42,7 +42,8 @@ Events group into sessions, and E6 enrichment + transport session-props consume 
 - **Adapter stamps `sessionId`; not an SPI accessor and not `getPersistedProperty` (Q3, — architect 2026-07-08):** the id comes from a stateful `checkAndGetSessionAndWindowId(timestamp)` that advances the idle clock and mints on expiry — behavior, browser-only (node has no sessions). `NeutralEvent.sessionId` is optional precisely because it's adapter-populated. A KV read can't express "give me the current id, advancing idle from this timestamp."
 - **Memory-mode nuance (Q3):** "minted even in memory mode" means the REAL browser adapter with `persistence: 'memory'` (mint is independent of storage), NOT the whole-stack `NoopAdapter` (there every event is dropped, so an unset `sessionId` is harmless).
 - **Defaults (— architect 2026-07-07):** idle 30 min, max 24 h, UUIDv7; needed by E6, so memory mode must still mint or E6 breaks. Independent of replay.
-- **De-brand:** normalize the `$sesid` tuple + key inside the adapter; neutral role-named storage key. Consumes S1's crypto UUIDv7 generator.
+- **De-brand:** normalize the `$sesid` tuple + key inside the adapter; neutral role-named storage key. Consumes S1's crypto UUIDv7 generator (`crypto.getRandomValues` + `Date.now()` prefix — NOT `crypto.randomUUID`, which is v4; the v7 timestamp is what lets a session-start time be read back out of the id).
+- **Expose a session-reset entry point for S9 (refiner 2026-07-08):** S9's `reset()` clears the session. Port the de-branded manager with a public reset/regenerate method (PostHog's `SessionIdManager.resetSessionId()`, `sessionid.ts`) so S9 can call it without reaching into manager internals. Adapter-internal — no SPI / neutral-surface addition.
 - reference: `posthog-js/packages/browser/src/sessionid.ts`; de-brand.
 
 ## Shipped

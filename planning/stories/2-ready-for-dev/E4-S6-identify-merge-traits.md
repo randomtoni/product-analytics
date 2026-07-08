@@ -46,7 +46,8 @@ api_impact: additive
 - **Gated on S5's resolver (Q2 cross-dependency):** `setTraits` → `adapter.identify(currentDistinctId(), ...)`, so with S5's stub returning `'anonymous'` the merge could mis-fire; S5 ships first.
 - **Retain, don't swap (— architect 2026-07-08):** persist the previous distinct id AS the anonymous id at `identify()` (`posthog-core.ts:374`) so a later feature-flag-bootstrap slice inherits the linkage rather than rediscovering it.
 - **Client-side only (— architect 2026-07-07):** no server-side merge this release.
-- **No new SPI verb (Q2):** the merge rides the existing `identify()` — no adapter-contract growth here.
+- **No new SPI verb (Q2):** the merge rides the existing `identify()` — no adapter-contract growth here. (So this story does NOT touch the SPI or the seam test doubles — unlike S3/S5/S7/S9.)
+- **Cross-subdomain AC assumes S4 (refiner 2026-07-08):** AC #7's cross-subdomain-journey check relies on S4's shared identity cookie. `depends_on` lists only S5 (the merge's hard dep), but the locked build order (`… → S4 → S6 → S9`) sequences S4 before S6, so S4 is shipped by the time this lands and the AC is satisfiable. If S6 is ever pulled ahead of S4, drop the cross-subdomain clause to the merge-only assertion (identify keeps ONE distinct id within a single context).
 - reference: `posthog-js/packages/browser/posthog-core.ts` `identify()` + `packages/core`; de-brand.
 
 ## Shipped

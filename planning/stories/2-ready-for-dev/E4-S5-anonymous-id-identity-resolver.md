@@ -50,6 +50,7 @@ Every browser event needs a stable actor before `identify()` is ever called. Thi
 - **Cross-dependency for S6 (Q2):** the facade's `setTraits` calls `adapter.identify(currentDistinctId(), ...)`, so S6's merge correctness is gated on THIS resolver shipping — with the stub returning `'anonymous'`, `setTraits` could mis-trigger a merge. S5 must land before S6.
 - **Merge-retention forward-pointer (— architect 2026-07-08):** persist the id under its own key so S6 can retain the prior anon id at merge (`posthog-core.ts:374`).
 - **SPI grows a required verb (— architect 2026-07-08):** additive to the CONSUMER API; SPI-expanding — `NoopAdapter` returns `'anonymous'`, a future node target returns its own neutral placeholder.
+- **SPI growth touches ALL in-repo adapter implementors (refiner 2026-07-08):** adding required `getDistinctId(): string` breaks every existing `AnalyticsAdapter` implementor until updated. Beyond `NoopAdapter` (returns the moved-down `'anonymous'` constant), update the five seam test doubles — `RecordingAdapter` in `analytics-provider.test.ts` / `adapter.test.ts` / `create-analytics.test.ts` and `SpyAdapter` in `allowlist.test.ts` / `allowlist-guard.test.ts` (they can just return `'anonymous'`) — or the package stops typechecking and the 93 shipped tests break.
 - reference: `posthog-js/packages/core` identity + `packages/browser` persistence; de-brand.
 
 ## Shipped
