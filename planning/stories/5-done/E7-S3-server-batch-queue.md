@@ -52,3 +52,18 @@ Server capture buffers events and flushes on a size or interval trigger — a se
 - api_impact additive.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08): add one focused test for the "interval armed BEFORE the buffer crosses flushAt, then upgraded to a size flush" ordering (currently only implicitly covered) — asserts no redundant empty delivery. Behavior already correct via `drainAndSend`→`clearTimers`.
+- > Reviewer suggestion (2026-07-08, for S4): `track()` swallows send rejections (`.catch(()=>undefined)`) — correct for S3 (no retry yet), but this swallowed-rejection path is exactly where S4's retry/backoff must hook in so failures aren't silently lost.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (node):** `batch-queue.ts` (node-OWN generic `BatchQueue<T>` de-branded from `posthog-core-stateless.ts`: locked defaults 20/10000/100/1000, size+interval earlier-of triggers, deferred `setTimeout(0)` size-flush, `maxBatchSize` slicing into multiple per-delivery batches, drop-oldest at `maxQueueSize`, injected `send` seam, `flushNow()`/`drain()` timer-clearing) + test
+- **Files changed:** `node-analytics.ts` (client owns `BatchQueue<NeutralEvent>` from the 4 config knobs; `capture` enqueues; `SendBatch` delivery-seam type, injectable 2nd ctor param defaulting to no-op stub; retired `EventBuffer`), **DELETED** `event-buffer.ts` (retired the single-impl S2 stub — resolves the S2 reviewer `drain()`-not-on-interface flag by removal)
+- **New public API:** none — queue + `SendBatch` adapter-internal (not exported from `index.ts`)
+- **Deliberate reference deviations (both regression-tested):** DROPPED the `maxBatchSize = Math.max(flushAt, maxBatchSize)` clamp (makes maxBatchSize an independent per-delivery cap floored at 1 → 250→100/100/50); KEPT `maxQueueSize = Math.max(maxQueueSize, flushAt)` (a cap below flushAt wedges the size trigger) + `flushAt >= 1`
+- **Tests added:** node +32 (batch-queue 29: defaults, size/interval/earlier-of fake-timer, drop-oldest at cap never-block never-force-flush, maxBatchSize slicing + anti-clamp, config overrides + floors, injected-send + flushNow-awaits-in-flight + rejection-doesn't-escape + one-deferred-drain-per-burst + drain-quiesce; adapter config-threads-into-queue via send-spy) → 50; seam 166 unchanged
+- **Commit:** `E7-S3-server-batch-queue — Server batch queue + locked defaults` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (interval-armed-then-size test; S4 retry-hook on the swallowed-rejection path)
+- **Cross-story seams exposed:** **S4** slots `sendBatch` into the injected `send` closure (ctor 2nd arg `SendBatch = (batch: NeutralEvent[]) => Promise<void>`) — zero queue reshaping; owns the wire envelope/gzip/endpoint-POST/`dedupeId→uuid`/413-halving BELOW the seam; retry/backoff hooks the swallowed-rejection path. (Architect carry: the reference's 413-halving permanently mutates maxBatchSize — S4 decides separate-runtime-field vs in-flight-only; keeping maxBatchSize independent here makes either clean.) **S6** `flush()`→`queue.flushNow()` (drain+await in-flight), `shutdown()`→`queue.drain()` (take-all, clears both timers so no dangling `setTimeout` pins the event loop).

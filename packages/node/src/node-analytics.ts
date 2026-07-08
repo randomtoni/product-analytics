@@ -8,9 +8,15 @@ import {
   type TaxonomyShape,
 } from 'analytics-kit';
 import type { NodeAnalyticsConfig, ViolationPolicy } from './config';
-import { InMemoryEventBuffer, type EventBuffer } from './event-buffer';
+import { BatchQueue } from './batch-queue';
 
 export type CaptureOptions = { dedupeId?: string };
+
+// The queue→delivery seam: a batch delivery callback the client injects into the
+// queue. In this story the client supplies an internal stub (or a test-injected
+// spy); the real gzipped wire POST fills this closure in E7-S4 with zero queue
+// reshaping. Kept off the public NodeAnalytics surface — pure adapter plumbing.
+export type SendBatch = (batch: NeutralEvent[]) => Promise<void>;
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 type EmptyObject = {};
@@ -43,16 +49,24 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
   private readonly allowlist?: ReadonlySet<string>;
   private readonly onViolation: ViolationPolicy;
   private readonly eventDecls?: Readonly<Record<string, PropDecl>>;
-  private readonly buffer: EventBuffer;
+  private readonly queue: BatchQueue<NeutralEvent>;
 
-  constructor(config: NodeAnalyticsConfig, buffer: EventBuffer = new InMemoryEventBuffer()) {
+  // `send` is the injected delivery seam. Unset ⇒ an internal no-op stub (the real
+  // wire POST lands in E7-S4); tests inject a spy to observe the delivered batches.
+  constructor(config: NodeAnalyticsConfig, send: SendBatch = async () => {}) {
     const allowlist =
       config.allowlist ??
       (config.taxonomy === undefined ? undefined : deriveAllowlistFromTaxonomy(config.taxonomy));
     this.allowlist = allowlist === undefined ? undefined : new Set(allowlist);
     this.onViolation = config.onViolation ?? 'throw';
     this.eventDecls = config.taxonomy?.decl.events;
-    this.buffer = buffer;
+    this.queue = new BatchQueue<NeutralEvent>({
+      send,
+      flushAt: config.flushAt,
+      flushInterval: config.flushInterval,
+      maxBatchSize: config.maxBatchSize,
+      maxQueueSize: config.maxQueueSize,
+    });
   }
 
   capture(
@@ -72,7 +86,7 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
       timestamp: new Date(),
       dedupeId: dedupeId ?? randomUUID(),
     };
-    this.buffer.add(built);
+    this.queue.enqueue(built);
   }
 
   // Resolve the impl's widened (propsOrOptions?, options?) into (props, dedupeId) from
