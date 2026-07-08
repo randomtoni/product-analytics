@@ -4,7 +4,7 @@ import { NoopAdapter } from './noop-adapter';
 import type { FeatureFlagPort, SessionReplayPort } from './ports';
 import { RESERVED_PAGE_EVENT } from './taxonomy';
 import type { DefaultTaxonomyShape, PropsParam, TaxonomyShape } from './taxonomy';
-import { generateUuid } from './uuid';
+import { generateUuid as defaultGenerateUuid } from './uuid';
 
 const ANONYMOUS_DISTINCT_ID = 'anonymous';
 
@@ -40,18 +40,30 @@ export interface AnalyticsProvider<TX extends TaxonomyShape = DefaultTaxonomySha
 }
 
 export class AnalyticsProviderImpl implements AnalyticsProvider {
-  private adapter: AnalyticsAdapter;
+  private adapter!: AnalyticsAdapter;
   private liveAdapter: AnalyticsAdapter;
   private readonly noopAdapter = new NoopAdapter();
   private optedOut = false;
   private readonly allowlist?: ReadonlySet<string>;
   private readonly onViolation: ViolationPolicy;
+  private readonly generateUuid: () => string;
 
-  constructor(adapter: AnalyticsAdapter, allowlist?: string[], onViolation?: ViolationPolicy) {
+  constructor(
+    adapter: AnalyticsAdapter,
+    allowlist?: string[],
+    onViolation?: ViolationPolicy,
+    generateUuid: () => string = defaultGenerateUuid
+  ) {
     this.liveAdapter = adapter;
-    this.adapter = adapter;
+    this.resyncActiveAdapter();
     this.allowlist = allowlist === undefined ? undefined : new Set(allowlist);
     this.onViolation = onViolation ?? 'throw';
+    this.generateUuid = generateUuid;
+  }
+
+  installAdapter(next: AnalyticsAdapter): void {
+    this.liveAdapter = next;
+    this.resyncActiveAdapter();
   }
 
   track(event: string, props?: NeutralProperties): void {
@@ -88,13 +100,13 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
   }
 
   optOut(): void {
-    this.adapter = this.noopAdapter;
     this.optedOut = true;
+    this.resyncActiveAdapter();
   }
 
   optIn(): void {
-    this.adapter = this.liveAdapter;
     this.optedOut = false;
+    this.resyncActiveAdapter();
   }
 
   hasOptedOut(): boolean {
@@ -102,11 +114,15 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
   }
 
   flush(): Promise<void> {
-    return this.adapter.flush();
+    return this.liveAdapter.flush();
   }
 
   shutdown(): Promise<void> {
-    return this.adapter.shutdown();
+    return this.liveAdapter.shutdown();
+  }
+
+  private resyncActiveAdapter(): void {
+    this.adapter = this.optedOut ? this.noopAdapter : this.liveAdapter;
   }
 
   private allowed(...bags: Array<NeutralProperties | undefined>): boolean {
@@ -137,7 +153,7 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
       distinctId: this.currentDistinctId(),
       properties: props,
       timestamp: new Date(),
-      dedupeId: generateUuid(),
+      dedupeId: this.generateUuid(),
     };
   }
 }

@@ -213,16 +213,84 @@ test('reset is a no-op skeleton in E2 — it touches no adapter verb', () => {
   expect(adapter.didShutdown).toBe(false);
 });
 
-test('the adapter field is reassignable so S4/S5 can swap the active delegate', () => {
+test('installAdapter swaps the active delegate via the single derivation path', () => {
   const first = new RecordingAdapter();
   const second = new RecordingAdapter();
   const analytics = new AnalyticsProviderImpl(first);
 
-  (analytics as unknown as { adapter: AnalyticsAdapter }).adapter = second;
+  analytics.installAdapter(second);
   analytics.track('x');
 
   expect(first.captured).toHaveLength(0);
   expect(second.captured).toHaveLength(1);
+});
+
+test('installAdapter then optOut then optIn delegates to the newly installed live adapter (no stale ref)', () => {
+  const first = new RecordingAdapter();
+  const second = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(first);
+
+  analytics.installAdapter(second);
+  analytics.optOut();
+  analytics.track('while-opted-out');
+  analytics.optIn();
+  analytics.track('after-opt-in');
+
+  expect(first.captured).toHaveLength(0);
+  expect(second.captured).toHaveLength(1);
+  expect(second.captured[0].event).toBe('after-opt-in');
+});
+
+test('flush routes to the live adapter even while opted-out (E2-S5 shutdown-leak closed)', async () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  await expect(analytics.flush()).resolves.toBeUndefined();
+
+  expect(adapter.flushed).toBe(1);
+});
+
+test('shutdown routes to the live adapter even while opted-out (E2-S5 shutdown-leak closed)', async () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  await expect(analytics.shutdown()).resolves.toBeUndefined();
+
+  expect(adapter.didShutdown).toBe(true);
+});
+
+test('generateUuid is injectable via the facade constructor and stamps dedupeId', () => {
+  const adapter = new RecordingAdapter();
+  let n = 0;
+  const analytics = new AnalyticsProviderImpl(adapter, undefined, undefined, () => `fixed-${n++}`);
+
+  analytics.track('x');
+  analytics.track('y');
+
+  expect(adapter.captured[0].dedupeId).toBe('fixed-0');
+  expect(adapter.captured[1].dedupeId).toBe('fixed-1');
+});
+
+test('createAnalytics threads deps.generateUuid through to the facade dedupeId', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = createAnalytics({}, adapter, { generateUuid: () => 'injected' });
+
+  analytics.track('x');
+
+  expect(adapter.captured[0].dedupeId).toBe('injected');
+});
+
+test('without an injected generator the seam Math.random v4 default still stamps a dedupeId', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.track('x');
+
+  expect(adapter.captured[0].dedupeId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+  );
 });
 
 test('hasOptedOut() defaults to false on a fresh provider', () => {

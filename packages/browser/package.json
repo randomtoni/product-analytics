@@ -19,5 +19,8 @@
   },
   "dependencies": {
     "analytics-kit": "workspace:*"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
   }
 }

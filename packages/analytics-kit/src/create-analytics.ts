@@ -14,18 +14,30 @@ export interface AnalyticsConfig {
   onViolation?: ViolationPolicy;
 }
 
+interface AnalyticsDeps {
+  generateUuid?: () => string;
+}
+
 export function createAnalytics<const T extends TaxonomyDecl>(
   config: AnalyticsConfig & { taxonomy: Taxonomy<T> },
-  adapter?: AnalyticsAdapter
+  adapter?: AnalyticsAdapter,
+  deps?: AnalyticsDeps
 ): AnalyticsProvider<ShapeOf<T>>;
 export function createAnalytics(
   config: AnalyticsConfig,
-  adapter?: AnalyticsAdapter
+  adapter?: AnalyticsAdapter,
+  deps?: AnalyticsDeps
 ): AnalyticsProvider;
 export function createAnalytics(
   config: AnalyticsConfig,
-  adapter?: AnalyticsAdapter
+  adapter?: AnalyticsAdapter,
+  deps?: AnalyticsDeps
 ): AnalyticsProvider {
   const resolvedAdapter = adapter ?? new NoopAdapter();
-  return new AnalyticsProviderImpl(resolvedAdapter, config.allowlist, config.onViolation);
+  return new AnalyticsProviderImpl(
+    resolvedAdapter,
+    config.allowlist,
+    config.onViolation,
+    deps?.generateUuid
+  );
 }
