@@ -75,3 +75,12 @@ The workspace root is the substrate every package plugs into: without the pnpm w
 - **Commit:** `E1-S1-workspace-root-scaffold — Workspace root & shared toolchain config` on `core-cycle`
 - **Reviewer notes:** see Technical notes — 4 suggestions captured (eslint posthog-js ignore, redundant pnpm build-approval key, Bundler re-validation at E2, @types/node alignment); 0 critical
 - **Cross-story seams exposed:** turbo tasks `build`(tsup)/`typecheck`(tsc --noEmit)/`test`(vitest run)/`lint`(eslint .), each `dependsOn ["^build"]` except lint. Packages extend `tsconfig.base.json` (`extends: ../../tsconfig.base.json`), author their own `vitest.config.ts` merging `../../vitest.shared.ts` (vitest doesn't walk up), and spread `baseTsupConfig` from `../../tsup.config.base`. Root is `"type": "module"`; **packages must NOT set `"type": "module"`** (preserves tsup `.js`=cjs/`.mjs`=esm). All build/test devDeps stay root-only for E1. Editing any shared root config busts every package's turbo cache (`globalDependencies`).
+
+## Follow-up
+
+> E1 post-close improvement pass, 2026-07-07 (commit follows). Reviewer-verified, no regression (all four gates green on forced runs).
+
+- **eslint ignores `posthog-js/`** — added `'posthog-js/**'` to the `eslint.config.js` global-ignores block; a root `eslint .` now exits 0 instead of linting the ~4,000-file reference checkout. (Addresses S1 reviewer suggestion #1.)
+- **@types/node aligned to the Node floor** — `^22` → `^20` to match `engines.node >=20` (resolves 20.19.43); typecheck green on a cache-bypassed run. (Addresses suggestion #4.)
+- **pnpm build-approval consolidated** — dropped the redundant `onlyBuiltDependencies` alias, kept `allowBuilds: { esbuild: true }` (authoritative under pinned pnpm@11.7.0); `pnpm install` still runs esbuild's postinstall (negative-control confirmed the field is load-bearing). (Addresses suggestion #2.)
+- **Skipped with reason:** `moduleResolution: Bundler` re-validation (suggestion #3) → deferred to E2's first cross-package type import (its natural checkpoint). The S2 "hoist `include` into tsconfig.base" idea → NOT applied: TS resolves `include` relative to the config file that defines it, so a base-level `include:["src"]` would point at `<root>/src` (wrong) — per-package placement is correct. Publish hygiene (`files`/`sideEffects`) → a future cross-cutting packaging story. react-dom peer / react types+jsx / jsdom env → E9 / E2 scope.
