@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-08 — core cycle closed; promoted to identify
+Last updated: 2026-07-08 — core cycle closed; promoted to identify; E4 refined (Step 4.5)
 
 ## Status
 
@@ -22,7 +22,7 @@ The **adoption** cycle (`E10`, `E11`) closes: the example consumer needs the tar
 
 **Focus area: `identify`** — anonymous identity and the context bound to every event. This cycle stabilizes anonymous id generation + persistence (config-supplied cookie domain/scope, memory mode), the anonymous→identified merge, session id assignment + expiry, and `reset()` to v1 — the identity substrate every captured event carries.
 
-- **[E4-ID-identity-persistence](epics/E4-ID-identity-persistence.md)** *(active)* — anonymous UUIDv7 id + config-selectable persistence (`cookie` | `localStorage+cookie` | `memory`), cross-subdomain cookie domain/scope, the client-side anonymous→identified merge, super-property registration (allowlist-gated), session id assignment + expiry, durable consent, and `reset()`; carves the shared browser substrate E5/E6 build on.
+- **[E4-ID-identity-persistence](epics/E4-ID-identity-persistence.md)** *(active)* — anonymous UUIDv7 distinct id + a separate persisted device id, config-selectable persistence (`cookie` | `localStorage+cookie` | `memory`), cross-subdomain cookie domain/scope, the client-side anonymous→identified merge (rides `identify()`; identity state adapter-internal), super-property registration (allowlist-gated at registration), session id assignment + expiry, durable tri-state consent (`granted`/`denied`/`pending`, DNT-folded), and `reset()`; carves the shared browser substrate E5/E6 build on.
 
 `identify` is a **one-epic cycle**: E4 is the whole cycle and gates the concurrent `capture` (E5/E6) and `react` (E9) lanes, which build directly on the browser substrate and identity resolver it lands.
 
