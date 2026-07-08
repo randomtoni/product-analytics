@@ -2,6 +2,12 @@ import { expect, expectTypeOf, test } from 'vitest';
 import type { AnalyticsAdapter, NeutralFetchOptions, NeutralFetchResponse } from './adapter';
 import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 import { AnalyticsProviderImpl, type AnalyticsProvider } from './analytics-provider';
+import { createAnalytics } from './create-analytics';
+import type { FeatureFlagPort, SessionReplayPort } from './ports';
+import type {
+  FeatureFlagPort as ExportedFeatureFlagPort,
+  SessionReplayPort as ExportedSessionReplayPort,
+} from './index';
 import * as pkg from './index';
 
 class RecordingAdapter implements AnalyticsAdapter {
@@ -301,7 +307,7 @@ test('the impl class is not exported from the package entrypoint', () => {
   expect('AnalyticsProviderImpl' in pkg).toBe(false);
 });
 
-test('AnalyticsProvider exposes exactly the eleven §1 methods (verbs + consent trio)', () => {
+test('AnalyticsProvider exposes exactly the thirteen §1 members (verbs + consent trio + optional capability ports)', () => {
   expectTypeOf<keyof AnalyticsProvider>().toEqualTypeOf<
     | 'track'
     | 'identify'
@@ -314,7 +320,41 @@ test('AnalyticsProvider exposes exactly the eleven §1 methods (verbs + consent 
     | 'hasOptedOut'
     | 'flush'
     | 'shutdown'
+    | 'flags'
+    | 'replay'
   >();
+});
+
+test('flags and replay are typed to the capability ports and are optional', () => {
+  expectTypeOf<AnalyticsProvider['flags']>().toEqualTypeOf<FeatureFlagPort | undefined>();
+  expectTypeOf<AnalyticsProvider['replay']>().toEqualTypeOf<SessionReplayPort | undefined>();
+});
+
+test('FeatureFlagPort and SessionReplayPort are exported from the package entrypoint (type-level)', () => {
+  expectTypeOf<ExportedFeatureFlagPort>().toEqualTypeOf<FeatureFlagPort>();
+  expectTypeOf<ExportedSessionReplayPort>().toEqualTypeOf<SessionReplayPort>();
+});
+
+test('flags is undefined on a release-1 provider (optional slot, not adapter-wired)', () => {
+  const analytics = createAnalytics({});
+
+  expect(analytics.flags).toBeUndefined();
+});
+
+test('replay is undefined on a release-1 provider (optional slot, not adapter-wired)', () => {
+  const analytics = createAnalytics({});
+
+  expect(analytics.replay).toBeUndefined();
+});
+
+test('optional ports are independent of the capture path — track/identify run while flags/replay stay undefined', () => {
+  const analytics = createAnalytics({});
+
+  analytics.track('x');
+  analytics.identify('user-1', { plan: 'pro' });
+
+  expect(analytics.flags).toBeUndefined();
+  expect(analytics.replay).toBeUndefined();
 });
 
 test('AnalyticsProvider method signatures are pinned (compile-time)', () => {

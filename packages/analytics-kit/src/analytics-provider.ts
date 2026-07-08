@@ -1,6 +1,7 @@
 import type { AnalyticsAdapter } from './adapter';
 import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 import { NoopAdapter } from './noop-adapter';
+import type { FeatureFlagPort, SessionReplayPort } from './ports';
 import { generateUuid } from './uuid';
 
 const ANONYMOUS_DISTINCT_ID = 'anonymous';
@@ -18,6 +19,8 @@ export interface AnalyticsProvider {
   hasOptedOut(): boolean;
   flush(): Promise<void>;
   shutdown(): Promise<void>;
+  flags?: FeatureFlagPort;
+  replay?: SessionReplayPort;
 }
 
 export class AnalyticsProviderImpl implements AnalyticsProvider {
