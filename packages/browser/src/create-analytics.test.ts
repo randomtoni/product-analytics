@@ -39,9 +39,31 @@ test('the persistence config selects the mode: memory mode persists nothing acro
   expect(reloaded.getPersistedProperty('device_id')).toBeUndefined();
 });
 
+test('a keyed client with no consent policy is opted-out by default (fail-safe)', () => {
+  const analytics = createAnalytics({ key: 'no-consent-policy-key' });
+
+  expect(analytics.hasOptedOut()).toBe(true);
+});
+
+test("consentDefault 'granted' + pending: capture runs, yet cookies stay suppressed until an explicit grant", () => {
+  const key = 'consent-default-granted-key';
+  const analytics = createAnalytics({ key, consentDefault: 'granted' });
+
+  // consentDefault resolves the pending state so capture runs at the facade...
+  expect(analytics.hasOptedOut()).toBe(false);
+  expect(() => analytics.track('x')).not.toThrow();
+
+  // ...but the adapter's durable consent is still pending, so no cookies are written.
+  window.dispatchEvent(new Event('beforeunload'));
+  expect(document.cookie).not.toContain(key);
+});
+
 test('omitting persistence yields the durable default (localStorage+cookie survives a reload)', () => {
   const key = 'mode-key-default';
-  resolveAdapter({ key }).setPersistedProperty('device_id', 'durable');
+  // Persistence is gated on consent (S3): grant durably before the durable write.
+  resolveAdapter({ key }).setConsentState('granted');
+  const writer = resolveAdapter({ key });
+  writer.setPersistedProperty('device_id', 'durable');
   // A real reload fires the unload flush first, landing the debounced write.
   window.dispatchEvent(new Event('beforeunload'));
 

@@ -1,5 +1,7 @@
 import type { NeutralEvent, NeutralTraits } from './neutral-event';
 
+export type ConsentState = 'granted' | 'denied' | 'pending';
+
 export interface NeutralFetchOptions {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH';
   headers: Record<string, string>;
@@ -19,6 +21,9 @@ export interface AnalyticsAdapter {
   alias(previousId: string, distinctId: string): void;
   flush(): Promise<void>;
   shutdown(): Promise<void>;
+
+  getConsentState(): ConsentState;
+  setConsentState(state: ConsentState): void;
 
   fetch(url: string, options: NeutralFetchOptions): Promise<NeutralFetchResponse>;
   getPersistedProperty<T>(key: string): T | undefined;

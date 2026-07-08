@@ -1,5 +1,10 @@
 import { afterEach, expect, expectTypeOf, test, vi } from 'vitest';
-import type { AnalyticsAdapter, NeutralFetchOptions, NeutralFetchResponse } from './adapter';
+import type {
+  AnalyticsAdapter,
+  ConsentState,
+  NeutralFetchOptions,
+  NeutralFetchResponse,
+} from './adapter';
 import type { NeutralEvent, NeutralTraits } from './neutral-event';
 import type { AnalyticsProvider } from './analytics-provider';
 import { createAnalytics, type AnalyticsConfig } from './create-analytics';
@@ -33,6 +38,10 @@ class RecordingAdapter implements AnalyticsAdapter {
   async shutdown(): Promise<void> {
     this.didShutdown = true;
   }
+  getConsentState(): ConsentState {
+    return 'granted';
+  }
+  setConsentState(): void {}
   async fetch(url: string, options: NeutralFetchOptions): Promise<NeutralFetchResponse> {
     return { status: 200, text: async () => `${options.method} ${url}`, json: async () => ({}) };
   }
@@ -149,13 +158,14 @@ test('the internal facade class is never exposed through the public barrel', () 
   expect('AnalyticsProviderImpl' in pkg).toBe(false);
 });
 
-test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E3), and the persistence mode (E4)', () => {
+test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E3), the persistence mode (E4), and the consent default (E4-S3)', () => {
   expectTypeOf<AnalyticsConfig>().toEqualTypeOf<{
     key?: string;
     taxonomy?: Taxonomy<TaxonomyDecl>;
     allowlist?: string[];
     onViolation?: 'throw' | 'drop-and-error-log';
     persistence?: 'cookie' | 'localStorage+cookie' | 'memory';
+    consentDefault?: 'granted' | 'denied';
   }>();
   const empty: AnalyticsConfig = {};
   expect(empty).toEqual({});

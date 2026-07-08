@@ -198,6 +198,22 @@ export function createLocalStoragePlusCookieBackend(
   };
 }
 
+// The durable consent decision is read BEFORE the property store and must sit on a
+// backend SEPARATE from the one it gates (reading consent through the persistence
+// being gated is circular). localStorage is preferred — durable and NON-cookie, so
+// storing the opt-out decision itself writes zero cookies (mirrors the reference's
+// localStorage default for opt-out). `memory` mode shares the adapter's single
+// memory backend so the pre-store read sees the same instance.
+export function resolveConsentBackend(
+  mode: PersistenceMode,
+  memoryBackend: StorageBackend
+): StorageBackend {
+  if (mode === 'memory') {
+    return memoryBackend;
+  }
+  return localStorageBackend.isSupported() ? localStorageBackend : cookieBackend;
+}
+
 // Mode → property-store backend, falling back gracefully when a backend is
 // unsupported. `memoryBackend` is injected so it can be shared with a pre-store
 // raw read (see `createMemoryBackend`).

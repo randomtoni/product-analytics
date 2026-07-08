@@ -1,5 +1,10 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import type { AnalyticsAdapter, NeutralFetchOptions, NeutralFetchResponse } from './adapter';
+import type {
+  AnalyticsAdapter,
+  ConsentState,
+  NeutralFetchOptions,
+  NeutralFetchResponse,
+} from './adapter';
 import type { NeutralEvent, NeutralTraits } from './neutral-event';
 import { AnalyticsProviderImpl } from './analytics-provider';
 import { createAnalytics } from './create-analytics';
@@ -30,6 +35,10 @@ class SpyAdapter implements AnalyticsAdapter {
   async shutdown(): Promise<void> {
     this.didShutdown = true;
   }
+  getConsentState(): ConsentState {
+    return 'granted';
+  }
+  setConsentState(): void {}
   async fetch(url: string, options: NeutralFetchOptions): Promise<NeutralFetchResponse> {
     return { status: 200, text: async () => `${options.method} ${url}`, json: async () => ({}) };
   }

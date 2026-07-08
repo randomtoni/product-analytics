@@ -99,7 +99,11 @@ describe.each(['cookie', 'localStorage+cookie', 'memory'] as const)(
 test('durable modes survive a reload (a fresh store instance re-reads the value)', () => {
   for (const persistence of ['cookie', 'localStorage+cookie'] as const) {
     const key = freshKey();
-    new BrowserAdapter({ key, persistence }).setPersistedProperty('device_id', 'dev-durable');
+    // Persistence is gated on consent (S3): grant durably first, then the writing
+    // adapter reads 'granted' at construction and builds the durable store.
+    new BrowserAdapter({ key, persistence }).setConsentState('granted');
+    const writer = new BrowserAdapter({ key, persistence });
+    writer.setPersistedProperty('device_id', 'dev-durable');
     // A real reload fires the unload flush first, landing the debounced write.
     window.dispatchEvent(new Event('beforeunload'));
 
@@ -117,4 +121,85 @@ test('memory mode persists nothing across a fresh store instance', () => {
   const reloaded = new BrowserAdapter({ key, persistence: 'memory' });
 
   expect(reloaded.getPersistedProperty('device_id')).toBeUndefined();
+});
+
+test('a fresh adapter defaults to pending, and the consent SPI pair round-trips', () => {
+  const adapter = new BrowserAdapter({ key: freshKey() });
+
+  expect(adapter.getConsentState()).toBe('pending');
+
+  adapter.setConsentState('granted');
+  expect(adapter.getConsentState()).toBe('granted');
+});
+
+test('the consent decision survives a reload — set denied, reconstruct, read denied (zero cookies)', () => {
+  const key = freshKey();
+  new BrowserAdapter({ key }).setConsentState('denied');
+
+  const reloaded = new BrowserAdapter({ key });
+
+  expect(reloaded.getConsentState()).toBe('denied');
+  expect(document.cookie).not.toContain(key);
+});
+
+test('a pending (default/unasked) adapter writes zero cookies even when a property is set', () => {
+  const key = freshKey();
+  const adapter = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+  expect(adapter.getConsentState()).toBe('pending');
+
+  adapter.setPersistedProperty('device_id', 'dev-1');
+  window.dispatchEvent(new Event('beforeunload'));
+
+  expect(document.cookie).not.toContain(key);
+});
+
+test('a denied adapter writes zero cookies exactly like pending', () => {
+  const key = freshKey();
+  new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('denied');
+  const adapter = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+
+  adapter.setPersistedProperty('device_id', 'dev-1');
+  window.dispatchEvent(new Event('beforeunload'));
+
+  expect(document.cookie).not.toContain(key);
+});
+
+test('only a granted adapter permits cookie writes', () => {
+  const key = freshKey();
+  new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('granted');
+  const adapter = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+
+  adapter.setPersistedProperty('device_id', 'dev-1');
+  window.dispatchEvent(new Event('beforeunload'));
+
+  expect(document.cookie).toContain(key);
+});
+
+test('a platform DNT signal resolves getConsentState() to denied — no DNT concept on the seam', () => {
+  const adapter = new BrowserAdapter({ key: freshKey() });
+  adapter.setConsentState('granted');
+  expect(adapter.getConsentState()).toBe('granted');
+
+  Object.defineProperty(window.navigator, 'doNotTrack', { value: '1', configurable: true });
+  try {
+    expect(adapter.getConsentState()).toBe('denied');
+  } finally {
+    Object.defineProperty(window.navigator, 'doNotTrack', { value: undefined, configurable: true });
+  }
+});
+
+test('a DNT signal at construction gates the property store to memory — zero cookies', () => {
+  const key = freshKey();
+  new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('granted');
+
+  Object.defineProperty(window.navigator, 'doNotTrack', { value: '1', configurable: true });
+  try {
+    const adapter = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+    adapter.setPersistedProperty('device_id', 'dev-1');
+    window.dispatchEvent(new Event('beforeunload'));
+
+    expect(document.cookie).not.toContain(key);
+  } finally {
+    Object.defineProperty(window.navigator, 'doNotTrack', { value: undefined, configurable: true });
+  }
 });

@@ -1,4 +1,4 @@
-import type { AnalyticsAdapter, NeutralFetchResponse } from './adapter';
+import type { AnalyticsAdapter, ConsentState, NeutralFetchResponse } from './adapter';
 
 const NOOP_LIBRARY_ID = 'analytics-kit';
 const NOOP_LIBRARY_VERSION = '0.0.0';
@@ -11,6 +11,12 @@ export class NoopAdapter implements AnalyticsAdapter {
 
   async flush(): Promise<void> {}
   async shutdown(): Promise<void> {}
+
+  getConsentState(): ConsentState {
+    return 'denied';
+  }
+
+  setConsentState(): void {}
 
   fetch(): Promise<NeutralFetchResponse> {
     return Promise.resolve({

@@ -1,6 +1,7 @@
 import { expect, expectTypeOf, test } from 'vitest';
 import type {
   AnalyticsAdapter,
+  ConsentState,
   NeutralFetchOptions,
   NeutralFetchResponse,
 } from './adapter';
@@ -14,6 +15,7 @@ class RecordingAdapter implements AnalyticsAdapter {
   flushed = 0;
   didShutdown = false;
   store = new Map<string, unknown>();
+  consentState: ConsentState = 'granted';
 
   capture(event: NeutralEvent): void {
     this.captured.push(event);
@@ -32,6 +34,12 @@ class RecordingAdapter implements AnalyticsAdapter {
   }
   async shutdown(): Promise<void> {
     this.didShutdown = true;
+  }
+  getConsentState(): ConsentState {
+    return this.consentState;
+  }
+  setConsentState(state: ConsentState): void {
+    this.consentState = state;
   }
   async fetch(url: string, options: NeutralFetchOptions): Promise<NeutralFetchResponse> {
     return {
@@ -148,6 +156,19 @@ test('client-identity primitives report id/version and an optional user-agent', 
   expect(recorder.getCustomUserAgent()).toBeUndefined();
 });
 
+test('the consent SPI pair round-trips a neutral tri-state and never surfaces a numeric encoding', () => {
+  const recorder = new RecordingAdapter();
+
+  const state: ConsentState = recorder.getConsentState();
+  expect(['granted', 'denied', 'pending']).toContain(state);
+
+  // set is void — the durable write is a side effect, not a returned value.
+  expect(recorder.setConsentState('denied')).toBeUndefined();
+  expect(recorder.getConsentState()).toBe('denied');
+  recorder.setConsentState('pending');
+  expect(recorder.getConsentState()).toBe('pending');
+});
+
 test('SPI signatures are pinned to the neutral types (compile-time)', () => {
   expectTypeOf<AnalyticsAdapter['capture']>().parameters.toEqualTypeOf<[NeutralEvent]>();
   expectTypeOf<AnalyticsAdapter['capture']>().returns.toEqualTypeOf<void>();
@@ -156,6 +177,10 @@ test('SPI signatures are pinned to the neutral types (compile-time)', () => {
   expectTypeOf<AnalyticsAdapter['alias']>().returns.toEqualTypeOf<void>();
   expectTypeOf<AnalyticsAdapter['flush']>().returns.toEqualTypeOf<Promise<void>>();
   expectTypeOf<AnalyticsAdapter['shutdown']>().returns.toEqualTypeOf<Promise<void>>();
+  expectTypeOf<AnalyticsAdapter['getConsentState']>().returns.toEqualTypeOf<ConsentState>();
+  expectTypeOf<ConsentState>().toEqualTypeOf<'granted' | 'denied' | 'pending'>();
+  expectTypeOf<AnalyticsAdapter['setConsentState']>().parameters.toEqualTypeOf<[ConsentState]>();
+  expectTypeOf<AnalyticsAdapter['setConsentState']>().returns.toEqualTypeOf<void>();
 
   expectTypeOf<AnalyticsAdapter['fetch']>().returns.toEqualTypeOf<Promise<NeutralFetchResponse>>();
   expectTypeOf<NeutralFetchResponse['json']>().returns.toEqualTypeOf<Promise<unknown>>();

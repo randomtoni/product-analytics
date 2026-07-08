@@ -13,6 +13,7 @@ export interface AnalyticsConfig {
   allowlist?: string[];
   onViolation?: ViolationPolicy;
   persistence?: 'cookie' | 'localStorage+cookie' | 'memory';
+  consentDefault?: 'granted' | 'denied';
 }
 
 interface AnalyticsDeps {
@@ -39,6 +40,7 @@ export function createAnalytics(
     resolvedAdapter,
     config.allowlist,
     config.onViolation,
-    deps?.generateUuid
+    deps?.generateUuid,
+    config.consentDefault
   );
 }

@@ -1,4 +1,4 @@
-import type { AnalyticsAdapter } from './adapter';
+import type { AnalyticsAdapter, ConsentState } from './adapter';
 import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 import { NoopAdapter } from './noop-adapter';
 import type { FeatureFlagPort, SessionReplayPort } from './ports';
@@ -9,6 +9,8 @@ import { generateUuid as defaultGenerateUuid } from './uuid';
 const ANONYMOUS_DISTINCT_ID = 'anonymous';
 
 export type ViolationPolicy = 'throw' | 'drop-and-error-log';
+
+export type ConsentDefault = 'granted' | 'denied';
 
 type ConsoleLike = { error(...args: unknown[]): void };
 
@@ -43,7 +45,8 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
   private adapter!: AnalyticsAdapter;
   private liveAdapter: AnalyticsAdapter;
   private readonly noopAdapter = new NoopAdapter();
-  private optedOut = false;
+  private optedOut: boolean;
+  private readonly consentDefault?: ConsentDefault;
   private readonly allowlist?: ReadonlySet<string>;
   private readonly onViolation: ViolationPolicy;
   private readonly generateUuid: () => string;
@@ -52,9 +55,12 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
     adapter: AnalyticsAdapter,
     allowlist?: string[],
     onViolation?: ViolationPolicy,
-    generateUuid: () => string = defaultGenerateUuid
+    generateUuid: () => string = defaultGenerateUuid,
+    consentDefault?: ConsentDefault
   ) {
     this.liveAdapter = adapter;
+    this.consentDefault = consentDefault;
+    this.optedOut = this.resolveOptedOut(adapter.getConsentState());
     this.resyncActiveAdapter();
     this.allowlist = allowlist === undefined ? undefined : new Set(allowlist);
     this.onViolation = onViolation ?? 'throw';
@@ -101,11 +107,16 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
 
   optOut(): void {
     this.optedOut = true;
+    // Persist the durable decision and quiesce the live adapter (drop, not flush,
+    // any unsent buffer — E5 owns the buffer); then swap the active delegate to
+    // the no-op as defense-in-depth.
+    this.liveAdapter.setConsentState('denied');
     this.resyncActiveAdapter();
   }
 
   optIn(): void {
     this.optedOut = false;
+    this.liveAdapter.setConsentState('granted');
     this.resyncActiveAdapter();
   }
 
@@ -123,6 +134,14 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
 
   private resyncActiveAdapter(): void {
     this.adapter = this.optedOut ? this.noopAdapter : this.liveAdapter;
+  }
+
+  // 'granted' captures; 'denied' opts out; 'pending' resolves against the config
+  // consent-default — unset is opt-out-by-default (the library's fail-safe).
+  private resolveOptedOut(state: ConsentState): boolean {
+    if (state === 'granted') return false;
+    if (state === 'denied') return true;
+    return this.consentDefault !== 'granted';
   }
 
   private allowed(...bags: Array<NeutralProperties | undefined>): boolean {

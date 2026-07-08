@@ -1,5 +1,10 @@
 import { expect, expectTypeOf, test } from 'vitest';
-import type { AnalyticsAdapter, NeutralFetchOptions, NeutralFetchResponse } from './adapter';
+import type {
+  AnalyticsAdapter,
+  ConsentState,
+  NeutralFetchOptions,
+  NeutralFetchResponse,
+} from './adapter';
 import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 import { AnalyticsProviderImpl, type AnalyticsProvider } from './analytics-provider';
 import { createAnalytics } from './create-analytics';
@@ -19,6 +24,8 @@ class RecordingAdapter implements AnalyticsAdapter {
   didShutdown = false;
   store = new Map<string, unknown>();
   persistedWrites: Array<{ key: string; value: unknown }> = [];
+  consentWrites: ConsentState[] = [];
+  consentState: ConsentState = 'granted';
 
   capture(event: NeutralEvent): void {
     this.captured.push(event);
@@ -37,6 +44,13 @@ class RecordingAdapter implements AnalyticsAdapter {
   }
   async shutdown(): Promise<void> {
     this.didShutdown = true;
+  }
+  getConsentState(): ConsentState {
+    return this.consentState;
+  }
+  setConsentState(state: ConsentState): void {
+    this.consentWrites.push(state);
+    this.consentState = state;
   }
   async fetch(url: string, options: NeutralFetchOptions): Promise<NeutralFetchResponse> {
     return {
@@ -369,6 +383,100 @@ test('optIn on a never-opted-out provider keeps delegation live and hasOptedOut(
 
   expect(adapter.captured).toHaveLength(1);
   expect(analytics.hasOptedOut()).toBe(false);
+});
+
+test('the facade seeds optedOut from a durable denied consent state at startup', () => {
+  const adapter = new RecordingAdapter();
+  adapter.consentState = 'denied';
+
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  expect(analytics.hasOptedOut()).toBe(true);
+  analytics.track('x');
+  expect(adapter.captured).toHaveLength(0);
+});
+
+test('a granted consent state seeds optedOut false and capture reaches the live adapter', () => {
+  const adapter = new RecordingAdapter();
+  adapter.consentState = 'granted';
+
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  expect(analytics.hasOptedOut()).toBe(false);
+  analytics.track('x');
+  expect(adapter.captured).toHaveLength(1);
+});
+
+test('pending with consentDefault UNSET resolves to opted-out — the fail-safe default', () => {
+  const adapter = new RecordingAdapter();
+  adapter.consentState = 'pending';
+
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  expect(analytics.hasOptedOut()).toBe(true);
+  analytics.track('x');
+  expect(adapter.captured).toHaveLength(0);
+});
+
+test("pending with consentDefault 'granted' resolves to capture-runs (opt-in-by-default knob)", () => {
+  const adapter = new RecordingAdapter();
+  adapter.consentState = 'pending';
+
+  const analytics = new AnalyticsProviderImpl(adapter, undefined, undefined, undefined, 'granted');
+
+  expect(analytics.hasOptedOut()).toBe(false);
+  analytics.track('x');
+  expect(adapter.captured).toHaveLength(1);
+});
+
+test("pending with consentDefault 'denied' resolves to opted-out (explicit opt-out-by-default)", () => {
+  const adapter = new RecordingAdapter();
+  adapter.consentState = 'pending';
+
+  const analytics = new AnalyticsProviderImpl(adapter, undefined, undefined, undefined, 'denied');
+
+  expect(analytics.hasOptedOut()).toBe(true);
+});
+
+test('optOut persists the durable decision via setConsentState(denied) on the live adapter', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+
+  expect(adapter.consentWrites).toEqual(['denied']);
+  expect(adapter.consentState).toBe('denied');
+});
+
+test('optIn persists the durable decision via setConsentState(granted) on the live adapter', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  analytics.optIn();
+
+  expect(adapter.consentWrites).toEqual(['denied', 'granted']);
+  expect(adapter.consentState).toBe('granted');
+});
+
+test('optOut drops rather than flushes — it never calls the live adapter flush', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+
+  expect(adapter.flushed).toBe(0);
+});
+
+test('hasOptedOut reflects the durable state after a reconstruct against the same adapter', () => {
+  const adapter = new RecordingAdapter();
+  const first = new AnalyticsProviderImpl(adapter);
+  first.optOut();
+
+  // A reconstruct (reload) re-seeds from the durable decision the adapter now holds.
+  const reconstructed = new AnalyticsProviderImpl(adapter);
+
+  expect(reconstructed.hasOptedOut()).toBe(true);
 });
 
 test('the impl class is not exported from the package entrypoint', () => {

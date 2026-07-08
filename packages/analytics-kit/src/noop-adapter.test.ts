@@ -46,6 +46,15 @@ test('persistence goes to the void — set is a no-op and get returns undefined 
   expect(adapter.getPersistedProperty<string>('distinct_id')).toBeUndefined();
 });
 
+test('consent reports the safest tri-state — denied — and setConsentState is an inert no-op', () => {
+  const adapter: AnalyticsAdapter = new NoopAdapter();
+
+  expect(adapter.getConsentState()).toBe('denied');
+  // A no-op write cannot flip the reported state — the null-object captures nothing regardless.
+  adapter.setConsentState('granted');
+  expect(adapter.getConsentState()).toBe('denied');
+});
+
 test('client-identity getters return neutral placeholders (no vendor token)', () => {
   const adapter: AnalyticsAdapter = new NoopAdapter();
 

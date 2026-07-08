@@ -16,7 +16,19 @@ export const COOKIE_MIRRORED_KEYS: readonly string[] = [
 ];
 
 const STORE_NAME_PREFIX = 'analytics_kit';
+const CONSENT_STORE_PREFIX = 'analytics_kit_consent';
+
+function sanitize(key: string): string {
+  return key.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
 
 export function storeName(key: string): string {
-  return `${STORE_NAME_PREFIX}_${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  return `${STORE_NAME_PREFIX}_${sanitize(key)}`;
+}
+
+// The durable consent decision lives under its own top-level name — separate from
+// the property store it gates — so it can be read side-effect-free before the
+// property store is built.
+export function consentStoreName(key: string): string {
+  return `${CONSENT_STORE_PREFIX}_${sanitize(key)}`;
 }

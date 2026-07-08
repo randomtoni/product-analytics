@@ -1,5 +1,6 @@
 import type {
   AnalyticsAdapter,
+  ConsentState,
   NeutralEvent,
   NeutralFetchOptions,
   NeutralFetchResponse,
@@ -7,10 +8,13 @@ import type {
 import {
   buildPropsBackend,
   createMemoryBackend,
+  resolveConsentBackend,
   DEFAULT_PERSISTENCE_MODE,
   type PersistenceMode,
+  type StorageBackend,
 } from './storage-backends';
-import { storeName } from './persistence-keys';
+import { consentStoreName, storeName } from './persistence-keys';
+import { ConsentStore } from './consent';
 import { PersistenceStore } from './persistence-store';
 
 const LIBRARY_ID = 'analytics-kit-browser';
@@ -26,11 +30,28 @@ export interface BrowserAdapterOptions {
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
+  private readonly memoryBackend: StorageBackend;
+  private readonly consent: ConsentStore;
   private readonly store: PersistenceStore;
 
   constructor(options: BrowserAdapterOptions) {
     const mode = options.persistence ?? DEFAULT_PERSISTENCE_MODE;
-    const backend = buildPropsBackend(mode, createMemoryBackend());
+    // One memory backend per client, shared by the consent read and the property
+    // store so a pre-store read and later writes see the same instance.
+    this.memoryBackend = createMemoryBackend();
+
+    // Read consent FIRST, from a dedicated side-effect-free backend, BEFORE the
+    // cookie/domain-probing persistence exists. A non-granted decision (denied,
+    // pending, or a DNT/GPC signal) yields a memory-backed store — so an
+    // opted-out / default-denied / pending client writes zero cookies (and, once
+    // S4 lands, no throwaway domain-probe cookie).
+    this.consent = new ConsentStore(
+      resolveConsentBackend(mode, this.memoryBackend),
+      consentStoreName(options.key)
+    );
+    const effectiveMode: PersistenceMode = this.consent.get() === 'granted' ? mode : 'memory';
+
+    const backend = buildPropsBackend(effectiveMode, this.memoryBackend);
     this.store = new PersistenceStore({
       backend,
       name: storeName(options.key),
@@ -69,6 +90,14 @@ export class BrowserAdapter implements AnalyticsAdapter {
   async flush(): Promise<void> {}
 
   async shutdown(): Promise<void> {}
+
+  getConsentState(): ConsentState {
+    return this.consent.get();
+  }
+
+  setConsentState(state: ConsentState): void {
+    this.consent.set(state);
+  }
 
   async fetch(url: string, options: NeutralFetchOptions): Promise<NeutralFetchResponse> {
     return fetch(url, {
