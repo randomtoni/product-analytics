@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
-import { RESERVED_PAGE_EVENT } from 'analytics-kit';
+import { createAnalytics, RESERVED_PAGE_EVENT, RESERVED_PAGELEAVE_EVENT } from 'analytics-kit';
 import type {
   AnalyticsAdapter,
   AnalyticsConfig,
@@ -2248,6 +2248,256 @@ describe('transport selection + keepalive + unload drain (S6)', () => {
   });
 });
 
+describe('pageleave minted at unload, riding the beacon (E6-S2)', () => {
+  const INGEST = 'https://analytics.example.com';
+  const PAGELEAVE_WIRE = '$pageleave';
+
+  const liveAdapters: BrowserAdapter[] = [];
+  function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
+    const adapter = new BrowserAdapter(options);
+    liveAdapters.push(adapter);
+    return adapter;
+  }
+
+  type BeaconCall = { url: string; body: string | Uint8Array; contentType: string };
+  const beaconCleanups: (() => void)[] = [];
+  function spyBeacon(): BeaconCall[] {
+    beaconMock.calls.length = 0;
+    beaconMock.returns = true;
+    const nav = navigator as unknown as { sendBeacon?: (url: string) => boolean };
+    const had = 'sendBeacon' in nav;
+    const prior = nav.sendBeacon;
+    nav.sendBeacon = () => true;
+    beaconCleanups.push(() => {
+      if (had) {
+        nav.sendBeacon = prior;
+      } else {
+        delete nav.sendBeacon;
+      }
+    });
+    return beaconMock.calls;
+  }
+
+  afterEach(() => {
+    for (const adapter of liveAdapters.splice(0)) {
+      (adapter as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    }
+    for (const cleanup of beaconCleanups.splice(0)) {
+      cleanup();
+    }
+    beaconMock.calls.length = 0;
+    vi.restoreAllMocks();
+  });
+
+  // The wire events across every beacon call (uncompressed JSON `data:[]` bodies).
+  function wireEventsInBeacons(beacons: BeaconCall[]): Record<string, unknown>[] {
+    const events: Record<string, unknown>[] = [];
+    for (const beacon of beacons) {
+      const text = typeof beacon.body === 'string' ? beacon.body : '';
+      for (const e of (JSON.parse(text) as { data: Record<string, unknown>[] }).data) {
+        events.push(e);
+      }
+    }
+    return events;
+  }
+
+  function pageleaveEvents(beacons: BeaconCall[]): Record<string, unknown>[] {
+    return wireEventsInBeacons(beacons).filter((e) => e.event === PAGELEAVE_WIRE);
+  }
+
+  // Capture a page event (isPageView marker set) so the current-pageview record exists,
+  // with a controllable timestamp for the duration assertion.
+  function capturePage(adapter: BrowserAdapter, timestamp: Date): void {
+    adapter.capture(makeEvent({ event: RESERVED_PAGE_EVENT, isPageView: true, timestamp }));
+  }
+
+  test('on unload with a page captured + toggle on: exactly one pageleave, correct SECONDS duration, beacon-drained', () => {
+    vi.useFakeTimers();
+    const pageAt = new Date('2026-07-08T09:00:00.000Z');
+    vi.setSystemTime(pageAt);
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    capturePage(adapter, pageAt);
+    // 42 seconds elapse on the page before the unload.
+    vi.setSystemTime(new Date(pageAt.getTime() + 42_000));
+    adapter.unload();
+
+    const leaves = pageleaveEvents(beacons);
+    expect(leaves).toHaveLength(1);
+    const props = leaves[0].properties as Record<string, unknown>;
+    // Duration is in SECONDS (posthog page-view.ts:157 divides ms by 1000), not ms.
+    expect(props.prev_pageview_duration).toBe(42);
+    expect(props.prev_pageview_pathname).toBe('/');
+    expect(typeof props.prev_pageview_id).toBe('string');
+
+    vi.useRealTimers();
+  });
+
+  test('the pageleave links to the current pageview id (the record set at page() time)', () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    capturePage(adapter, new Date());
+    const recordId = adapter.currentPageviewRecord()!.pageViewId;
+    adapter.unload();
+
+    const props = pageleaveEvents(beacons)[0].properties as Record<string, unknown>;
+    expect(props.prev_pageview_id).toBe(recordId);
+  });
+
+  test('the pageleave rides the SAME beacon drain (enqueued just before drain), not a normal interval/size POST', async () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    // Any normal POST would go through the fetch() SPI; assert it is NEVER hit — the
+    // pageleave leaves only via the unload beacon.
+    const postCalls: unknown[] = [];
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (...args) => {
+      postCalls.push(args);
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+    const beacons = spyBeacon();
+
+    capturePage(adapter, new Date());
+    adapter.unload();
+
+    expect(pageleaveEvents(beacons)).toHaveLength(1);
+    // The pageleave was beacon-drained, never sent via a normal interval/size POST.
+    expect(postCalls).toHaveLength(0);
+  });
+
+  test('NO pageleave fires when NO page was captured this session', () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    // A non-page event only — no current-pageview record ⇒ no pageleave.
+    adapter.capture(makeEvent({ event: 'clicked' }));
+    adapter.unload();
+
+    expect(pageleaveEvents(beacons)).toHaveLength(0);
+  });
+
+  test('NO pageleave fires when the toggle is off (capturePageleave: false)', () => {
+    const adapter = makeAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      capturePageleave: false,
+    });
+    const beacons = spyBeacon();
+
+    capturePage(adapter, new Date());
+    adapter.unload();
+
+    // A page WAS captured, but the toggle is off ⇒ no pageleave. The page event itself
+    // still drains, but no $pageleave event is among the beaconed events.
+    expect(pageleaveEvents(beacons)).toHaveLength(0);
+  });
+
+  test('the pageleave mints at most once across the several lifecycle events of a real unload (idempotent latch)', () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    capturePage(adapter, new Date());
+    // Fire every lifecycle event a real unload emits.
+    window.dispatchEvent(new Event('pagehide'));
+    window.dispatchEvent(new Event('beforeunload'));
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(pageleaveEvents(beacons)).toHaveLength(1);
+  });
+
+  test('a no-target unload (no ingestHost) mints + drains the pageleave harmlessly, beaconing nothing', () => {
+    const adapter = makeAdapter({ key: freshKey(), compression: false });
+    const beacons = spyBeacon();
+
+    capturePage(adapter, new Date());
+    // No ingest target: the pageleave is minted (before the no-target branch) and then
+    // drained-and-discarded — no throw, no beacon.
+    expect(() => adapter.unload()).not.toThrow();
+    expect(beacons).toHaveLength(0);
+  });
+
+  test('the pageleave computed keys are neutral (no $-prefix) on the NEUTRAL surface (bar A)', () => {
+    // Assert on the neutral event the pipeline sees, BEFORE the adapter's wire-mapper
+    // swaps names/keys. The pageleave routes through capture() → runCapturePipeline.
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const seen: NeutralEvent[] = [];
+    const realPipeline = adapter.runCapturePipeline.bind(adapter);
+    vi.spyOn(adapter, 'runCapturePipeline').mockImplementation((event: NeutralEvent) => {
+      seen.push(event);
+      return realPipeline(event);
+    });
+
+    capturePage(adapter, new Date());
+    adapter.unload();
+
+    const leave = seen.find((e) => e.event === RESERVED_PAGELEAVE_EVENT);
+    expect(leave).toBeDefined();
+    // The neutral event name is 'pageleave' (no $); it is the wire-mapper that emits $pageleave.
+    expect(leave!.event).not.toContain('$');
+    for (const key of Object.keys(leave!.properties ?? {})) {
+      expect(key).not.toContain('$');
+    }
+  });
+
+  test('the pageleave is NOT allowlist-gated — it fires despite a restrictive allowlist (library-computed ⇒ trusted, bar A)', () => {
+    // The allowlist is a FACADE-level gate (analytics-provider). The pageleave is minted
+    // INSIDE the adapter, downstream of that gate — so an allowlist that would reject its
+    // computed keys must not suppress it. Drive the full facade→adapter path to prove it.
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const analytics = createAnalytics(
+      // A restrictive allowlist that does NOT include the pageleave's computed keys;
+      // consent granted so consent is not the variable under test (allowlist is).
+      { allowlist: ['ref'], onViolation: 'drop-and-error-log', consentDefault: 'granted' },
+      adapter
+    );
+    const beacons = spyBeacon();
+
+    analytics.page('/dashboard', { ref: 'nav' });
+    adapter.unload();
+
+    // The pageleave still fires — its prev_pageview_* keys were never subject to the gate.
+    const leaves = pageleaveEvents(beacons);
+    expect(leaves).toHaveLength(1);
+    const props = leaves[0].properties as Record<string, unknown>;
+    expect(props).toHaveProperty('prev_pageview_duration');
+    expect(props).toHaveProperty('prev_pageview_id');
+  });
+
+  test('the pageleave inherits the capture() bot gate — a bot client mints no pageleave', () => {
+    // Bot suppression sits at the top of capture(); the pageleave routes through capture(),
+    // so a bot must not emit one. Force the bot gate on via a matching blocked UA.
+    const ua = navigator.userAgent;
+    const adapter = makeAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      blockedUserAgents: [ua],
+    });
+    const beacons = spyBeacon();
+
+    // The page capture is itself gated out (bot), so no record — belt AND braces: even
+    // if a record existed, the pageleave capture() would be gated too.
+    capturePage(adapter, new Date());
+    adapter.unload();
+
+    expect(pageleaveEvents(beacons)).toHaveLength(0);
+  });
+
+  test('the neutral surface carries NO pageleave/duration wire vocabulary — the toggle is a plain boolean (bar A)', () => {
+    const adapter: AnalyticsAdapter = makeAdapter({ key: freshKey(), ingestHost: INGEST });
+    const surface = adapter as unknown as Record<string, unknown>;
+    // No $pageleave / prev_pageview knob leaks onto the neutral surface.
+    expect(surface.$pageleave).toBeUndefined();
+    expect(surface.capture_pageleave).toBeUndefined();
+    expect(surface.pageleave).toBeUndefined();
+    // The neutral config field is a plain boolean.
+    const options: BrowserAdapterOptions = { key: 'k', capturePageleave: true };
+    expect(typeof options.capturePageleave).toBe('boolean');
+  });
+});
+
 describe('offline queue persistence — survives a reload (S9, NEW WORK)', () => {
   const INGEST = 'https://analytics.example.com';
 
@@ -2522,8 +2772,11 @@ describe('pageview-state substrate (E6-S1)', () => {
   const IDLE_MS = 30 * 60 * 1000;
   const UUID_V7_RE = UUID_V7;
 
+  // A pageview event as the facade page() path now builds it: the neutral isPageView
+  // marker set, the event name defaulting to RESERVED_PAGE_EVENT (a nameless page()).
+  // The pipeline recognizes it by the marker, NOT the name (E6-S2 PART A).
   function pageEvent(overrides: Partial<NeutralEvent> = {}): NeutralEvent {
-    return makeEvent({ event: RESERVED_PAGE_EVENT, ...overrides });
+    return makeEvent({ event: RESERVED_PAGE_EVENT, isPageView: true, ...overrides });
   }
 
   test('a `page` event through the pipeline sets the current-pageview record (timestamp, fresh pageViewId, pathname)', () => {
@@ -2538,6 +2791,32 @@ describe('pageview-state substrate (E6-S1)', () => {
     expect(record!.pageViewId).toMatch(UUID_V7_RE);
     // jsdom default location is http://localhost:3000/ ⇒ pathname '/'.
     expect(record!.pathname).toBe('/');
+  });
+
+  test('a NAMED page (event name is the router path, isPageView marker set) sets the record (E6-S2 PART A)', () => {
+    // The E2 facade maps page('/dashboard') → event name '/dashboard' (NOT 'page'),
+    // stamping the neutral isPageView marker. Before PART A the pipeline keyed off
+    // event.event === 'page', so a real router-driven named page never set the record;
+    // now it keys off the marker, so a named page DOES set it. Flips the S1 red pin.
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const at = new Date('2026-07-08T09:00:00.000Z');
+
+    adapter.runCapturePipeline(makeEvent({ event: '/dashboard', isPageView: true, timestamp: at }));
+
+    const record = adapter.currentPageviewRecord();
+    expect(record).toBeDefined();
+    expect(record!.timestamp).toBe(at.getTime());
+    expect(record!.pageViewId).toMatch(UUID_V7_RE);
+  });
+
+  test('a track() event whose name happens to be "page" but with NO isPageView marker does NOT set the record (E6-S2 PART A)', () => {
+    // The recognizer is the marker, not the name: a track('page') (no marker) is a
+    // plain event, not a pageview — the inverse of the named-page case above.
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    adapter.runCapturePipeline(makeEvent({ event: RESERVED_PAGE_EVENT }));
+
+    expect(adapter.currentPageviewRecord()).toBeUndefined();
   });
 
   test('the record timestamp falls back to now() when the page event carries no timestamp', () => {

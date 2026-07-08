@@ -1,5 +1,11 @@
-import type { NeutralEvent, NeutralProperties } from 'analytics-kit';
-import { MERGE_EVENT, SET_TRAITS_KEY, SET_TRAITS_ONCE_KEY } from './persistence-keys';
+import { RESERVED_PAGELEAVE_EVENT, type NeutralEvent, type NeutralProperties } from 'analytics-kit';
+import {
+  MERGE_EVENT,
+  PAGELEAVE_WIRE_EVENT,
+  PAGEVIEW_WIRE_EVENT,
+  SET_TRAITS_KEY,
+  SET_TRAITS_ONCE_KEY,
+} from './persistence-keys';
 
 // The [WIRE] shape of a single captured event — the object the transport POSTs
 // (S2 wraps a `data:[]` array of these). Every key here is adapter-internal wire
@@ -39,7 +45,7 @@ export interface WireEvent {
 // top of it, lifting the trait bags to top-level wire keys.
 export function mapEventToWire(event: NeutralEvent): WireEvent {
   const base: WireEvent = {
-    event: event.event,
+    event: wireEventName(event),
     distinct_id: event.distinctId,
     properties: event.properties,
     timestamp: event.timestamp?.toISOString(),
@@ -50,6 +56,21 @@ export function mapEventToWire(event: NeutralEvent): WireEvent {
     return base;
   }
   return normalizeMergeEvent(base, event.properties);
+}
+
+// Swap the neutral event name/marker for its [WIRE] name. A pageview is recognized by
+// the neutral `isPageView` marker (its `event` name is the router path, not a fixed
+// token); the pageleave by its reserved neutral event name. Every other event carries
+// its neutral name through verbatim. The `$`-prefixed tokens live only here (+ their
+// constants) — never on the neutral surface.
+function wireEventName(event: NeutralEvent): string {
+  if (event.isPageView === true) {
+    return PAGEVIEW_WIRE_EVENT;
+  }
+  if (event.event === RESERVED_PAGELEAVE_EVENT) {
+    return PAGELEAVE_WIRE_EVENT;
+  }
+  return event.event;
 }
 
 // Split the merge event's property bag: the two trait bags become top-level

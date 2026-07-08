@@ -49,3 +49,18 @@ A `pageleave` event carries time-on-page, which is only correct when minted at t
 - Toggle default semantics: `capture_pageleave` = `'if_capture_pageview'` (`posthog-core.ts:243`) — pageleave on when pageview capture is on. Neutral names `pageview`/`pageleave`; `$pageleave` is [WIRE]. — architect (2026-07-07): epic §E6.3.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate): the `isPageView`-not-on-wire crux is compiler-guaranteed (`WireEvent` closed interface, `mapEventToWire` builds field-by-field) but has no DIRECT regression test — add `expect(wire).not.toHaveProperty('isPageView')` (mirroring the `$insert_id` `containsInsertId` deep-scan) as belt-and-braces against a future refactor that spreads the event into `base`.
+- > Reviewer note (2026-07-08): the pageleave's `prev_pageview_pathname`/`prev_pageview_id` are pinned to the pageview-mint instant (record-time) while `distinctId` is the unload-instant actor — correct (matches posthog); flagged so a future reader doesn't "fix" record-time pathname to unload-time.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **PART A (blocking discriminator, architect-chosen):** `NeutralEvent.isPageView?: true` neutral presence-only marker; facade `page()` stamps it (named + nameless) via `buildEvent(...,true)`, `track()` never; pipeline `trackPageview` keys off `event.isPageView` (NOT `event.event==='page'`) → **named `page('/dashboard')` now sets the record**. `wireEventName()` maps marker→`$pageview` + reserved `pageleave`→`$pageleave` (`[WIRE]` confined to browser `persistence-keys.ts`). `isPageView` structurally cannot reach the wire body (`WireEvent` closed interface).
+- **Files changed (seam):** `neutral-event.ts` (+`isPageView?: true`), `analytics-provider.ts` (`page()` stamps it), `taxonomy.ts` (+`RESERVED_PAGELEAVE_EVENT='pageleave'`), `index.ts` (barrel-export)
+- **Files changed (browser):** `browser-adapter.ts` (`trackPageview` marker-keyed; `capturePageleave` option; pageleave minted in `unload()` after latch/before drain riding beacon, seconds duration, neutral `prev_pageview_duration|id|pathname`, NOT allowlist-gated), `persistence-keys.ts` (+`PAGEVIEW_WIRE_EVENT='$pageview'`/`PAGELEAVE_WIRE_EVENT='$pageleave'`), `wire-mapper.ts` (`wireEventName()`)
+- **New public API:** none — `isPageView` is a neutral `NeutralEvent` marker (E2 shape-pin extended in lockstep to `true | undefined`); pin stays 15; no facade verb
+- **Tests added:** seam +6 (139), browser +19 (433) — named/nameless stamps, named-page-sets-record (S1 pin flipped), pageleave seconds/beacon/toggle-off/no-page/idempotent/neutral-keys/not-gated/bot-gate, wire-mapper `$pageview`/`$pageleave`
+- **Commit:** `E6-S2-pageleave-unload — pageleave (adapter-internal, minted at unload)` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (direct isPageView wire-absence test; pathname/distinctId timing note)
+- **Cross-story seams exposed:** **S3** enrichment auto-applies to the pageleave (routes through `capture()`→`runCapturePipeline`) — do NOT special-case it out. **S4** unchanged (reuses `lastSeenSessionId`/`detectSessionRotation`). **S5** rewires `BrowserAdapterOptions.capturePageleave` (plain boolean, default `!== false`) into the structured `enrichment` object + extends the `AnalyticsConfig` shape-pin. `[WIRE]` name-mapping pattern established in `wireEventName()` (marker-keyed pageview, reserved-name-keyed pageleave/merge).

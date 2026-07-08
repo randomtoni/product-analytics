@@ -1,13 +1,23 @@
 import type { NeutralProperties, NeutralTraits } from './neutral-event';
 
+// The default event NAME for a nameless facade `page()`; a named `page('/x')` uses
+// its argument instead. NOT the pageview recognizer — the pipeline keys off the
+// neutral `NeutralEvent.isPageView` marker, which the `page()` path stamps for both.
 export const RESERVED_PAGE_EVENT = 'page';
+
+// The neutral event NAME of the adapter-internal `pageleave`, minted at unload (never
+// via a facade verb — the consumer never types it). Reserved so it can't be redeclared
+// as a custom event. Neutral/no-`$`; the adapter maps it to the `[WIRE]` `$pageleave`.
+export const RESERVED_PAGELEAVE_EVENT = 'pageleave';
 
 export type PropType = 'string' | 'number' | 'boolean' | 'date';
 
 export type PropDecl = Record<string, PropType>;
 
 export type TaxonomyDecl = {
-  events: Record<string, PropDecl> & { [K in typeof RESERVED_PAGE_EVENT]?: never };
+  events: Record<string, PropDecl> & {
+    [K in typeof RESERVED_PAGE_EVENT | typeof RESERVED_PAGELEAVE_EVENT]?: never;
+  };
   traits?: PropDecl;
   groups?: Record<string, PropDecl>;
   page?: PropDecl;

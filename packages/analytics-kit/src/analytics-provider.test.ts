@@ -162,6 +162,38 @@ test('page without a name falls back to a neutral placeholder (no vendor $-token
   expect(event.dedupeId.length).toBeGreaterThan(0);
 });
 
+test('a NAMED page stamps the neutral isPageView marker while keeping the router name (E6-S2 PART A)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.page('/dashboard', { ref: 'nav' });
+
+  const [event] = adapter.captured;
+  // The event NAME is the router path — but the marker, not the name, identifies a pageview.
+  expect(event.event).toBe('/dashboard');
+  expect(event.isPageView).toBe(true);
+});
+
+test('a NAMELESS page also stamps the neutral isPageView marker (E6-S2 PART A)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.page();
+
+  expect(adapter.captured[0].isPageView).toBe(true);
+});
+
+test('track does NOT stamp the isPageView marker — only the page() path does (E6-S2 PART A)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.track('purchase', { amount: 9 });
+
+  // The marker is absent on a plain track event (presence-only: never set false either).
+  expect(adapter.captured[0].isPageView).toBeUndefined();
+  expect('isPageView' in adapter.captured[0]).toBe(false);
+});
+
 test('identify delegates id, traits, and traitsOnce to adapter.identify', () => {
   const adapter = new RecordingAdapter();
   const analytics = new AnalyticsProviderImpl(adapter);

@@ -1,5 +1,5 @@
 import {
-  RESERVED_PAGE_EVENT,
+  RESERVED_PAGELEAVE_EVENT,
   type AnalyticsAdapter,
   type ConsentState,
   type NeutralEvent,
@@ -49,6 +49,15 @@ import { beaconSend, hasFetch, postViaXhr, KEEPALIVE_THRESHOLD_BYTES } from './t
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
+
+// The pageleave's library-computed link back to the pageview it closes: the elapsed
+// time on page, the pageview id, and the pathname. Neutral keys (de-branded from
+// posthog's $prev_pageview_duration/$prev_pageview_id/$prev_pageview_pathname). Library-
+// computed ⇒ trusted: added downstream of the E3 facade allowlist, never gated.
+const PREV_PAGEVIEW_DURATION_KEY = 'prev_pageview_duration';
+const PREV_PAGEVIEW_ID_KEY = 'prev_pageview_id';
+const PREV_PAGEVIEW_PATHNAME_KEY = 'prev_pageview_pathname';
+const MS_PER_SECOND = 1000;
 
 // The current path, read defensively so the adapter stays safe in a non-DOM
 // (SSR/test) context — mirrors the navigator guard in isBot(). Empty string when
@@ -117,6 +126,12 @@ export interface BrowserAdapterOptions {
   // exists; set false to force S2's uncompressed JSON POST. A neutral boolean — the
   // wire encoding it selects (gzip, [WIRE] Content-Type/query params) stays internal.
   compression?: boolean;
+  // Mint a pageleave at unload (time-on-page), riding the beacon drain. Defaults ON
+  // when pageview capture is in use (posthog's `capture_pageleave: 'if_capture_pageview'`
+  // default, de-branded) — R1 pageviews are always available, so on unless explicitly
+  // false. A plain boolean here; E6-S5 rewires this into the structured `enrichment`
+  // object.
+  capturePageleave?: boolean;
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
@@ -175,9 +190,14 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // the pageview record is cleared. Shared substrate — E6-S4 reuses the same
   // comparison to reset its per-session entry props. Adapter-internal.
   private lastSeenSessionId: string | undefined;
+  // Whether unload() mints a pageleave. Resolved once at construction: on unless the
+  // consumer explicitly disables it (posthog's if_capture_pageview default, de-branded —
+  // R1 pageview capture is always available). E6-S5 rewires this into `enrichment`.
+  private readonly capturePageleaveEnabled: boolean;
 
   constructor(options: BrowserAdapterOptions) {
     this.compressionEnabled = options.compression !== false && isGzipSupported();
+    this.capturePageleaveEnabled = options.capturePageleave !== false;
     this.botFilterEnabled = options.botFilter !== false;
     this.blockedUserAgents = options.blockedUserAgents ?? [];
     this.rateLimiter = new RateLimiter({ interpretBackPressure: interpretBodyBackPressure });
@@ -305,6 +325,12 @@ export class BrowserAdapter implements AnalyticsAdapter {
     }
     this.unloadDrained = true;
 
+    // Mint the pageleave BEFORE the drain and BEFORE the no-target branch: capture()
+    // enqueues it synchronously, so it rides the very next drain()'s beacon. On a
+    // no-target unload it lands in the buffer that is then drained-and-discarded —
+    // harmless. The latch above makes this fire at most once per unload.
+    this.capturePageleave();
+
     const url = this.ingestUrl();
     if (url === undefined) {
       // No ingest target: still take the buffers so they aren't left dangling, but there
@@ -397,7 +423,10 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // first event of a new session starts the new lineage rather than being wiped.
   private trackPageview(event: NeutralEvent): void {
     this.detectSessionRotation(event.sessionId);
-    if (event.event !== RESERVED_PAGE_EVENT) {
+    // Recognize a pageview by the neutral marker the facade page() path stamps — NOT
+    // by the event name, which is the router path/name for a named page('/x'). Keying
+    // off the name would miss every real router-driven pageview.
+    if (event.isPageView !== true) {
       return;
     }
     this.currentPageview = {
@@ -437,6 +466,36 @@ export class BrowserAdapter implements AnalyticsAdapter {
    * neutral surface. */
   currentPageviewRecord(): CurrentPageview | undefined {
     return this.currentPageview;
+  }
+
+  // Mint the pageleave for the current pageview and route it through capture() so it
+  // rides the unload beacon (enqueued synchronously just before drain()). Fires ONLY
+  // when a pageview record exists (a page was captured this session) AND the toggle is
+  // on. The duration/id/pathname are library-computed ⇒ trusted (no allowlist gating —
+  // capture() is downstream of the E3 facade gate). Inherits capture()'s bot gate +
+  // rate limiter by construction. Idempotent via unload()'s latch (called once).
+  private capturePageleave(): void {
+    if (!this.capturePageleaveEnabled) {
+      return;
+    }
+    const record = this.currentPageview;
+    if (record === undefined) {
+      return;
+    }
+    // Duration in SECONDS, matching posthog's $prev_pageview_duration (page-view.ts:157
+    // divides ms by 1000) so a downstream consumer sees the same unit as other durations.
+    const durationSeconds = (Date.now() - record.timestamp) / MS_PER_SECOND;
+    this.capture({
+      event: RESERVED_PAGELEAVE_EVENT,
+      distinctId: this.identity.getDistinctId(),
+      properties: {
+        [PREV_PAGEVIEW_DURATION_KEY]: durationSeconds,
+        [PREV_PAGEVIEW_ID_KEY]: record.pageViewId,
+        [PREV_PAGEVIEW_PATHNAME_KEY]: record.pathname,
+      },
+      timestamp: new Date(),
+      dedupeId: generateUuidV7(),
+    });
   }
 
   private stampSessionId(event: NeutralEvent): NeutralEvent {

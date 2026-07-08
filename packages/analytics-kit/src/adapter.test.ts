@@ -107,6 +107,23 @@ test('capture accepts a fully-resolved NeutralEvent with only its required field
   expect((adapter as RecordingAdapter).captured[0]).toBe(minimal);
 });
 
+test('a NeutralEvent may carry the optional neutral isPageView marker, presence-only (E6-S2 PART A)', () => {
+  // The marker is an additive, presence-only field: a pageview event sets `true`; a
+  // plain event omits it. It is the neutral pageview discriminator — no vendor $-token.
+  const pageview: NeutralEvent = {
+    event: '/dashboard',
+    distinctId: 'u',
+    dedupeId: 'd',
+    isPageView: true,
+  };
+  const plain: NeutralEvent = { event: 'purchase', distinctId: 'u', dedupeId: 'd' };
+
+  expect(pageview.isPageView).toBe(true);
+  expect(plain.isPageView).toBeUndefined();
+  // Type-level: the marker is optional and, when present, exactly `true` (no `false`).
+  expectTypeOf<NeutralEvent['isPageView']>().toEqualTypeOf<true | undefined>();
+});
+
 test('identify and group carry no traits when omitted', () => {
   const recorder = new RecordingAdapter();
 

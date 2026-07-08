@@ -16,6 +16,14 @@ export const IDENTIFIED_IDENTITY_STATE: IdentityState = 'identified';
 // event. De-branded — no `$`-prefixed name.
 export const MERGE_EVENT = 'identify';
 
+// The [WIRE] event names for pageview / pageleave — the ONLY place the `$`-prefixed
+// vendor tokens live. The wire-mapper emits PAGEVIEW_WIRE_EVENT for an event carrying
+// the neutral `isPageView` marker (the router path stays in the neutral `event` name),
+// and PAGELEAVE_WIRE_EVENT for the adapter-internal `pageleave`. Never on the neutral
+// surface — the mapper is the boundary that swaps the neutral name/marker for these.
+export const PAGEVIEW_WIRE_EVENT = '$pageview';
+export const PAGELEAVE_WIRE_EVENT = '$pageleave';
+
 // Adapter-internal [WIRE] property names carried on the merge / traits event only —
 // the retained prior anon id (the merge link) and the two person-trait bags. The
 // E5 wire-mapper normalizes these to the vendor conventions; the neutral surface

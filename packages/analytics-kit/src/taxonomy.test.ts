@@ -104,6 +104,12 @@ test('declaring an event under the reserved page name is a compile error', () =>
   expect(true).toBe(true);
 });
 
+test('declaring an event under the reserved pageleave name is a compile error (E6-S2)', () => {
+  // @ts-expect-error 'pageleave' is the reserved pageleave-event slot and cannot be a declared event
+  defineTaxonomy({ events: { pageleave: { url: 'string' } } });
+  expect(true).toBe(true);
+});
+
 test('ShapeOf resolves prop type-tags to their runtime types', () => {
   type Decl = { events: { e: { a: 'string'; b: 'number' } } };
   expectTypeOf<ShapeOf<Decl>['events']['e']>().toEqualTypeOf<{ a: string; b: number }>();

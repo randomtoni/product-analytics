@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'vitest';
-import type { NeutralEvent } from 'analytics-kit';
+import { RESERVED_PAGELEAVE_EVENT, RESERVED_PAGE_EVENT, type NeutralEvent } from 'analytics-kit';
 import { assembleBatchBody, mapEventToWire } from './wire-mapper';
 import { containsInsertId } from './wire-scan.test-helper';
 import {
   ANONYMOUS_DISTINCT_ID_KEY,
   MERGE_EVENT,
+  PAGELEAVE_WIRE_EVENT,
+  PAGEVIEW_WIRE_EVENT,
   SET_TRAITS_KEY,
   SET_TRAITS_ONCE_KEY,
 } from './persistence-keys';
@@ -176,6 +178,51 @@ describe('wire-mapper — MERGE_EVENT / traits normalization (S2, keyed off MERG
     );
 
     expect(wire.uuid).toBe('dedupe-abc');
+  });
+});
+
+describe('wire-mapper — pageview / pageleave [WIRE] event names (E6-S2)', () => {
+  test('a page-marked event maps to the [WIRE] $pageview name (keyed off the isPageView marker, NOT the event name)', () => {
+    // A named page carries the router path as its neutral event name; the marker, not
+    // the name, drives the mapping to $pageview.
+    const wire = mapEventToWire(makeEvent({ event: '/dashboard', isPageView: true }));
+
+    expect(wire.event).toBe(PAGEVIEW_WIRE_EVENT);
+    expect(wire.event).toBe('$pageview');
+  });
+
+  test('a nameless-page-marked event (neutral name "page") also maps to $pageview', () => {
+    const wire = mapEventToWire(makeEvent({ event: RESERVED_PAGE_EVENT, isPageView: true }));
+
+    expect(wire.event).toBe('$pageview');
+  });
+
+  test('a plain event named "page" WITHOUT the marker is NOT mapped to $pageview (marker-keyed)', () => {
+    // The name is not the discriminator: a track('page') with no marker stays 'page'.
+    const wire = mapEventToWire(makeEvent({ event: RESERVED_PAGE_EVENT }));
+
+    expect(wire.event).toBe('page');
+  });
+
+  test('the neutral pageleave event maps to the [WIRE] $pageleave name (keyed off the reserved neutral name)', () => {
+    const wire = mapEventToWire(makeEvent({ event: RESERVED_PAGELEAVE_EVENT }));
+
+    expect(wire.event).toBe(PAGELEAVE_WIRE_EVENT);
+    expect(wire.event).toBe('$pageleave');
+  });
+
+  test('a pageview carries its properties + uuid through unchanged — only the event name is swapped', () => {
+    const wire = mapEventToWire(
+      makeEvent({ event: '/pricing', isPageView: true, properties: { ref: 'nav' }, dedupeId: 'pv-1' })
+    );
+
+    expect(wire.event).toBe('$pageview');
+    expect(wire.properties).toEqual({ ref: 'nav' });
+    expect(wire.uuid).toBe('pv-1');
+  });
+
+  test('an ordinary event name is carried through verbatim (no accidental $-mapping)', () => {
+    expect(mapEventToWire(makeEvent({ event: 'purchase' })).event).toBe('purchase');
   });
 });
 

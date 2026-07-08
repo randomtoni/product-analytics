@@ -79,7 +79,7 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
 
   page(name?: string, props?: NeutralProperties): void {
     if (!this.allowed(props)) return;
-    this.adapter.capture(this.buildEvent(name ?? RESERVED_PAGE_EVENT, props));
+    this.adapter.capture(this.buildEvent(name ?? RESERVED_PAGE_EVENT, props, true));
   }
 
   identify(id: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {
@@ -192,13 +192,17 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
     return this.liveAdapter.getDistinctId();
   }
 
-  private buildEvent(event: string, props?: NeutralProperties): NeutralEvent {
-    return {
+  private buildEvent(event: string, props?: NeutralProperties, isPageView?: true): NeutralEvent {
+    const built: NeutralEvent = {
       event,
       distinctId: this.currentDistinctId(),
       properties: props,
       timestamp: new Date(),
       dedupeId: this.generateUuid(),
     };
+    if (isPageView) {
+      built.isPageView = true;
+    }
+    return built;
   }
 }
