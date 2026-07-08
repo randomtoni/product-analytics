@@ -64,3 +64,9 @@ A `pageleave` event carries time-on-page, which is only correct when minted at t
 - **Commit:** `E6-S2-pageleave-unload — pageleave (adapter-internal, minted at unload)` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions (direct isPageView wire-absence test; pathname/distinctId timing note)
 - **Cross-story seams exposed:** **S3** enrichment auto-applies to the pageleave (routes through `capture()`→`runCapturePipeline`) — do NOT special-case it out. **S4** unchanged (reuses `lastSeenSessionId`/`detectSessionRotation`). **S5** rewires `BrowserAdapterOptions.capturePageleave` (plain boolean, default `!== false`) into the structured `enrichment` object + extends the `AnalyticsConfig` shape-pin. `[WIRE]` name-mapping pattern established in `wireEventName()` (marker-keyed pageview, reserved-name-keyed pageleave/merge).
+
+## Follow-up
+
+> E6 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression (seam 153 / browser 584 green).
+
+- **Direct `isPageView` wire-absence test** — added `expect(wire).not.toHaveProperty('isPageView')` to the pageview mapping test, belt-and-braces the closed-`WireEvent` guarantee against a future refactor that spreads the event into `base`. (Addresses the S2 reviewer suggestion.)

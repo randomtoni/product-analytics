@@ -1,4 +1,4 @@
-import type { NeutralProperties } from 'analytics-kit';
+import type { EnrichmentConfig, NeutralProperties } from 'analytics-kit';
 import { detectDeviceType, parseUserAgent, type DeviceTypeSignals, type UserAgentHints } from './user-agent';
 
 // Per-event auto-enrichment: the neutral page / device-browser-OS / referrer / timezone
@@ -146,11 +146,7 @@ function timezoneContext(): NeutralProperties {
 // Per-module enrichment opt-out (E6-S5). Each group defaults ON (absent ⇒ enriched);
 // setting one false disables ONLY that group's spread. A new enrichment module adds its
 // own toggle here without re-cutting the others (S6 nests `country`, S8 reads per-context).
-export interface ContextToggles {
-  page?: boolean;
-  device?: boolean;
-  referrer?: boolean;
-}
+export type ContextToggles = Pick<EnrichmentConfig, 'page' | 'device' | 'referrer'>;
 
 // The neutral context bag for one event. Fresh on every call — nothing is cached, so a
 // navigation between captures is reflected. Merged into the event by the caller as a

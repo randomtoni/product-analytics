@@ -225,6 +225,39 @@ describe('pluggable country source — routed through the facade register() gate
     expect(props).not.toHaveProperty('country');
   });
 
+  test('a THROWING countrySource provider degrades gracefully — createAnalytics still constructs, no country registered', () => {
+    const registerSpy = vi.spyOn(BrowserAdapter.prototype, 'register');
+
+    const key = freshKey();
+    const thrower = (): string => {
+      throw new Error('edge header read failed');
+    };
+
+    let analytics: ReturnType<typeof createAnalytics> | undefined;
+    expect(() => {
+      analytics = createAnalytics({
+        key,
+        allowlist: ['country'],
+        consentDefault: 'granted',
+        enrichment: { country: { countrySource: thrower } },
+      });
+    }).not.toThrow();
+
+    expect(analytics).toBeDefined();
+    // The throw was swallowed as "yields nothing": no country register call, and a normal
+    // capture carries no country key.
+    expect(registerSpy).not.toHaveBeenCalled();
+
+    const adapter = resolveAdapter({ key }) as BrowserAdapter;
+    const props = adapter.runCapturePipeline({
+      event: 'x',
+      distinctId: 'anonymous',
+      dedupeId: 'd',
+      timestamp: new Date(),
+    }).properties as Record<string, unknown>;
+    expect(props).not.toHaveProperty('country');
+  });
+
   test('an absent countrySource (no country slot) does NOT register', () => {
     const registerSpy = vi.spyOn(BrowserAdapter.prototype, 'register');
 

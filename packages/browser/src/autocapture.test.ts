@@ -322,6 +322,33 @@ describe('listener binding + teardown (SSR-guarded)', () => {
     expect(seen).toHaveLength(0);
   });
 
+  test('a click on a shadow-DOM-nested element pierces the open shadow root and captures the deep target', () => {
+    // The document listener sees the event retargeted to the shadow HOST; eventTargetElement
+    // takes the composedPath()[0] branch to recover the deep button, and buildElementTree
+    // host-hops the shadow boundary — the one autocapture branch otherwise uncovered.
+    const seen: unknown[] = [];
+    const unbind = bindAutocaptureListeners((props) => seen.push(props));
+
+    const host = document.createElement('div');
+    host.id = 'shadow-host';
+    document.body.appendChild(host);
+    const root = host.attachShadow({ mode: 'open' });
+    const button = document.createElement('button');
+    button.textContent = 'Shadow Buy';
+    root.appendChild(button);
+
+    button.click();
+
+    expect(seen).toHaveLength(1);
+    const props = seen[0] as Record<string, unknown>;
+    expect(props.event_type).toBe('click');
+    // The deep shadow button — not the host — is the captured element (composedPath pierce),
+    // and its metadata rode through the host-hopping tree walk.
+    expect(props.el_text).toBe('Shadow Buy');
+    expect(String(props.elements_chain)).toContain('button');
+    unbind?.();
+  });
+
   test('binding is SSR-guarded — no document ⇒ returns undefined and binds nothing', () => {
     const globals = globalThis as { document?: Document };
     const originalDocument = globals.document;

@@ -72,3 +72,10 @@ DOM autocapture (clicks/changes/form-submits → element metadata) is the larges
 - **Commit:** `E6-S7-autocapture-opt-in — DOM autocapture (opt-in, default OFF)` on `core-cycle`
 - **Reviewer notes:** 0 critical, 3 suggestions (shadow-root test; ancestor-walk perf; reserved-name-collision consistency)
 - **Cross-story seams exposed (S8):** the adapter reads `options.autocapture === true` in ONE place (`bindAutocapture()` gate); the module accepts an `AutocaptureOptions` override (`blockClasses`/`ignoreSelectors`, list-shaped). A per-context profile toggles autocapture on/off + (when object-config lands) overrides skip-class names WITHOUT touching the module — S8 flips the binding through the same `detachAutocaptureListeners` seam (re-bind/tear-down) since identity/session/transport stay shared on the core adapter.
+
+## Follow-up
+
+> E6 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Shadow-DOM test added** — exercises the `composedPath()[0]` pierce (`eventTargetElement`) + the `isShadowRoot` host-hop (`buildElementTree`), the one autocapture branch that had no direct coverage. Dispatches a real click on a shadow-nested button, asserts deep-target metadata; verified load-bearing by fault-injection (disabling the pierce fails the test). (Addresses the S7 shadow-root suggestion.)
+- Skipped-with-reason: ancestor-walk O(ancestors×selectors) perf → future heatmap/high-frequency story; the `AUTOCAPTURE_EVENT`/`MERGE_EVENT` reserved-name-collision → a future story should cover both uniformly.

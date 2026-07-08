@@ -8,6 +8,7 @@ import type {
 } from 'analytics-kit';
 import { BrowserAdapter, type BrowserAdapterOptions } from './browser-adapter';
 import { resolveAdapter } from './create-analytics';
+import { PersistenceStore } from './persistence-store';
 import { containsInsertId } from './wire-scan.test-helper';
 import {
   ANONYMOUS_DISTINCT_ID_KEY,
@@ -3361,6 +3362,26 @@ describe('UTM/campaign + session-entry + initial attribution (E6-S4)', () => {
 
     expect(adapter.getPersistedProperty('initial_utm_source')).toBe('news');
     expect(adapter.getPersistedProperty('initial_referring_domain')).toBe('direct');
+  });
+
+  test('the initial_* derivation+set-once write runs ONCE across repeated captures (sentinel guard)', () => {
+    const registerOnceSpy = vi.spyOn(PersistenceStore.prototype, 'registerOnce');
+    const adapter = makeAdapter({ key: freshKey() });
+    goTo('/first?utm_source=news');
+
+    adapter.runCapturePipeline(makeEvent());
+    adapter.runCapturePipeline(makeEvent());
+    adapter.runCapturePipeline(makeEvent());
+
+    // registerOnce is shared with the identity store, so count ONLY the initial_* writes:
+    // after the first touch the sentinel key exists, so writeInitialProps short-circuits
+    // before deriving + writing again — one initial_* write, not one per event.
+    const initialWrites = registerOnceSpy.mock.calls.filter((call) =>
+      Object.keys(call[0]).some((key) => key.startsWith('initial_'))
+    );
+    expect(initialWrites).toHaveLength(1);
+    // The set-once props are still present and correct (guard is behavior-preserving).
+    expect(adapter.getPersistedProperty('initial_utm_source')).toBe('news');
   });
 
   // --- bar A + E3: library-computed ⇒ trusted, NOT allowlist-gated ---

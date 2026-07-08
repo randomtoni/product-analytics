@@ -27,6 +27,11 @@ const DIRECT = 'direct';
 const SESSION_ENTRY_PREFIX = 'session_entry_';
 const INITIAL_PREFIX = 'initial_';
 
+// A key deriveInitialProps ALWAYS emits (referrer defaults to 'direct', so it survives
+// stripEmpty) — the sentinel writeInitialProps checks to skip re-deriving after the first
+// registerOnce. Must stay a key derivePersonProps guarantees for the guard to hold.
+export const INITIAL_PROPS_SENTINEL_KEY = `${INITIAL_PREFIX}referrer`;
+
 // The campaign parameters parsed from the URL query into neutral keys — utm_* plus the
 // common click-ids. De-branded from posthog's CAMPAIGN_PARAMS (event-utils.ts:45-54);
 // the names are already vendor-neutral URL query tokens, so they carry through verbatim.

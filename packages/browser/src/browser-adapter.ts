@@ -55,6 +55,7 @@ import {
   deriveInitialProps,
   deriveSessionEntryProps,
   parseCampaignParams,
+  INITIAL_PROPS_SENTINEL_KEY,
   type EntryInfo,
 } from './attribution-enrichment';
 import { bindAutocaptureListeners } from './autocapture';
@@ -599,6 +600,11 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // and never overwritten by a later capture carrying different params. Idempotent — after
   // the first write every key is already present, so subsequent calls are no-ops.
   private writeInitialProps(): void {
+    // registerOnce already no-ops after the first touch; this sentinel check short-circuits
+    // the per-event URL re-parse + full initial_* re-derivation once the bag is written.
+    if (this.store.getProperty(INITIAL_PROPS_SENTINEL_KEY) !== undefined) {
+      return;
+    }
     const initial = deriveInitialProps(buildEntryInfo());
     if (Object.keys(initial).length > 0) {
       this.store.registerOnce(initial);

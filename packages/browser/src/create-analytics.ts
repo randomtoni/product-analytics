@@ -68,7 +68,16 @@ export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
 // nothing — the caller then registers no `country` key.
 function resolveCountry(config: AnalyticsConfig): string | undefined {
   const source = config.enrichment?.country?.countrySource;
-  return typeof source === 'function' ? source() : source;
+  if (typeof source !== 'function') {
+    return source;
+  }
+  // A consumer provider that throws must degrade gracefully — treat it as "yields nothing"
+  // rather than aborting createAnalytics and leaving the app with no client at all.
+  try {
+    return source();
+  } catch {
+    return undefined;
+  }
 }
 
 // The country VALUE is consumer-supplied, so it must cross the E3 allowlist. Route it

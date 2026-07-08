@@ -14,6 +14,7 @@ import { generateUuid as defaultGenerateUuid } from './uuid';
 // The subset of a capture profile a scoped view varies live per event (E6-S8): the
 // enrichment toggles + geoip flag, resolved from a named context's profile. Structural,
 // so the impl stays decoupled from AnalyticsConfig's CaptureProfile/EnrichmentConfig.
+// Must track EnrichmentProfile in lockstep — if a future per-event toggle lands, add it to both.
 interface ContextProfile {
   enrichment?: {
     page?: boolean;
@@ -133,6 +134,8 @@ export class AnalyticsProviderImpl implements RootAnalytics {
     if (enrichment === undefined) {
       return undefined;
     }
+    // Passing every toggle (even all-undefined) is safe ONLY because each is opt-out-by-absence:
+    // the adapter reads `!== false`, so an undefined member leaves that module on its own default.
     return {
       page: enrichment.page,
       device: enrichment.device,

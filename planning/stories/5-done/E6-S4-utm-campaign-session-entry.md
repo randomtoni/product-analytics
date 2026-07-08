@@ -62,3 +62,10 @@ Campaign attribution (UTM params, click-ids) and the set-once "initial" / sessio
 - **Commit:** `E6-S4-utm-campaign-session-entry — UTM/campaign parse + set-once attribution` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 efficiency-nit suggestions; S1 pageview tests no-regression (494 green)
 - **Cross-story seams exposed:** **S5** toggles the three independently — one-line gates: `utm`=gate the `parseCampaignParams()` spread; `session-entry`=gate the `sessionEntryProps()` spread (+`maintainSessionEntry`); `initial`=gate the `writeInitialProps()` call. **S6** country is consumer-supplied ⇒ E3-gated → route through facade `register`, NOT this trusted module; the `RESERVED_EVENT_KEYS`/`register` split is ready. `classifySessionTransition` verdict is the shared rotation substrate for any future per-session record.
+
+## Follow-up
+
+> E6 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **`writeInitialProps` sentinel guard** — short-circuits on `INITIAL_PROPS_SENTINEL_KEY='initial_referrer'` (always emitted on first write — `derivePersonProps` guarantees `referrer` ≥ `'direct'`), skipping the per-event URL re-parse + `initial_*` re-derivation once set. Reviewer noted this is not just efficiency but a subtle **correctness** improvement toward PostHog's set-once snapshot model (the old per-event re-derivation could accrete a new `initial_*` key from a later URL; the guard matches PostHog's snapshot-once semantics). First-touch-wins still holds. (Addresses the S4 efficiency suggestion.)
+- Skipped-with-reason: `getQueryParam`→`URLSearchParams` — the manual parser is faithful to posthog's duplicate/valueless-param edge behavior + well-tested.

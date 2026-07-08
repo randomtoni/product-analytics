@@ -65,3 +65,10 @@ Country is NOT derived client-side by PostHog (it's server-side GeoIP). This exp
 - **Commit:** `E6-S6-pluggable-country-source — Pluggable country source + GeoIP disable` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions (guard throwing countrySource; normalization note)
 - **Cross-story seams exposed (S8):** `country` is a first-class `EnrichmentConfig` member — a per-context profile carries its own `country` config with no shape change. BUT: the country VALUE `register()` happens ONCE at global init (browser `create-analytics.ts`) not per-context — per-context country needs the resolution site to move (gate path unchanged). `disableGeoip` is resolved once at adapter construction into a private field → per-context GeoIP toggling would need the wire-stamp to read the active profile at map-time (stays below neutral surface). Country is a once-at-init snapshot (per-session stable — R1 caveat).
+
+## Follow-up
+
+> E6 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Throwing `countrySource` provider guarded** — `resolveCountry` wraps ONLY the `source()` call in try/catch; a throw degrades to "yields nothing" (no register, no country key) instead of aborting `createAnalytics`. The value path stays outside the try (byte-identical); non-throwing paths unchanged. The one intentional behavioral change (graceful degrade) + test. (Addresses the S6 reviewer suggestion.)
+- Skipped-with-reason: the `disableGeoip` undefined→false normalization note is cosmetic.

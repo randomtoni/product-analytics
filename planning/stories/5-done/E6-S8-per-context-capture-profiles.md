@@ -66,3 +66,9 @@ A consumer names contexts (e.g. `marketing` vs `app`) and toggles enrichment/aut
 - **Commit:** `E6-S8-per-context-capture-profiles — Named contexts + context() scoped view` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 doc suggestions; E6-close-ready (capture layer coherent, both bars held)
 - **Cross-story seams exposed:** per-context construction-time autocapture/pageleave (beyond `defaultContext`) = later additive slice (would need re-binding through `detachAutocaptureListeners`). `enrichmentProfile` is the adapter-internal per-event override channel — a future per-event toggle updates `ContextProfile`/`resolveEnrichmentProfile` + `EnrichmentProfile` in lockstep.
+
+## Follow-up
+
+> E6 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Two genuine-gotcha one-liners** — (a) a note on the seam-internal `ContextProfile` that it must track `EnrichmentProfile` in lockstep if a future per-event toggle lands; (b) a note at `resolveEnrichmentProfile` that the all-`undefined` profile override is safe *because* every toggle is opt-out-by-absence (adapter reads `!== false`). Both document cross-file invariants a competent reader can't infer locally. (Addresses both S8 reviewer suggestions.)

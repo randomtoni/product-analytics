@@ -65,3 +65,9 @@ The BRIEF requires each enrichment individually opt-out-able **by config only** 
 - **Commit:** `E6-S5-enrichment-optout-config — Structured enrichment opt-out config` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions (Pick-derive ContextToggles; pageleave construction-time asymmetry)
 - **Cross-story seams exposed:** **S6** nests `country?: {...}` into THIS `EnrichmentConfig` (ONE pin bump at `create-analytics.test.ts:168-186`), reads via `options.enrichment?.country` — but the country VALUE is consumer-supplied ⇒ E3-gated via facade `register` (not the trusted library-computed path; plain `!== false` gate, no legacy twin). **S8** reads the single coherent `enrichment` object per-context; gating is at the module call-sites (`buildContext` toggles / `enrichAttribution` utm / `capturePageleaveEnabled`) so a per-context override swaps the toggle set — EXCEPT pageleave (construction-time, see note). No shape fork.
+
+## Follow-up
+
+> E6 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **`ContextToggles` derived from the source of truth** — replaced the hand-declared interface with `Pick<EnrichmentConfig, 'page'|'device'|'referrer'>` (import type from `analytics-kit`), so the subset can't silently drift from `EnrichmentConfig`. Correct target→seam dependency direction. (Addresses the S5 reviewer suggestion.)

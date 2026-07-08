@@ -248,6 +248,9 @@ describe('wire-mapper — pageview / pageleave [WIRE] event names (E6-S2)', () =
     expect(wire.event).toBe('$pageview');
     expect(wire.properties).toEqual({ ref: 'nav' });
     expect(wire.uuid).toBe('pv-1');
+    // The isPageView marker is a pipeline discriminator, never a wire key — belt-and-braces
+    // the closed-WireEvent guarantee against a future refactor that spreads the event into base.
+    expect(wire).not.toHaveProperty('isPageView');
   });
 
   test('an ordinary event name is carried through verbatim (no accidental $-mapping)', () => {
