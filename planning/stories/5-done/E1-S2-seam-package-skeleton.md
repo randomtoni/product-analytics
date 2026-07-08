@@ -60,8 +60,19 @@ api_impact: additive
 - **Package name (locked)** — the seam is the bare `analytics-kit` (the main entry), not `@analytics-kit/core`; no package is literally named `core`. Scoped `@analytics-kit/*` names are for targets only (S3).
 - **tsconfig** — extend the root `tsconfig.base.json` from S1; only override `rootDir`/`outDir`. No DOM lib here (the seam is isomorphic).
 - Keep `src/index.ts` a genuine placeholder — real seam surface lands in E2/E3. Do not pre-stub provider/adapter types here.
+- **`include: ["src"]` in tsconfig.json (builder deviation, reviewer-confirmed necessary)** — without it, tsc's default `**/*` include grabs the root-level `tsup.config.ts`/`vitest.config.ts` (outside `rootDir: src`) → `TS6059`, failing the typecheck gate. `include: ["src"]` scopes typecheck to source; standard, doesn't affect emit (tsup owns emit). **S3 targets must mirror this.**
+- > Reviewer suggestion (2026-07-07): consider hoisting `include: ["src"]` into `tsconfig.base.json` (S1 artifact) so S3's three targets don't each re-derive it — epic-level note (edits S1 scope); alternatively keep per-package and make "mirror include:['src']" explicit in the S3 story (done in the S3 brief).
+- > Reviewer suggestion (2026-07-07): publish hygiene for when real surface lands — add `"files": ["dist"]` (limit published tarball) + `"sideEffects": false` (downstream tree-shaking) to the seam `package.json` once it's publish-bound; not needed for a `0.0.0` skeleton.
+- > Reviewer suggestion (2026-07-07, informational only): `exports` condition order here is `types`/`import`/`require` vs posthog-js core's `types`/`require`/`import` — immaterial (`import`/`require` are mutually exclusive; `types`-first is the only order that matters). No change.
 
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/
-(files changed/added, new public API, tests added, commit, reviewer notes). Do not hand-edit. -->
+> Captured by `implement-epics` on 2026-07-07.
+
+- **Files added:** `packages/analytics-kit/{package.json, tsconfig.json, tsup.config.ts, vitest.config.ts, src/index.ts}`
+- **Files changed:** `pnpm-lock.yaml` (empty importer entry for the new package)
+- **New public API:** `version = '0.0.0'` — neutral placeholder only; no provider/adapter/taxonomy surface (deferred to E2/E3)
+- **Tests added:** none (`passWithNoTests` via merged `vitest.config.ts`; trivial test is S4)
+- **Commit:** `E1-S2-seam-package-skeleton — Seam package (analytics-kit) skeleton` on `core-cycle`
+- **Reviewer notes:** see Technical notes — 3 suggestions captured (hoist `include`, publish hygiene, exports order); 0 critical
+- **Cross-story seams exposed:** S3 targets must (1) mirror the exact exports triplet + NO `"type":"module"`, (2) declare `"analytics-kit": "workspace:*"` in `dependencies` (never target→target), (3) carry `include: ["src"]` in tsconfig. Seam has zero `dependencies` — no back-edge. React target adds DOM lib + `react` peer; seam has no DOM lib.
