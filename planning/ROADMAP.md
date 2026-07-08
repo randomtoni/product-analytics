@@ -1,10 +1,10 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-08 — E5 (transport) shipped; NOW = E6–E11
+Last updated: 2026-07-08 — E6 (capture) shipped; NOW = E7–E11
 
 ## Status
 
-Pre-1.0. The vendor-neutral **`core`** seam is v1 (E1–E3 shipped); **E4 (identity)** and **E5 (browser transport & reliability)** shipped. NOW holds the remaining epics — **E6–E11** (capture, node, query, react, adoption) — all committed for the current build push. Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
+Pre-1.0. The vendor-neutral **`core`** seam is v1 (E1–E3 shipped); **E4 (identity)**, **E5 (browser transport & reliability)**, and **E6 (browser capture & enrichment)** shipped — the browser target is now capability-complete for R1. NOW holds the remaining epics — **E7–E11** (node, query, react, example, adoption) — all committed for the current build push. Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
 
 ## Sequencing
 
@@ -24,7 +24,7 @@ Every remaining epic is committed. `/implement-epics all` builds them in the dep
 
 - **[E4-ID-identity-persistence](epics/done/E4-ID-identity-persistence.md)** *(done)* — anonymous UUIDv7 distinct id + separate device id, config-selectable persistence (`cookie` | `localStorage+cookie` | `memory`), cross-subdomain cookie domain/scope, anonymous→identified merge (rides `identify()`; identity state adapter-internal), super-property registration (allowlist-gated at registration), session id assignment + expiry, durable tri-state consent (`granted`/`denied`/`pending`, DNT-folded), and `reset()`.
 - **[E5-CAP-transport](epics/done/E5-CAP-transport.md)** *(done)* — batching (time + size trigger) + gzip compression (native `CompressionStream` + fflate fallback), retry with exponential backoff+jitter (network/5xx-only), offline queue that survives reloads (the one BRIEF §4 gap PostHog doesn't fill), fetch→XHR→sendBeacon + keepalive/unload drain, config-supplied ingest host/path, `dedupeId`→wire `uuid`, client rate-limiter + neutralized back-pressure, bot/crawler filtering.
-- **[E6-CAP-capture-enrichment](epics/E6-CAP-capture-enrichment.md)** *(active, ← E5)* — `track` / `page` / pageleave, page + UTM + device/browser context (each opt-out-able), pluggable country source, per-context capture profiles, autocapture opt-in.
+- **[E6-CAP-capture-enrichment](epics/done/E6-CAP-capture-enrichment.md)** *(done)* — `track` / `page` / adapter-internal pageleave, fresh-per-event page + UTM/attribution + device/browser/referrer context (each opt-out-able via one structured `enrichment` object), pluggable country source (E3-gated value) + GeoIP disable, DOM autocapture opt-in (default OFF, phone-home removed, sensitive scrub), and per-context capture profiles (`context()` → narrower `ScopedAnalytics`, shared identity/session/transport). No new facade verb — pin held at fifteen.
 - **[E7-NODE-server-capture](epics/E7-NODE-server-capture.md)** *(planned, ← core)* — server-side `capture` + trait / group-trait updates, idempotency (caller-suppliable `dedupeId`), no-op without key.
 - **[E8-QRY-query-client](epics/E8-QRY-query-client.md)** *(planned, ← core)* — `AnalyticsQueryClient` (funnel / retention / trend / uniqueCount + `rawQuery` escape hatch), HTTP query adapter, warehouse stub.
 - **[E9-RCT-react-binding](epics/E9-RCT-react-binding.md)** *(planned, ← E6)* — optional React/Next binding: provider + hooks.

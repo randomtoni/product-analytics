@@ -1,6 +1,6 @@
 ---
 id: E6-CAP-capture-enrichment
-status: active
+status: done
 area: capture
 touches: [browser, privacy]
 api_impact: additive
@@ -25,18 +25,18 @@ This is the consumer-facing top of the `capture` cycle: the `track` / `page` / `
 
 ## Stories
 
-Eight stories, all `2-ready-for-dev/`. `track`/`page`/`group` verbs already exist (E2); no facade verb is added this epic — the frozen `keyof AnalyticsProvider` pin stays at fifteen. `pageleave` is adapter-internal (not a verb), and `context()` is a separate wrapper (not a verb) — both settled by architect (2026-07-08). Config fields (S5/S6/S7/S8) each extend the `AnalyticsConfig` shape-pin in lockstep.
+All eight shipped to `5-done/`. `track`/`page`/`group` verbs already existed (E2); **no facade verb was added this epic — the frozen `keyof AnalyticsProvider` pin held at fifteen.** `pageleave` is adapter-internal, `context()` is a separate `RootAnalytics` wrapper — neither a verb. A neutral `NeutralEvent.isPageView` discriminator (S2) makes named router-driven pageviews recognizable; `$pageview`/`$pageleave`/`$autocapture`/`$geoip_disable` are all `[WIRE]`-confined to the browser adapter.
 
-- **[E6-S1](../stories/2-ready-for-dev/E6-S1-pageview-state-page-typing.md)** *(additive, no deps)* — adapter-internal pageview-state record `{timestamp, pageViewId, pathname}` (reset on session rotation) + taxonomy-typed `page()` props; no new verb. Substrate for pageleave duration.
-- **[E6-S2](../stories/2-ready-for-dev/E6-S2-pageleave-unload.md)** *(additive, deps: E6-S1)* — neutral `pageleave` minted inside `unload()` before the drain (rides the E5 beacon by ordering; duration correct); adapter-internal, not a facade verb.
-- **[E6-S3](../stories/2-ready-for-dev/E6-S3-context-enrichment-port.md)** *(additive, no deps)* — port fresh-per-event page/device/browser/OS/referrer/timezone/lib context to neutral keys; a **pure DOM-free `parseUserAgent`** kept separate from bot-detection. Slots after super-prop merge.
-- **[E6-S4](../stories/2-ready-for-dev/E6-S4-utm-campaign-session-entry.md)** *(additive, deps: E6-S3)* — UTM/campaign + click-id parse (per-event) + `session_entry_*` (per-session) + `initial_*` (set-once) attribution.
-- **[E6-S5](../stories/2-ready-for-dev/E6-S5-enrichment-optout-config.md)** *(additive, deps: E6-S2, E6-S3, E6-S4)* — one structured `enrichment` config object (a toggle per module: page/device/referrer/utm/pageleave), opt-out semantics; extends the `AnalyticsConfig` shape-pin.
-- **[E6-S6](../stories/2-ready-for-dev/E6-S6-pluggable-country-source.md)** *(additive, deps: E6-S5; `touches: privacy`)* — consumer-injected `countrySource` + `disableGeoip`; the injected country **value** is consumer-supplied ⇒ E3-allowlist-gated (unlike the trusted library-computed enrichment).
-- **[E6-S7](../stories/2-ready-for-dev/E6-S7-autocapture-opt-in.md)** *(additive, deps: E6-S3)* — **the large/high-risk port.** Minimal DOM autocapture (click/change/submit → element metadata), default OFF via a plain `autocapture` boolean, with the remote-config phone-home REMOVED.
-- **[E6-S8](../stories/2-ready-for-dev/E6-S8-per-context-capture-profiles.md)** *(additive, deps: E6-S5, E6-S7; med-confidence, deferrable)* — named `contexts` + `defaultContext`; `analytics.context(name)` returns a narrower `ScopedAnalytics` view (capture verbs only) that applies the profile but shares identity/session/transport. **No posthog-js analogue.** `context()` is a wrapper, not a pinned verb.
+- **[E6-S1](../stories/5-done/E6-S1-pageview-state-page-typing.md)** *(done — `b002d52`)* — adapter-internal pageview record `{timestamp, pageViewId, pathname}` (reset on rotation via `lastSeenSessionId`) + taxonomy-typed `page()`.
+- **[E6-S2](../stories/5-done/E6-S2-pageleave-unload.md)** *(done — `b3c3979`)* — neutral `pageleave` minted in `unload()` riding the E5 beacon (seconds duration); + the **`isPageView` neutral discriminator** so named `page('/x')` is recognized; `wireEventName()` maps `$pageview`/`$pageleave`.
+- **[E6-S3](../stories/5-done/E6-S3-context-enrichment-port.md)** *(done — `e2978c4`)* — fresh-per-event page/device/browser/OS/referrer/timezone/lib context to neutral keys; a **pure DOM-free `parseUserAgent`** separate from bot-detection.
+- **[E6-S4](../stories/5-done/E6-S4-utm-campaign-session-entry.md)** *(done — `2bef544`)* — UTM/campaign + click-id (per-event) + `session_entry_*` (per-session) + `initial_*` (set-once); consolidated rotation into `classifySessionTransition`.
+- **[E6-S5](../stories/5-done/E6-S5-enrichment-optout-config.md)** *(done — `6f7cb9b`)* — one structured `enrichment` config object (page/device/referrer/utm/pageleave toggles), opt-out semantics.
+- **[E6-S6](../stories/5-done/E6-S6-pluggable-country-source.md)** *(done — `122cba4`)* — consumer-injected `countrySource` (→ facade `register`, E3-gated) + `disableGeoip` (→ `$geoip_disable` `[WIRE]`).
+- **[E6-S7](../stories/5-done/E6-S7-autocapture-opt-in.md)** *(done — `ffdf8a3`)* — **the large port.** Minimal DOM autocapture (click/change/submit → element metadata), default OFF, remote-config phone-home REMOVED, sensitive-value scrub kept.
+- **[E6-S8](../stories/5-done/E6-S8-per-context-capture-profiles.md)** *(done — `7c8ce83`)* — named `contexts` + `defaultContext`; `context(name)` → narrower `ScopedAnalytics` (capture verbs only) sharing identity/session/transport, per-event profile carried on `NeutralEvent.enrichmentProfile`. **No posthog-js analogue.**
 
-Dependency graph (topo-sortable via `depends_on`):
+Dependency graph (built topo order S1,S3 → S2,S4 → S5 → S6,S7 → S8):
 
 ```
 E6-S1 ─▶ E6-S2 ─┐
