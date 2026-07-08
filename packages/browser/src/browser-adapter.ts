@@ -32,6 +32,7 @@ import { PersistenceStore } from './persistence-store';
 import { IdentityStore, type IdGenerator } from './identity-store';
 import { SessionIdManager } from './session-id-manager';
 import { resolveIngestUrl } from './ingest-url';
+import { mapEventToWire, type WireEvent } from './wire-mapper';
 import { generateUuidV7 } from './uuid-v7';
 
 const LIBRARY_ID = 'analytics-kit-browser';
@@ -137,6 +138,15 @@ export class BrowserAdapter implements AnalyticsAdapter {
   /** @internal Public only so pass-through tests can pin the enrichment pipeline; not stable adapter API. */
   runCapturePipeline(event: NeutralEvent): NeutralEvent {
     return this.mergeSuperProperties(this.stampSessionId(event));
+  }
+
+  /** @internal The adapter's wire-mapping seam: lay a pipeline-processed NeutralEvent
+   * out into its [WIRE] shape, placing the neutral `dedupeId` at the top-level `uuid`.
+   * S2's batch queue calls this per event before enqueue; S2 extends the wire-mapper
+   * module (not this method) with the MERGE_EVENT / traits-key normalization. Adapter-
+   * internal — the WireEvent shape never reaches the neutral surface. */
+  toWireEvent(event: NeutralEvent): WireEvent {
+    return mapEventToWire(event);
   }
 
   private stampSessionId(event: NeutralEvent): NeutralEvent {

@@ -810,6 +810,45 @@ describe('identify — client-side anon→identified merge (S6)', () => {
   });
 });
 
+describe('wire-mapping seam — dedupeId → top-level uuid (S8)', () => {
+  test('toWireEvent places a captured event dedupeId at the top-level wire uuid', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const event = adapter.runCapturePipeline(makeEvent({ dedupeId: 'dedupe-track-1' }));
+
+    const wire = adapter.toWireEvent(event);
+
+    expect(wire.uuid).toBe('dedupe-track-1');
+    // Neutral name in, [WIRE] name out — no `dedupeId` on the wire object.
+    expect(wire).not.toHaveProperty('dedupeId');
+    // uuid is top-level, never nested in properties.
+    expect(wire.properties ?? {}).not.toHaveProperty('uuid');
+  });
+
+  test('carries the adapter-stamped merge-event dedupeId (v7) to the wire uuid verbatim', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const capture = vi.spyOn(adapter, 'capture');
+    adapter.identify('user-1');
+    const mergeEvent = capture.mock.calls[0][0];
+
+    const wire = adapter.toWireEvent(mergeEvent);
+
+    // The merge event's own dedupeId (v7 via generateUuidV7) is carried unchanged.
+    expect(wire.uuid).toBe(mergeEvent.dedupeId);
+    expect(wire.uuid).toMatch(UUID_V7);
+  });
+
+  test('the mapped wire event emits no random $insert_id', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.register({ plan: 'pro' });
+    const event = adapter.runCapturePipeline(makeEvent({ properties: { a: 1 } }));
+
+    const wire = adapter.toWireEvent(event);
+
+    expect(wire).not.toHaveProperty('$insert_id');
+    expect(wire.properties ?? {}).not.toHaveProperty('$insert_id');
+  });
+});
+
 describe('reset — clear identity/persistence/session, keep device id (S9)', () => {
   test('regenerates the anonymous id: getDistinctId returns a NEW anon id after reset', () => {
     const adapter = new BrowserAdapter({ key: freshKey() });

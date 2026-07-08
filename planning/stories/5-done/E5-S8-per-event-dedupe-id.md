@@ -44,3 +44,16 @@ Idempotent retries only work if client (E5) and server (E7) agree on the single 
 - Existing shape to read: `NeutralEvent` (`packages/analytics-kit/src/neutral-event.ts`) already carries `dedupeId: string` + `sessionId?`. Nothing on the neutral type changes here — the work is the adapter-internal mapping + the no-random-`$insert_id` guarantee.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08): add a one-line comment on `WireEvent.properties` noting the bag is already allowlist-filtered by the neutral pipeline upstream — so a future reader / S2 / S3 doesn't assume the mapper is the filtering point (it's the last [WIRE] boundary before transport).
+- > Reviewer suggestion (2026-07-08): reuse the recursive `containsInsertId` scan in the adapter-level `$insert_id` test (currently shallow) — closes the gap between "the mapper doesn't add it" and "the enriched event never carries it".
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (browser):** `wire-mapper.ts` (`mapEventToWire(event): WireEvent` — base mapper: `distinctId→distinct_id`, `dedupeId→top-level uuid`, `timestamp→ISO`, `properties` passthrough; value-agnostic, no re-version, NO `$insert_id`) + test; **changed:** `browser-adapter.ts` (`@internal toWireEvent()` per-event seam)
+- **New public API:** none — wire-mapper is adapter-internal (NOT re-exported); `NeutralEvent.dedupeId` unchanged (the `uuid` mapping is `[WIRE]`, bar A)
+- **Tests added:** browser +12 (wire-mapper 9: dedupeId→uuid, value-agnostic v4+non-uuid, stable-across-retry, recursive no-`$insert_id`, uuid-is-only-dedup-id, full shape; adapter 3) → 202; seam 128 unchanged
+- **Commit:** `E5-S8-per-event-dedupe-id — Settle dedupeId → wire uuid mapping` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (clarity/test-hardening)
+- **Cross-story seams exposed (S2):** the SINGLE wire-mapper is `wire-mapper.ts` — S2 layers `MERGE_EVENT`/traits normalization ON TOP of `mapEventToWire` (one module, not two), keying off `MERGE_EVENT` + the `set_traits`/`set_traits_once`/`anonymous_distinct_id` `[WIRE]` keys. `WireEvent` (top-level `event`/`distinct_id`/`properties?`/`timestamp?`/`uuid`) is what S2 builds the `data:[]` envelope from. `BrowserAdapter.toWireEvent(event)` (`@internal`) is the per-event hook S2's queue calls before enqueue (pipeline runs first). S2's `flush()` POSTs to `ingestUrl()` (S1; `undefined`=skip). `dedupeId` is v4 for track/page, v7 for merge/traits — carried verbatim; do NOT re-version. Same neutral name as node (E7).
