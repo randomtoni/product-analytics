@@ -2,18 +2,26 @@ import type { AnalyticsAdapter } from './adapter';
 import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 import { NoopAdapter } from './noop-adapter';
 import type { FeatureFlagPort, SessionReplayPort } from './ports';
+import { RESERVED_PAGE_EVENT } from './taxonomy';
+import type { DefaultTaxonomyShape, PropsParam, TaxonomyShape } from './taxonomy';
 import { generateUuid } from './uuid';
 
 const ANONYMOUS_DISTINCT_ID = 'anonymous';
-const DEFAULT_PAGE_NAME = 'page';
 
-export interface AnalyticsProvider {
-  track(event: string, props?: NeutralProperties): void;
-  identify(id: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void;
+export interface AnalyticsProvider<TX extends TaxonomyShape = DefaultTaxonomyShape> {
+  track<K extends keyof TX['events'] & string>(
+    event: K,
+    ...args: PropsParam<TX['events'][K]>
+  ): void;
+  identify(id: string, traits?: Partial<TX['traits']>, traitsOnce?: Partial<TX['traits']>): void;
   page(name?: string, props?: NeutralProperties): void;
-  group(type: string, key: string, props?: NeutralTraits): void;
+  group<G extends keyof TX['groups'] & string>(
+    type: G,
+    key: string,
+    props?: TX['groups'][G]
+  ): void;
   reset(): void;
-  setTraits(traits: NeutralTraits, once?: boolean): void;
+  setTraits(traits: Partial<TX['traits']>, once?: boolean): void;
   optIn(): void;
   optOut(): void;
   hasOptedOut(): boolean;
@@ -39,7 +47,7 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
   }
 
   page(name?: string, props?: NeutralProperties): void {
-    this.adapter.capture(this.buildEvent(name ?? DEFAULT_PAGE_NAME, props));
+    this.adapter.capture(this.buildEvent(name ?? RESERVED_PAGE_EVENT, props));
   }
 
   identify(id: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {

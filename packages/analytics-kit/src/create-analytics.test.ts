@@ -3,6 +3,7 @@ import type { AnalyticsAdapter, NeutralFetchOptions, NeutralFetchResponse } from
 import type { NeutralEvent, NeutralTraits } from './neutral-event';
 import type { AnalyticsProvider } from './analytics-provider';
 import { createAnalytics, type AnalyticsConfig } from './create-analytics';
+import type { Taxonomy, TaxonomyDecl } from './taxonomy';
 import { NoopAdapter } from './noop-adapter';
 import * as pkg from './index';
 
@@ -135,18 +136,24 @@ test('a keyed config with no adapter still falls back to the NoopAdapter in E2 (
 });
 
 test('createAnalytics returns the public AnalyticsProvider interface (compile-time)', () => {
-  expectTypeOf<typeof createAnalytics>().returns.toEqualTypeOf<AnalyticsProvider>();
-  expectTypeOf<typeof createAnalytics>().parameters.toEqualTypeOf<
-    [AnalyticsConfig, AnalyticsAdapter?]
-  >();
+  // Two ordered overloads now: an untyped config resolves through the loose overload to the
+  // default AnalyticsProvider, accepting an optional adapter as its second parameter.
+  const loose = createAnalytics({});
+  expectTypeOf(loose).toEqualTypeOf<AnalyticsProvider>();
+  expectTypeOf(createAnalytics).toBeCallableWith({});
+  expectTypeOf(createAnalytics).toBeCallableWith({ key: 'abc' });
+  expectTypeOf(createAnalytics).parameter(1).toEqualTypeOf<AnalyticsAdapter | undefined>();
 });
 
 test('the internal facade class is never exposed through the public barrel', () => {
   expect('AnalyticsProviderImpl' in pkg).toBe(false);
 });
 
-test('AnalyticsConfig.key is the only field E2 needs and it is optional', () => {
-  expectTypeOf<AnalyticsConfig>().toEqualTypeOf<{ key?: string }>();
+test('AnalyticsConfig carries an optional key plus the optional taxonomy brand (E3)', () => {
+  expectTypeOf<AnalyticsConfig>().toEqualTypeOf<{
+    key?: string;
+    taxonomy?: Taxonomy<TaxonomyDecl>;
+  }>();
   const empty: AnalyticsConfig = {};
   expect(empty).toEqual({});
 });

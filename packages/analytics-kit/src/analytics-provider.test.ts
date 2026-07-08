@@ -358,20 +358,23 @@ test('optional ports are independent of the capture path — track/identify run 
 });
 
 test('AnalyticsProvider method signatures are pinned (compile-time)', () => {
-  expectTypeOf<AnalyticsProvider['track']>().toEqualTypeOf<
-    (event: string, props?: NeutralProperties) => void
-  >();
+  // track and group are now generic over the taxonomy (E3); on the loose default they keep the
+  // E2 surface — pin that via callability + return type.
+  expectTypeOf<AnalyticsProvider['track']>().toBeCallableWith('x');
+  expectTypeOf<AnalyticsProvider['track']>().toBeCallableWith('x', { a: 1 });
+  expectTypeOf<AnalyticsProvider['track']>().returns.toEqualTypeOf<void>();
+  expectTypeOf<AnalyticsProvider['group']>().toBeCallableWith('company', 'acme');
+  expectTypeOf<AnalyticsProvider['group']>().toBeCallableWith('company', 'acme', { seats: 10 });
+  expectTypeOf<AnalyticsProvider['group']>().returns.toEqualTypeOf<void>();
+  // identify and setTraits now take Partial<TX['traits']> (loose default → Partial<NeutralTraits>).
   expectTypeOf<AnalyticsProvider['identify']>().toEqualTypeOf<
-    (id: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits) => void
+    (id: string, traits?: Partial<NeutralTraits>, traitsOnce?: Partial<NeutralTraits>) => void
+  >();
+  expectTypeOf<AnalyticsProvider['setTraits']>().toEqualTypeOf<
+    (traits: Partial<NeutralTraits>, once?: boolean) => void
   >();
   expectTypeOf<AnalyticsProvider['page']>().toEqualTypeOf<
     (name?: string, props?: NeutralProperties) => void
-  >();
-  expectTypeOf<AnalyticsProvider['group']>().toEqualTypeOf<
-    (type: string, key: string, props?: NeutralTraits) => void
-  >();
-  expectTypeOf<AnalyticsProvider['setTraits']>().toEqualTypeOf<
-    (traits: NeutralTraits, once?: boolean) => void
   >();
   expectTypeOf<AnalyticsProvider['reset']>().toEqualTypeOf<() => void>();
   expectTypeOf<AnalyticsProvider['optIn']>().toEqualTypeOf<() => void>();
