@@ -1,7 +1,7 @@
 import type { AnalyticsAdapter } from './adapter';
 import {
   AnalyticsProviderImpl,
-  type AnalyticsProvider,
+  type RootAnalytics,
   type ViolationPolicy,
 } from './analytics-provider';
 import { NoopAdapter } from './noop-adapter';
@@ -24,6 +24,18 @@ export interface EnrichmentConfig {
   utm?: boolean;
   pageleave?: boolean;
   country?: CountryEnrichmentConfig;
+}
+
+// A named per-context capture profile (E6-S8): a partial bundle of ALREADY-SHIPPED
+// R1 toggles, each optional and falling back to the top-level config default. A profile
+// SELECTS among existing toggles — it adds no new mechanism. `enrichment` (page/device/
+// referrer/utm/country) varies live per event through a scoped `context()` view; the
+// construction-time `autocapture` (and `enrichment.pageleave`) resolve once from the
+// default context at construction (per-context construction-time toggles are a later
+// additive slice).
+export interface CaptureProfile {
+  autocapture?: boolean;
+  enrichment?: EnrichmentConfig;
 }
 
 export interface AnalyticsConfig {
@@ -50,6 +62,13 @@ export interface AnalyticsConfig {
   // boolean sibling of `enrichment`, NOT a member of the enrichment opt-out object. On/off
   // is purely local — the library never phones home for autocapture gating.
   autocapture?: boolean;
+  // Named per-context capture profiles (E6-S8). Each profile is a partial bundle of the
+  // top-level toggles; `analytics.context(name)` returns a scoped view applying that
+  // profile while sharing identity/session/transport with the root — config only (bar B).
+  contexts?: Record<string, CaptureProfile>;
+  // The context whose construction-time toggles (autocapture / pageleave) seed the shared
+  // adapter at init. Per-event enrichment still varies per context via the scoped view.
+  defaultContext?: string;
 }
 
 interface AnalyticsDeps {
@@ -60,23 +79,24 @@ export function createAnalytics<const T extends TaxonomyDecl>(
   config: AnalyticsConfig & { taxonomy: Taxonomy<T> },
   adapter?: AnalyticsAdapter,
   deps?: AnalyticsDeps
-): AnalyticsProvider<ShapeOf<T>>;
+): RootAnalytics<ShapeOf<T>>;
 export function createAnalytics(
   config: AnalyticsConfig,
   adapter?: AnalyticsAdapter,
   deps?: AnalyticsDeps
-): AnalyticsProvider;
+): RootAnalytics;
 export function createAnalytics(
   config: AnalyticsConfig,
   adapter?: AnalyticsAdapter,
   deps?: AnalyticsDeps
-): AnalyticsProvider {
+): RootAnalytics {
   const resolvedAdapter = adapter ?? new NoopAdapter();
   return new AnalyticsProviderImpl(
     resolvedAdapter,
     config.allowlist,
     config.onViolation,
     deps?.generateUuid,
-    config.consentDefault
+    config.consentDefault,
+    config.contexts
   );
 }

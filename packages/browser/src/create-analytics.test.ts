@@ -326,3 +326,199 @@ describe('disableGeoip threads through resolveAdapter → BrowserAdapterOptions 
     expect(props).not.toHaveProperty('$geoip_disable');
   });
 });
+
+// --- E6-S8: per-context capture profiles — named contexts + scoped context() view ---
+describe('per-context capture profiles — named contexts applied by config only (E6-S8)', () => {
+  let keySeq = 0;
+  function freshKey(): string {
+    keySeq += 1;
+    return `ctx-key-${keySeq}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.history.pushState({}, '', '/');
+  });
+
+  // Grab the events minted through the shared BrowserAdapter + the adapter instance itself,
+  // so we can run a minted (profile-carrying) event through the SAME adapter's enrichment
+  // pipeline and observe the per-context difference end to end.
+  function withCaptureSpy(): {
+    events: Array<Parameters<BrowserAdapter['capture']>[0]>;
+    adapter: () => BrowserAdapter;
+  } {
+    const events: Array<Parameters<BrowserAdapter['capture']>[0]> = [];
+    const spy = vi.spyOn(BrowserAdapter.prototype, 'capture').mockImplementation(function (
+      this: BrowserAdapter,
+      event
+    ) {
+      events.push(event);
+    });
+    return { events, adapter: () => spy.mock.instances[0] as unknown as BrowserAdapter };
+  }
+
+  test('a consumer defines two named contexts by config only; each scoped track applies its profile (bar B)', () => {
+    const { events, adapter } = withCaptureSpy();
+    const analytics = createAnalytics({
+      key: freshKey(),
+      consentDefault: 'granted',
+      contexts: {
+        marketing: { enrichment: { device: false } },
+        app: { enrichment: { device: true } },
+      },
+    });
+
+    analytics.context('marketing').track('viewed_ad');
+    analytics.context('app').track('opened_app');
+
+    // Run each minted (profile-carrying) event through the SAME shared adapter's pipeline.
+    const live = adapter();
+    const marketingProps = live.runCapturePipeline(events[0]).properties as Record<string, unknown>;
+    const appProps = live.runCapturePipeline(events[1]).properties as Record<string, unknown>;
+
+    // The marketing profile disabled device enrichment; the app profile left it on. Same
+    // adapter, same session/transport — only the per-event enrichment differs by context.
+    expect(marketingProps).not.toHaveProperty('device_type');
+    expect(appProps).toHaveProperty('device_type');
+  });
+
+  test('switching context does NOT change identity/session — two contexts share ONE distinct id + session (cross-context stitching)', () => {
+    const { events } = withCaptureSpy();
+    const analytics = createAnalytics({
+      key: freshKey(),
+      consentDefault: 'granted',
+      contexts: { marketing: { enrichment: { utm: false } }, app: {} },
+    });
+
+    analytics.context('marketing').track('viewed_ad');
+    analytics.context('app').track('opened_app');
+    analytics.track('root_event');
+
+    // ONE distinct id across both scoped contexts AND the root — the pre-login funnel stitches.
+    const ids = new Set(events.map((e) => e.distinctId));
+    expect(ids.size).toBe(1);
+    expect([...ids][0]).toMatch(V7);
+  });
+
+  test('the same distinct id + session id survive across contexts through the full pipeline (E6-S8)', () => {
+    const { events, adapter } = withCaptureSpy();
+    const analytics = createAnalytics({
+      key: freshKey(),
+      consentDefault: 'granted',
+      contexts: { marketing: {}, app: {} },
+    });
+
+    analytics.context('marketing').track('a');
+    analytics.context('app').track('b');
+
+    const live = adapter();
+    const first = live.runCapturePipeline(events[0]);
+    const second = live.runCapturePipeline(events[1]);
+
+    expect(first.distinctId).toBe(second.distinctId);
+    // ONE session id spans both contexts — the shared SessionIdManager is not per-context.
+    expect(first.sessionId).toMatch(V7);
+    expect(second.sessionId).toBe(first.sessionId);
+  });
+
+  test('a context enrichment difference is observable: marketing disables page, app keeps it (E6-S8)', () => {
+    const { events, adapter } = withCaptureSpy();
+    window.history.pushState({}, '', '/landing');
+    const analytics = createAnalytics({
+      key: freshKey(),
+      consentDefault: 'granted',
+      contexts: { marketing: { enrichment: { page: false } }, app: {} },
+    });
+
+    analytics.context('marketing').track('viewed_ad');
+    analytics.context('app').track('opened_app');
+
+    const live = adapter();
+    const marketingProps = live.runCapturePipeline(events[0]).properties as Record<string, unknown>;
+    const appProps = live.runCapturePipeline(events[1]).properties as Record<string, unknown>;
+
+    expect(marketingProps).not.toHaveProperty('current_url');
+    expect(appProps).toHaveProperty('current_url');
+  });
+
+  test('a root track (no context) uses the top-level config enrichment, unaffected by any context profile (E6-S8)', () => {
+    const { events, adapter } = withCaptureSpy();
+    const analytics = createAnalytics({
+      key: freshKey(),
+      consentDefault: 'granted',
+      // A context that would disable device — but a ROOT track must NOT pick it up.
+      contexts: { marketing: { enrichment: { device: false } } },
+    });
+
+    analytics.track('root_event');
+
+    const rootProps = adapter().runCapturePipeline(events[0]).properties as Record<string, unknown>;
+    expect(rootProps).toHaveProperty('device_type');
+    expect(events[0].enrichmentProfile).toBeUndefined();
+  });
+
+  test("defaultContext's construction-time autocapture toggle seeds the shared adapter (E6-S8)", () => {
+    // autocapture is a construction-time DOM behavior — it resolves from defaultContext at
+    // init. A defaultContext with autocapture:true binds listeners; one without does not.
+    const on = resolveAdapter({
+      key: freshKey(),
+      contexts: { app: { autocapture: true } },
+      defaultContext: 'app',
+    }) as BrowserAdapter;
+    const off = resolveAdapter({
+      key: freshKey(),
+      contexts: { app: { autocapture: false } },
+      defaultContext: 'app',
+    }) as BrowserAdapter;
+
+    const detachOn = (on as unknown as { detachAutocaptureListeners?: () => void })
+      .detachAutocaptureListeners;
+    const detachOff = (off as unknown as { detachAutocaptureListeners?: () => void })
+      .detachAutocaptureListeners;
+
+    expect(typeof detachOn).toBe('function');
+    expect(detachOff).toBeUndefined();
+  });
+
+  test('defaultContext autocapture falls back to the top-level config when the profile omits it (E6-S8)', () => {
+    // The default context defines no autocapture ⇒ the top-level config.autocapture drives it.
+    const adapter = resolveAdapter({
+      key: freshKey(),
+      autocapture: true,
+      contexts: { app: { enrichment: { device: false } } },
+      defaultContext: 'app',
+    }) as BrowserAdapter;
+
+    const detach = (adapter as unknown as { detachAutocaptureListeners?: () => void })
+      .detachAutocaptureListeners;
+    expect(typeof detach).toBe('function');
+  });
+
+  test("defaultContext's pageleave toggle seeds the shared adapter's construction-time pageleave (E6-S8)", () => {
+    // pageleave is construction-time (one unload). A defaultContext disabling it must resolve
+    // to a NON-pageleave-minting adapter even though the top-level config leaves it on.
+    const adapter = resolveAdapter({
+      key: freshKey(),
+      contexts: { app: { enrichment: { pageleave: false } } },
+      defaultContext: 'app',
+    }) as BrowserAdapter;
+
+    expect(
+      (adapter as unknown as { capturePageleaveEnabled: boolean }).capturePageleaveEnabled
+    ).toBe(false);
+  });
+
+  test('with no defaultContext, construction-time toggles fall through to the top-level config (zero change) (E6-S8)', () => {
+    const adapter = resolveAdapter({
+      key: freshKey(),
+      autocapture: true,
+      contexts: { marketing: { autocapture: false } },
+    }) as BrowserAdapter;
+
+    // marketing is not the defaultContext (none set) ⇒ its autocapture:false is NOT applied;
+    // the top-level autocapture:true drives the construction-time binding.
+    const detach = (adapter as unknown as { detachAutocaptureListeners?: () => void })
+      .detachAutocaptureListeners;
+    expect(typeof detach).toBe('function');
+  });
+});

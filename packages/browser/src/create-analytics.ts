@@ -4,6 +4,8 @@ import {
   type AnalyticsAdapter,
   type AnalyticsConfig,
   type AnalyticsProvider,
+  type CaptureProfile,
+  type RootAnalytics,
   type ShapeOf,
   type Taxonomy,
   type TaxonomyDecl,
@@ -14,7 +16,31 @@ export function cryptoRandomId(): string {
   return crypto.randomUUID();
 }
 
+// The default context's profile (E6-S8), if a defaultContext is named and defined. Its
+// construction-time toggles (autocapture / pageleave) seed the ONE shared adapter at init —
+// per-event enrichment still varies per context via the scoped view. Undefined ⇒ the
+// top-level config drives the toggles exactly as before (zero change for a consumer with
+// no contexts).
+function defaultProfile(config: AnalyticsConfig): CaptureProfile | undefined {
+  return config.defaultContext === undefined
+    ? undefined
+    : config.contexts?.[config.defaultContext];
+}
+
 export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
+  const profile = defaultProfile(config);
+  // autocapture + pageleave are construction-time DOM behaviors (one listener set / one
+  // unload) — they resolve from the default context, falling back to the top-level config.
+  // Per-event enrichment (page/device/referrer/utm/geoip) stays seeded from the top-level
+  // config for ROOT captures; a scoped context view overrides it live per event.
+  const autocapture = profile?.autocapture ?? config.autocapture;
+  const pageleave = profile?.enrichment?.pageleave ?? config.enrichment?.pageleave;
+  // Fold the resolved construction-time pageleave back onto the enrichment object (its
+  // authoritative channel at construction) without disturbing the live per-event toggles.
+  const enrichment =
+    config.enrichment === undefined && pageleave === undefined
+      ? undefined
+      : { ...config.enrichment, ...(pageleave === undefined ? {} : { pageleave }) };
   return config.key === undefined
     ? new NoopAdapter()
     : new BrowserAdapter({
@@ -31,9 +57,9 @@ export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
         flushInterval: config.flushInterval,
         flushAt: config.flushAt,
         compression: config.compression,
-        enrichment: config.enrichment,
+        enrichment,
         disableGeoip: config.enrichment?.country?.disableGeoip,
-        autocapture: config.autocapture,
+        autocapture,
       });
 }
 
@@ -59,9 +85,9 @@ function registerCountry(analytics: AnalyticsProvider, config: AnalyticsConfig):
 
 export function createAnalytics<const T extends TaxonomyDecl>(
   config: AnalyticsConfig & { taxonomy: Taxonomy<T> }
-): AnalyticsProvider<ShapeOf<T>>;
-export function createAnalytics(config: AnalyticsConfig): AnalyticsProvider;
-export function createAnalytics(config: AnalyticsConfig): AnalyticsProvider {
+): RootAnalytics<ShapeOf<T>>;
+export function createAnalytics(config: AnalyticsConfig): RootAnalytics;
+export function createAnalytics(config: AnalyticsConfig): RootAnalytics {
   const analytics = createSeamAnalytics(config, resolveAdapter(config), {
     generateUuid: cryptoRandomId,
   });

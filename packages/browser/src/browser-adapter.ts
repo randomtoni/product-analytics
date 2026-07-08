@@ -516,15 +516,19 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // prop (or a super-prop already merged in) of the same key WINS — the spread order
   // (context first, incoming bag last) mirrors mergeSuperProperties.
   private enrichContext(event: NeutralEvent): NeutralEvent {
+    // A scoped context view (E6-S8) carries its resolved enrichment override on the event;
+    // absent (a root capture) falls back to the adapter's own instance config. Identity/
+    // session/transport are untouched — only these live per-event toggles vary per context.
+    const enrichment = event.enrichmentProfile ?? this.enrichment;
     const context = buildContext(
       {
         libraryId: this.getLibraryId(),
         libraryVersion: this.getLibraryVersion(),
       },
       {
-        page: this.enrichment.page,
-        device: this.enrichment.device,
-        referrer: this.enrichment.referrer,
+        page: enrichment.page,
+        device: enrichment.device,
+        referrer: enrichment.referrer,
       }
     );
     return { ...event, properties: { ...context, ...event.properties } };
@@ -612,8 +616,9 @@ export class BrowserAdapter implements AnalyticsAdapter {
     // The `utm` toggle (E6-S5) gates ONLY the per-event campaign/click-id parse. The
     // per-session `session_entry_*` re-emit is attribution, not one of S5's five toggles —
     // it stays on.
+    const enrichment = event.enrichmentProfile ?? this.enrichment;
     const attribution: NeutralProperties = {
-      ...(this.enrichment.utm !== false ? parseCampaignParams() : {}),
+      ...(enrichment.utm !== false ? parseCampaignParams() : {}),
       ...this.sessionEntryProps(),
     };
     if (Object.keys(attribution).length === 0) {
@@ -640,7 +645,10 @@ export class BrowserAdapter implements AnalyticsAdapter {
    * internal — the WireEvent shape never reaches the neutral surface. The library-set
    * disableGeoip toggle rides here as a [WIRE] map option — never a consumer value. */
   toWireEvent(event: NeutralEvent): WireEvent {
-    return mapEventToWire(event, { disableGeoip: this.disableGeoip });
+    // A scoped context view (E6-S8) may override the geoip flag per event; absent, the
+    // adapter's construction-time default applies.
+    const disableGeoip = event.enrichmentProfile?.disableGeoip ?? this.disableGeoip;
+    return mapEventToWire(event, { disableGeoip });
   }
 
   /** @internal The current-pageview record (undefined before the first `page` event

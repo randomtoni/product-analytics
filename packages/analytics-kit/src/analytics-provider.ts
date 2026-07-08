@@ -1,10 +1,28 @@
 import type { AnalyticsAdapter, ConsentState } from './adapter';
-import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
+import type {
+  EnrichmentProfile,
+  NeutralEvent,
+  NeutralProperties,
+  NeutralTraits,
+} from './neutral-event';
 import { NoopAdapter } from './noop-adapter';
 import type { FeatureFlagPort, SessionReplayPort } from './ports';
 import { RESERVED_PAGE_EVENT } from './taxonomy';
 import type { DefaultTaxonomyShape, PropsParam, TaxonomyShape } from './taxonomy';
 import { generateUuid as defaultGenerateUuid } from './uuid';
+
+// The subset of a capture profile a scoped view varies live per event (E6-S8): the
+// enrichment toggles + geoip flag, resolved from a named context's profile. Structural,
+// so the impl stays decoupled from AnalyticsConfig's CaptureProfile/EnrichmentConfig.
+interface ContextProfile {
+  enrichment?: {
+    page?: boolean;
+    device?: boolean;
+    referrer?: boolean;
+    utm?: boolean;
+    country?: { disableGeoip?: boolean };
+  };
+}
 
 export type ViolationPolicy = 'throw' | 'drop-and-error-log';
 
@@ -41,7 +59,36 @@ export interface AnalyticsProvider<TX extends TaxonomyShape = DefaultTaxonomySha
   replay?: SessionReplayPort;
 }
 
-export class AnalyticsProviderImpl implements AnalyticsProvider {
+// A narrower per-context view (E6-S8): ONLY the capture-time verbs a profile varies.
+// Identity/consent/lifecycle verbs (identify/reset/optIn/optOut/flush/shutdown) are
+// deliberately absent — they operate on the shared root, and offering them on a
+// per-context handle is a footgun. The three verbs carry the SAME taxonomy-typed
+// signatures as the root (S1's tightened `page` shape included), so a consumer's
+// declared props type-check through the scoped view identically.
+export interface ScopedAnalytics<TX extends TaxonomyShape = DefaultTaxonomyShape> {
+  track<K extends keyof TX['events'] & string>(
+    event: K,
+    ...args: PropsParam<TX['events'][K]>
+  ): void;
+  page(name?: string, props?: TX['page']): void;
+  group<G extends keyof TX['groups'] & string>(
+    type: G,
+    key: string,
+    props?: TX['groups'][G]
+  ): void;
+}
+
+// The widened root return type (E6-S8): the full pinned `AnalyticsProvider` surface PLUS
+// the `context()` accessor. `context()` is carried HERE — never added to the frozen
+// `AnalyticsProvider` interface — so the 15-member `keyof AnalyticsProvider` pin is
+// untouched. `context(name)` returns a scoped view that applies the named profile while
+// delegating identity/session/transport to the shared core.
+export interface RootAnalytics<TX extends TaxonomyShape = DefaultTaxonomyShape>
+  extends AnalyticsProvider<TX> {
+  context(name: string): ScopedAnalytics<TX>;
+}
+
+export class AnalyticsProviderImpl implements RootAnalytics {
   private adapter!: AnalyticsAdapter;
   private liveAdapter: AnalyticsAdapter;
   private readonly noopAdapter = new NoopAdapter();
@@ -50,13 +97,15 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
   private readonly allowlist?: ReadonlySet<string>;
   private readonly onViolation: ViolationPolicy;
   private readonly generateUuid: () => string;
+  private readonly contexts: Readonly<Record<string, ContextProfile>>;
 
   constructor(
     adapter: AnalyticsAdapter,
     allowlist?: string[],
     onViolation?: ViolationPolicy,
     generateUuid: () => string = defaultGenerateUuid,
-    consentDefault?: ConsentDefault
+    consentDefault?: ConsentDefault,
+    contexts?: Record<string, ContextProfile>
   ) {
     this.liveAdapter = adapter;
     this.consentDefault = consentDefault;
@@ -65,6 +114,54 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
     this.allowlist = allowlist === undefined ? undefined : new Set(allowlist);
     this.onViolation = onViolation ?? 'throw';
     this.generateUuid = generateUuid;
+    this.contexts = contexts ?? {};
+  }
+
+  // Return a narrower scoped view for a named context (E6-S8). The view's capture verbs
+  // apply the resolved profile's per-event enrichment while DELEGATING identity/session/
+  // transport to this shared core (same distinct id, cookie, session, transport) — so
+  // cross-context funnel stitching is preserved. An unknown name yields the empty profile
+  // (no enrichment override) — capture still runs on the shared core.
+  context(name: string): ScopedAnalytics {
+    return new ScopedView(this, this.resolveEnrichmentProfile(name));
+  }
+
+  // Flatten a named context profile into the per-event override the adapter reads. Absent
+  // members leave the adapter on its own instance-level config (the top-level default).
+  private resolveEnrichmentProfile(name: string): EnrichmentProfile | undefined {
+    const enrichment = this.contexts[name]?.enrichment;
+    if (enrichment === undefined) {
+      return undefined;
+    }
+    return {
+      page: enrichment.page,
+      device: enrichment.device,
+      referrer: enrichment.referrer,
+      utm: enrichment.utm,
+      disableGeoip: enrichment.country?.disableGeoip,
+    };
+  }
+
+  // Profile-aware capture entries used by a scoped view. They reuse the SAME allowlist
+  // gate, consent-swap, and buildEvent path as the root verbs — the only difference is
+  // that the resolved enrichment profile rides the minted event, so the adapter varies
+  // its live per-event enrichment for this context.
+  trackWithProfile(event: string, props: NeutralProperties | undefined, profile?: EnrichmentProfile): void {
+    if (!this.allowed(props)) return;
+    this.adapter.capture(this.buildEvent(event, props, undefined, profile));
+  }
+
+  pageWithProfile(name: string | undefined, props: NeutralProperties | undefined, profile?: EnrichmentProfile): void {
+    if (!this.allowed(props)) return;
+    this.adapter.capture(this.buildEvent(name ?? RESERVED_PAGE_EVENT, props, true, profile));
+  }
+
+  groupWithProfile(type: string, key: string, props: NeutralTraits | undefined): void {
+    // group() routes through the adapter's group() path, not capture() — it carries no
+    // per-event enrichment to vary, so no profile is threaded. It still gates and delegates
+    // to the shared core exactly like the root group().
+    if (!this.allowed(props)) return;
+    this.adapter.group(type, key, props);
   }
 
   installAdapter(next: AnalyticsAdapter): void {
@@ -192,7 +289,12 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
     return this.liveAdapter.getDistinctId();
   }
 
-  private buildEvent(event: string, props?: NeutralProperties, isPageView?: true): NeutralEvent {
+  private buildEvent(
+    event: string,
+    props?: NeutralProperties,
+    isPageView?: true,
+    enrichmentProfile?: EnrichmentProfile
+  ): NeutralEvent {
     const built: NeutralEvent = {
       event,
       distinctId: this.currentDistinctId(),
@@ -203,6 +305,32 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
     if (isPageView) {
       built.isPageView = true;
     }
+    if (enrichmentProfile !== undefined) {
+      built.enrichmentProfile = enrichmentProfile;
+    }
     return built;
+  }
+}
+
+// A lightweight per-context handle (E6-S8). It exposes ONLY the three capture verbs and
+// forwards each to the shared impl's profile-aware entries, carrying its resolved
+// enrichment profile. It holds NO identity/session/transport state of its own — every
+// call delegates to the shared core, so two contexts share one distinct id + session.
+class ScopedView implements ScopedAnalytics {
+  constructor(
+    private readonly root: AnalyticsProviderImpl,
+    private readonly profile?: EnrichmentProfile
+  ) {}
+
+  track(event: string, props?: NeutralProperties): void {
+    this.root.trackWithProfile(event, props, this.profile);
+  }
+
+  page(name?: string, props?: NeutralProperties): void {
+    this.root.pageWithProfile(name, props, this.profile);
+  }
+
+  group(type: string, key: string, props?: NeutralTraits): void {
+    this.root.groupWithProfile(type, key, props);
   }
 }

@@ -8,12 +8,20 @@ import type {
   ResetOptions,
 } from './adapter';
 import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
-import { AnalyticsProviderImpl, type AnalyticsProvider } from './analytics-provider';
+import {
+  AnalyticsProviderImpl,
+  type AnalyticsProvider,
+  type RootAnalytics,
+  type ScopedAnalytics,
+} from './analytics-provider';
 import { createAnalytics } from './create-analytics';
+import { defineTaxonomy, type ShapeOf } from './taxonomy';
 import type { FeatureFlagPort, SessionReplayPort } from './ports';
 import type {
   FeatureFlagPort as ExportedFeatureFlagPort,
   SessionReplayPort as ExportedSessionReplayPort,
+  RootAnalytics as ExportedRootAnalytics,
+  ScopedAnalytics as ExportedScopedAnalytics,
 } from './index';
 import * as pkg from './index';
 
@@ -705,4 +713,217 @@ test('AnalyticsProvider method signatures are pinned (compile-time)', () => {
   expectTypeOf<AnalyticsProvider['hasOptedOut']>().toEqualTypeOf<() => boolean>();
   expectTypeOf<AnalyticsProvider['flush']>().returns.toEqualTypeOf<Promise<void>>();
   expectTypeOf<AnalyticsProvider['shutdown']>().returns.toEqualTypeOf<Promise<void>>();
+});
+
+// --- E6-S8: per-context capture profiles — RootAnalytics + ScopedAnalytics pins ---
+
+test('RootAnalytics exposes the frozen fifteen PLUS context — the widened return type (E6-S8)', () => {
+  // The new pin: context() rides RootAnalytics, NOT the frozen AnalyticsProvider. The
+  // 15-member `keyof AnalyticsProvider` pin above must stay untouched — this is a SEPARATE
+  // pin proving the widening happened on the return type only.
+  expectTypeOf<keyof RootAnalytics>().toEqualTypeOf<
+    | 'track'
+    | 'identify'
+    | 'page'
+    | 'group'
+    | 'reset'
+    | 'setTraits'
+    | 'register'
+    | 'unregister'
+    | 'optIn'
+    | 'optOut'
+    | 'hasOptedOut'
+    | 'flush'
+    | 'shutdown'
+    | 'flags'
+    | 'replay'
+    | 'context'
+  >();
+  expectTypeOf<RootAnalytics['context']>().toEqualTypeOf<(name: string) => ScopedAnalytics>();
+});
+
+test('ScopedAnalytics exposes ONLY the three capture verbs — narrower than AnalyticsProvider (E6-S8)', () => {
+  // The LOCKED narrowing: a scoped view carries capture verbs only. Identity/consent/
+  // lifecycle verbs are absent — offering them on a per-context handle is a footgun.
+  expectTypeOf<keyof ScopedAnalytics>().toEqualTypeOf<'track' | 'page' | 'group'>();
+});
+
+test('ScopedAnalytics carries the SAME taxonomy-typed signatures as the root (E6-S8)', () => {
+  type TX = ShapeOf<
+    ReturnType<
+      typeof defineTaxonomy<{
+        events: { purchased: { amount: 'number' } };
+        groups: { company: { seats: 'number' } };
+        page: { section: 'string' };
+      }>
+    >['decl']
+  >;
+  // page uses S1's tightened taxonomy page shape identically on both surfaces (NOT a loose
+  // NeutralProperties one); track/group carry the same taxonomy generics.
+  expectTypeOf<ScopedAnalytics<TX>['page']>().toEqualTypeOf<RootAnalytics<TX>['page']>();
+  expectTypeOf<ScopedAnalytics<TX>['track']>().toEqualTypeOf<RootAnalytics<TX>['track']>();
+  expectTypeOf<ScopedAnalytics<TX>['group']>().toEqualTypeOf<RootAnalytics<TX>['group']>();
+  // The scoped page type-checks a consumer's declared page props (section: string).
+  expectTypeOf<ScopedAnalytics<TX>['page']>().toBeCallableWith('home', { section: 'hero' });
+  expectTypeOf<ScopedAnalytics<TX>['track']>().toBeCallableWith('purchased', { amount: 9 });
+});
+
+test('the scoped view is a strict compile-time narrowing — identity/lifecycle verbs do NOT exist on it (E6-S8)', () => {
+  const analytics = createAnalytics({});
+  const scoped = analytics.context('marketing');
+
+  // The three capture verbs are present and callable at runtime.
+  expect(typeof scoped.track).toBe('function');
+  expect(typeof scoped.page).toBe('function');
+  expect(typeof scoped.group).toBe('function');
+
+  // Compile-time narrowing: the identity/consent/lifecycle verbs are NOT on the scoped type.
+  // Kept in a never-invoked closure so the @ts-expect-error assertions run at typecheck only
+  // (calling a missing method would throw at runtime — the narrowing is a type fact, not a
+  // runtime one). If any of these verbs is ever added to ScopedAnalytics, the @ts-expect-error
+  // goes unused and the build fails loudly.
+  const _narrowing = (): void => {
+    // @ts-expect-error identify is a shared-root verb, absent on the scoped view
+    scoped.identify('user-1');
+    // @ts-expect-error reset operates on the shared core, not a per-context handle
+    scoped.reset();
+    // @ts-expect-error optOut is a consent verb on the root only
+    scoped.optOut();
+    // @ts-expect-error flush drains the shared transport, not a scoped concern
+    scoped.flush();
+    // @ts-expect-error shutdown tears down the shared core
+    scoped.shutdown();
+  };
+  void _narrowing;
+});
+
+test('RootAnalytics and ScopedAnalytics are exported from the package entrypoint (type-level)', () => {
+  expectTypeOf<ExportedRootAnalytics>().toEqualTypeOf<RootAnalytics>();
+  expectTypeOf<ExportedScopedAnalytics>().toEqualTypeOf<ScopedAnalytics>();
+});
+
+test('the frozen AnalyticsProvider pin is untouched — context is NOT a member of it (E6-S8 discipline)', () => {
+  // Belt-and-braces alongside the :619 fifteen-member pin: assert context() did NOT leak
+  // onto AnalyticsProvider. If a future edit adds it there, this fails loudly.
+  expectTypeOf<AnalyticsProvider>().not.toHaveProperty('context');
+});
+
+test('context(name) returns a working scoped view that shares the root distinct id + adapter (E6-S8)', () => {
+  const adapter = new RecordingAdapter();
+  adapter.distinctId = 'shared-anon-id';
+  const analytics = createAnalytics({}, adapter) as RootAnalytics;
+
+  const marketing = analytics.context('marketing');
+  const app = analytics.context('app');
+
+  marketing.track('viewed_ad');
+  app.track('opened_app');
+
+  expect(adapter.captured).toHaveLength(2);
+  // Both contexts capture under the ONE shared distinct id — cross-context stitching.
+  expect(adapter.captured[0].distinctId).toBe('shared-anon-id');
+  expect(adapter.captured[1].distinctId).toBe('shared-anon-id');
+  expect(adapter.captured[0].event).toBe('viewed_ad');
+  expect(adapter.captured[1].event).toBe('opened_app');
+});
+
+test('a named context stamps its resolved enrichment profile on the minted event; the root does not (E6-S8)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = createAnalytics(
+    { contexts: { marketing: { enrichment: { device: false, utm: false } } } },
+    adapter
+  ) as RootAnalytics;
+
+  analytics.context('marketing').track('viewed_ad');
+  analytics.track('root_event');
+
+  const [scopedEvent, rootEvent] = adapter.captured;
+  expect(scopedEvent.enrichmentProfile).toEqual({
+    page: undefined,
+    device: false,
+    referrer: undefined,
+    utm: false,
+    disableGeoip: undefined,
+  });
+  // A root capture carries NO override — the adapter falls back to its own config.
+  expect(rootEvent.enrichmentProfile).toBeUndefined();
+});
+
+test('an unknown context name yields a scoped view with no enrichment override (E6-S8)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = createAnalytics({}, adapter) as RootAnalytics;
+
+  analytics.context('does-not-exist').track('x');
+
+  expect(adapter.captured).toHaveLength(1);
+  expect(adapter.captured[0].enrichmentProfile).toBeUndefined();
+});
+
+test('a context with only autocapture (no enrichment) carries no per-event override (E6-S8)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = createAnalytics(
+    { contexts: { app: { autocapture: true } } },
+    adapter
+  ) as RootAnalytics;
+
+  analytics.context('app').track('opened');
+
+  expect(adapter.captured[0].enrichmentProfile).toBeUndefined();
+});
+
+test('a scoped page() stamps the pageview marker AND the enrichment profile (E6-S8)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = createAnalytics(
+    { contexts: { marketing: { enrichment: { page: false } } } },
+    adapter
+  ) as RootAnalytics;
+
+  analytics.context('marketing').page('landing');
+
+  const event = adapter.captured[0];
+  expect(event.isPageView).toBe(true);
+  expect(event.event).toBe('landing');
+  expect(event.enrichmentProfile).toEqual({
+    page: false,
+    device: undefined,
+    referrer: undefined,
+    utm: undefined,
+    disableGeoip: undefined,
+  });
+});
+
+test('a scoped group() routes to the shared adapter group path (no per-event enrichment) (E6-S8)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = createAnalytics(
+    { contexts: { marketing: { enrichment: { device: false } } } },
+    adapter
+  ) as RootAnalytics;
+
+  analytics.context('marketing').group('company', 'acme', { seats: 5 });
+
+  expect(adapter.grouped).toEqual([{ type: 'company', key: 'acme', traits: { seats: 5 } }]);
+});
+
+test('a scoped track under a restrictive allowlist gates identically to the root (E6-S8)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = createAnalytics(
+    { allowlist: ['plan'], contexts: { marketing: {} } },
+    adapter
+  ) as RootAnalytics;
+
+  // An off-list prop through the scoped view throws exactly as a root track would — the
+  // scoped path reuses the SAME E3 gate, and no capture reaches the adapter.
+  expect(() => analytics.context('marketing').track('x', { forbidden: 1 })).toThrow(/allowlist/);
+  expect(adapter.captured).toHaveLength(0);
+});
+
+test('a scoped capture while opted-out routes to the no-op, minting nothing on the live adapter (E6-S8)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = createAnalytics({}, adapter) as RootAnalytics;
+
+  analytics.optOut();
+  analytics.context('marketing').track('x');
+
+  // The consent-swap applies to scoped captures too — the live adapter records nothing.
+  expect(adapter.captured).toHaveLength(0);
 });

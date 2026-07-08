@@ -6,7 +6,7 @@ import type {
   NeutralFetchResponse,
 } from './adapter';
 import type { NeutralEvent, NeutralTraits } from './neutral-event';
-import type { AnalyticsProvider } from './analytics-provider';
+import type { AnalyticsProvider, RootAnalytics } from './analytics-provider';
 import { createAnalytics, type AnalyticsConfig } from './create-analytics';
 import type { Taxonomy, TaxonomyDecl } from './taxonomy';
 import { NoopAdapter } from './noop-adapter';
@@ -150,11 +150,15 @@ test('a keyed config with no adapter still falls back to the NoopAdapter in E2 (
   expect(fetchSpy).not.toHaveBeenCalled();
 });
 
-test('createAnalytics returns the public AnalyticsProvider interface (compile-time)', () => {
+test('createAnalytics returns the widened RootAnalytics return type (compile-time, E6-S8)', () => {
   // Two ordered overloads now: an untyped config resolves through the loose overload to the
-  // default AnalyticsProvider, accepting an optional adapter as its second parameter.
+  // default RootAnalytics (AnalyticsProvider + context()), accepting an optional adapter as
+  // its second parameter. The return type is RootAnalytics, NOT the frozen AnalyticsProvider —
+  // context() rides the widened return type, leaving the 15-member interface pin untouched.
   const loose = createAnalytics({});
-  expectTypeOf(loose).toEqualTypeOf<AnalyticsProvider>();
+  expectTypeOf(loose).toEqualTypeOf<RootAnalytics>();
+  expectTypeOf(loose).toMatchTypeOf<AnalyticsProvider>();
+  expectTypeOf(loose.context).toBeFunction();
   expectTypeOf(createAnalytics).toBeCallableWith({});
   expectTypeOf(createAnalytics).toBeCallableWith({ key: 'abc' });
   expectTypeOf(createAnalytics).parameter(1).toEqualTypeOf<AnalyticsAdapter | undefined>();
@@ -164,7 +168,7 @@ test('the internal facade class is never exposed through the public barrel', () 
   expect('AnalyticsProviderImpl' in pkg).toBe(false);
 });
 
-test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E3), the persistence mode (E4), the consent default (E4-S3), the cross-subdomain cookie fields (E4-S4), the session-expiry timeouts (E4-S8), the ingest host/path (E5-S1), the bot-filter switch + denylist extension (E5-S7), the batch flush interval/size (E5-S2), the compression toggle (E5-S5), the per-module enrichment opt-out object (E6-S5), the nested country slot (countrySource + disableGeoip) on it (E6-S6), and the top-level autocapture opt-in boolean (E6-S7)', () => {
+test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E3), the persistence mode (E4), the consent default (E4-S3), the cross-subdomain cookie fields (E4-S4), the session-expiry timeouts (E4-S8), the ingest host/path (E5-S1), the bot-filter switch + denylist extension (E5-S7), the batch flush interval/size (E5-S2), the compression toggle (E5-S5), the per-module enrichment opt-out object (E6-S5), the nested country slot (countrySource + disableGeoip) on it (E6-S6), the top-level autocapture opt-in boolean (E6-S7), and the named contexts + defaultContext for per-context capture profiles (E6-S8)', () => {
   expectTypeOf<AnalyticsConfig>().toEqualTypeOf<{
     key?: string;
     taxonomy?: Taxonomy<TaxonomyDecl>;
@@ -195,6 +199,24 @@ test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E
       };
     };
     autocapture?: boolean;
+    contexts?: Record<
+      string,
+      {
+        autocapture?: boolean;
+        enrichment?: {
+          page?: boolean;
+          device?: boolean;
+          referrer?: boolean;
+          utm?: boolean;
+          pageleave?: boolean;
+          country?: {
+            countrySource?: string | (() => string | undefined);
+            disableGeoip?: boolean;
+          };
+        };
+      }
+    >;
+    defaultContext?: string;
   }>();
   const empty: AnalyticsConfig = {};
   expect(empty).toEqual({});
