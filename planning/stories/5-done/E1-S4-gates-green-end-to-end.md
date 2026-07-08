@@ -46,8 +46,17 @@ The epic's success bar is not "packages exist" but "all four quality gates pass 
 - **Do not hit any real backend** in tests (CLAUDE.md conventions) — trivial in-process assertions only; no network.
 - Cache expectation follows the `inputs`/`globalDependencies` pinned in S1's `turbo.json`: `build` is cacheable keyed on its explicit `inputs` (`src/**`, `tsconfig.json`, `tsup.config.ts`, `package.json`) plus the shared root configs in `globalDependencies`; a no-change re-run reports cache hits (`FULL TURBO`). `lint` has no `dependsOn`; `typecheck`/`test`/`build` depend on `^build`.
 - **`.mjs`/`.js` output naming** — the AC that every package emits `.mjs` (ESM) + `.js` (CJS) holds only because no package sets `"type": "module"` (pinned in S2/S3). If a build emits a `.cjs` or an ESM `.js` instead, the cause is a stray `"type": "module"` in that package.json — fix the package.json, don't repoint the exports map.
+- > Reviewer suggestion (2026-07-07): keep explicit `import { expect, test } from 'vitest'` (not globals) — under `include:["src"]` globals would need `types:["vitest/globals"]` per tsconfig; explicit imports sidestep that with zero config and stay fine for E2+ real tests. No change now.
+- > Reviewer suggestion (2026-07-07, E2 readiness — deferred, not an E1 defect): E2 must ADD (not fix) before its own gates pass — (a) `@types/react` devDep + a `jsx` tsconfig option for `@analytics-kit/react` (JSX + real React types), (b) a `jsdom`/`happy-dom` `environment` in `browser`/`react` `vitest.config.ts` for DOM-touching tests. The per-package `mergeConfig` / per-package tsconfig override seams already exist — clean drop-ins, no root/structural change.
 
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/
-(files changed/added, new public API, tests added, commit, reviewer notes). Do not hand-edit. -->
+> Captured by `implement-epics` on 2026-07-07.
+
+- **Files added:** `packages/{analytics-kit,browser,node,react}/src/index.test.ts` (4 trivial tests, one per package)
+- **Files changed:** none
+- **New public API:** none — tests only
+- **Tests added:** `exposes the package version` ×4 — each imports `{ version }` from `./index` and asserts `toBe('0.0.0')`; explicit `import { expect, test } from 'vitest'` (no globals)
+- **Commit:** `E1-S4-gates-green-end-to-end — All four gates green on empty packages` on `core-cycle`
+- **Reviewer notes:** see Technical notes — 2 suggestions (keep explicit vitest imports; E2 readiness re: react types/jsx + jsdom env); 0 critical
+- **Epic success bar met:** all four gates (`typecheck`/`lint`/`test`/`build`) green end-to-end across all four packages, each running a real (non-`passWithNoTests`) test; seam builds before targets; second run `FULL TURBO` cache hit; `grep -ri posthog` clean.
