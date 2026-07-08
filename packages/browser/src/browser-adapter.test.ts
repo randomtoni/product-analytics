@@ -5,7 +5,7 @@ import type {
   NeutralEvent,
   NeutralFetchOptions,
 } from 'analytics-kit';
-import { BrowserAdapter } from './browser-adapter';
+import { BrowserAdapter, type BrowserAdapterOptions } from './browser-adapter';
 import {
   ANONYMOUS_DISTINCT_ID_KEY,
   DEVICE_ID_KEY,
@@ -1628,6 +1628,27 @@ vi.mock('./gzip', async (importOriginal) => {
   };
 });
 
+// Capture the RAW (url, body, contentType) the adapter hands beaconSend on unload,
+// BEFORE any Blob wrapping — jsdom's Blob does not round-trip its own body, so reading
+// the events out of the pre-Blob string is the reliable seam. Everything else in
+// ./transport (feature detects, keepalive threshold, XHR) delegates to the real module.
+const beaconMock = vi.hoisted(() => ({
+  calls: [] as { url: string; body: string | Uint8Array; contentType: string }[],
+  returns: true as boolean,
+}));
+
+vi.mock('./transport', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./transport')>();
+  return {
+    ...actual,
+    beaconSend: (url: string, body: string | Uint8Array, contentType: string): boolean => {
+      beaconMock.calls.push({ url, body, contentType });
+      // Also hit the real beacon so the navigator.sendBeacon-presence gate is exercised.
+      return actual.beaconSend(url, body, contentType) && beaconMock.returns;
+    },
+  };
+});
+
 describe('gzip compression (S5)', () => {
   const INGEST = 'https://analytics.example.com';
   const GZIP_MAGIC = [0x1f, 0x8b];
@@ -1839,5 +1860,386 @@ describe('gzip compression (S5)', () => {
     // The neutral config field is a plain boolean, not a vendor value.
     const config: AnalyticsConfig = { compression: true };
     expect(typeof config.compression).toBe('boolean');
+  });
+});
+
+describe('transport selection + keepalive + unload drain (S6)', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  // Adapters bind pagehide/visibilitychange/beforeunload on the SHARED jsdom window and
+  // stay live until shutdown(). Track every adapter this suite creates so afterEach tears
+  // its listeners down — otherwise a stale adapter fires its own unload drain when a later
+  // test dispatches a lifecycle event on the same window.
+  const liveAdapters: BrowserAdapter[] = [];
+  function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
+    const adapter = new BrowserAdapter(options);
+    liveAdapters.push(adapter);
+    return adapter;
+  }
+
+  // jsdom does NOT implement navigator.sendBeacon, so DEFINE it (the production feature
+  // detect then finds it) — a no-op that returns true; the real captured payload is read
+  // from beaconMock (the raw pre-Blob body). Returns the beaconMock.calls array.
+  type BeaconCall = { url: string; body: string | Uint8Array; contentType: string };
+  const beaconCleanups: (() => void)[] = [];
+  function spyBeacon(): BeaconCall[] {
+    beaconMock.calls.length = 0;
+    beaconMock.returns = true;
+    const nav = navigator as unknown as { sendBeacon?: (url: string) => boolean };
+    const had = 'sendBeacon' in nav;
+    const prior = nav.sendBeacon;
+    nav.sendBeacon = () => true;
+    beaconCleanups.push(() => {
+      if (had) {
+        nav.sendBeacon = prior;
+      } else {
+        delete nav.sendBeacon;
+      }
+    });
+    return beaconMock.calls;
+  }
+
+  afterEach(() => {
+    // Detach every live adapter's page-lifecycle listeners so it doesn't drain on a later
+    // test's dispatched unload. Reach the private unbinder directly (no flush side-effect).
+    for (const adapter of liveAdapters.splice(0)) {
+      (adapter as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    }
+    for (const cleanup of beaconCleanups.splice(0)) {
+      cleanup();
+    }
+    beaconMock.calls.length = 0;
+  });
+
+  function eventsInBeaconCall(call: BeaconCall): Record<string, unknown>[] {
+    // The uncompressed unload body is the JSON `data:[]` envelope string.
+    const text = typeof call.body === 'string' ? call.body : '';
+    return (JSON.parse(text) as { data: Record<string, unknown>[] }).data;
+  }
+
+  // All uuids across every beacon call — used to prove a specific adapter's event drained,
+  // tolerant of other-suite adapters still bound to the shared jsdom window (they drain
+  // their own — empty — buffers, which never collide with this test's unique dedupeIds).
+  function beaconedUuids(beacons: BeaconCall[]): Set<unknown> {
+    const uuids = new Set<unknown>();
+    for (const beacon of beacons) {
+      for (const e of eventsInBeaconCall(beacon)) {
+        uuids.add(e.uuid);
+      }
+    }
+    return uuids;
+  }
+
+  // --- transport preference: fetch → XHR → sendBeacon by availability ---
+
+  test('the normal POST rides the fetch() SPI when fetch is available (fetch is preferred)', async () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const calls: { url: string; options: NeutralFetchOptions }[] = [];
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+
+    adapter.capture(makeEvent({ dedupeId: 'fetch-pref' }));
+    await adapter.flush();
+
+    // fetch present ⇒ delivery went through the neutral fetch() SPI (the fetch branch).
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://analytics.example.com/batch/');
+  });
+
+  test('falls back to an XHR POST when fetch is absent at runtime', async () => {
+    // Stub fetch out of existence so the transport selection falls to XHR. A fake XHR
+    // captures the POST and completes it with a 200.
+    const xhrCalls: { method: string; url: string; body: unknown }[] = [];
+    class FakeXhr {
+      method = '';
+      url = '';
+      status = 0;
+      readyState = 0;
+      responseText = '';
+      onreadystatechange: (() => void) | null = null;
+      open(method: string, url: string): void {
+        this.method = method;
+        this.url = url;
+      }
+      setRequestHeader(): void {}
+      send(body: unknown): void {
+        xhrCalls.push({ method: this.method, url: this.url, body });
+        this.status = 200;
+        this.readyState = 4;
+        this.onreadystatechange?.();
+      }
+    }
+    vi.stubGlobal('fetch', undefined);
+    vi.stubGlobal('XMLHttpRequest', FakeXhr);
+
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    // The neutral SPI itself wraps global fetch — spy it to prove it is NOT the path taken
+    // (fetch is absent, so the transport must not route through it).
+    const spiCalls: unknown[] = [];
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (...args) => {
+      spiCalls.push(args);
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+
+    adapter.capture(makeEvent({ dedupeId: 'xhr-fallback' }));
+    await adapter.flush();
+
+    expect(xhrCalls).toHaveLength(1);
+    expect(xhrCalls[0].method).toBe('POST');
+    expect(xhrCalls[0].url).toBe('https://analytics.example.com/batch/');
+    // The neutral fetch() SPI branch was NOT taken (fetch absent).
+    expect(spiCalls).toHaveLength(0);
+
+    vi.unstubAllGlobals();
+  });
+
+  // --- keepalive on fetch POSTs under the ~52 KB cap (binary/DOM-fetch path) ---
+
+  test('sets keepalive on the compressed fetch POST when the body is under the ~52 KB cap', async () => {
+    // Drive the compressed (binary) path — the DOM-fetch path where keepalive lives.
+    gzipMock.isGzipSupported.mockReturnValue(true);
+    const real = await vi.importActual<typeof import('./gzip')>('./gzip');
+    gzipMock.gzipCompress.mockImplementation(async (input) => real.gzipSyncFallback(input));
+    gzipMock.gzipSyncFallback.mockImplementation((input) => real.gzipSyncFallback(input));
+
+    const inits: RequestInit[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init?: RequestInit) => {
+      inits.push(init ?? {});
+      return { status: 200, text: async () => '', json: async () => ({}) } as unknown as Response;
+    });
+
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST });
+    adapter.capture(makeEvent({ dedupeId: 'ka-small' }));
+    await adapter.flush();
+
+    expect(inits).toHaveLength(1);
+    // A tiny batch is well under the cap ⇒ keepalive is set on the POST.
+    expect(inits[0].keepalive).toBe(true);
+
+    vi.restoreAllMocks();
+  });
+
+  test('does NOT set keepalive when the compressed body exceeds the ~52 KB cap', async () => {
+    // Model an over-cap compressed body: gzip returns a valid-header buffer larger than
+    // the keepalive threshold, so the keepalive flag must be false.
+    const oversized = new Uint8Array(64 * 1024);
+    oversized[0] = 0x1f;
+    oversized[1] = 0x8b;
+    gzipMock.isGzipSupported.mockReturnValue(true);
+    gzipMock.gzipCompress.mockResolvedValue(oversized);
+    gzipMock.gzipSyncFallback.mockReturnValue(oversized);
+
+    const inits: RequestInit[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init?: RequestInit) => {
+      inits.push(init ?? {});
+      return { status: 200, text: async () => '', json: async () => ({}) } as unknown as Response;
+    });
+
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST });
+    adapter.capture(makeEvent({ dedupeId: 'ka-big' }));
+    await adapter.flush();
+
+    expect(inits).toHaveLength(1);
+    // Over the cap ⇒ keepalive must be off (fetch keepalive errors above 64 KB).
+    expect(inits[0].keepalive).toBe(false);
+
+    vi.restoreAllMocks();
+  });
+
+  // --- unload drains BOTH queues via sendBeacon ---
+
+  test('unload() beacon-sends the buffered batch-queue events as one data:[] envelope', () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    // Buffer two events WITHOUT flushing — they sit in the S2 batch queue.
+    adapter.capture(makeEvent({ dedupeId: 'leave-1' }));
+    adapter.capture(makeEvent({ dedupeId: 'leave-2' }));
+
+    // Direct drain (the architect's unit-invoke seam) — isolates this adapter from any
+    // other-suite adapter still listening on the shared window.
+    adapter.unload();
+
+    // Exactly one beacon carrying the two buffered events, in order, to the ingest URL.
+    expect(beacons).toHaveLength(1);
+    expect(beacons[0].url).toBe('https://analytics.example.com/batch/');
+    const data = eventsInBeaconCall(beacons[0]);
+    expect(data.map((e) => e.uuid)).toEqual(['leave-1', 'leave-2']);
+
+    vi.restoreAllMocks();
+  });
+
+  test('a simulated pagehide wires the listener → the adapter drains its buffer via beacon', () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    adapter.capture(makeEvent({ dedupeId: 'pagehide-wired' }));
+    window.dispatchEvent(new Event('pagehide'));
+
+    // The pagehide listener fired this adapter's drain (unique uuid tolerates any other
+    // still-bound suite adapters draining their own empty buffers).
+    expect(beaconedUuids(beacons).has('pagehide-wired')).toBe(true);
+
+    vi.restoreAllMocks();
+  });
+
+  test('a simulated visibilitychange(hidden) wires the listener → the adapter drains via beacon', () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    adapter.capture(makeEvent({ dedupeId: 'vis-wired' }));
+
+    // jsdom lets us drive document.visibilityState via a defineProperty override.
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(beaconedUuids(beacons).has('vis-wired')).toBe(true);
+
+    vi.restoreAllMocks();
+  });
+
+  test('visibilitychange to VISIBLE (not hidden) does NOT drain', () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    adapter.capture(makeEvent({ dedupeId: 'still-visible' }));
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    // The page is still visible — no drain, so this adapter's event was not beaconed.
+    expect(beaconedUuids(beacons).has('still-visible')).toBe(false);
+
+    vi.restoreAllMocks();
+  });
+
+  test('unload() drains BOTH the batch queue AND the S3 retry queue via sendBeacon', async () => {
+    vi.useFakeTimers();
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    // First POST fails 503 → the batch re-enqueues into the S3 retry queue.
+    vi.spyOn(adapter, 'fetch').mockImplementation(async () => ({
+      status: 503,
+      text: async () => '',
+      json: async () => ({}),
+    }));
+
+    adapter.capture(makeEvent({ dedupeId: 'retry-held' }));
+    await adapter.flush();
+
+    const beacons = spyBeacon();
+    // A separate event is buffered in the batch queue but not yet flushed.
+    adapter.capture(makeEvent({ dedupeId: 'batch-held' }));
+
+    // Now unload: BOTH the batch buffer AND the retry queue must beacon-drain.
+    adapter.unload();
+
+    const uuids = beaconedUuids(beacons);
+    expect(uuids.has('batch-held')).toBe(true); // the S2 batch buffer
+    expect(uuids.has('retry-held')).toBe(true); // the S3 retry queue
+
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  test('the unload drain is idempotent — multiple lifecycle events beacon this adapter once', () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    adapter.capture(makeEvent({ dedupeId: 'once' }));
+
+    // Fire every lifecycle event a real unload emits — the latch must run the drain once.
+    window.dispatchEvent(new Event('pagehide'));
+    window.dispatchEvent(new Event('beforeunload'));
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    // Exactly ONE beacon carried this adapter's event, despite the several events fired.
+    const withOnce = beacons.filter((b) =>
+      eventsInBeaconCall(b).some((e) => e.uuid === 'once')
+    );
+    expect(withOnce).toHaveLength(1);
+
+    vi.restoreAllMocks();
+  });
+
+  test('shutdown() unbinds the unload listeners so a later unload does not re-drain', async () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    await adapter.shutdown();
+    // After shutdown the buffered-then-unload path must not fire a beacon for this adapter.
+    adapter.capture(makeEvent({ dedupeId: 'after-shutdown' }));
+    window.dispatchEvent(new Event('pagehide'));
+
+    expect(beaconedUuids(beacons).has('after-shutdown')).toBe(false);
+
+    vi.restoreAllMocks();
+  });
+
+  test('the compressed unload beacon uses the SYNC gzip path and carries the [WIRE] compression params', async () => {
+    const real = await vi.importActual<typeof import('./gzip')>('./gzip');
+    gzipMock.isGzipSupported.mockReturnValue(true);
+    // The async native primitive must NOT be used on the beacon path (it can't resolve
+    // during teardown); assert only the SYNC fallback produces the beacon body.
+    gzipMock.gzipCompress.mockResolvedValue(null);
+    gzipMock.gzipSyncFallback.mockImplementation((input) => real.gzipSyncFallback(input));
+
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST });
+    const beacons = spyBeacon();
+
+    adapter.capture(makeEvent({ dedupeId: 'gz-unload' }));
+    adapter.unload();
+
+    // Exactly one compressed beacon fired (this adapter is the only one with a buffer).
+    expect(beacons).toHaveLength(1);
+    // The async native compressor was never awaited on the beacon path — only the SYNC one.
+    expect(gzipMock.gzipCompress).not.toHaveBeenCalled();
+    expect(gzipMock.gzipSyncFallback).toHaveBeenCalled();
+    // The [WIRE] compression params ride the beacon URL (gzip body).
+    const url = new URL(beacons[0].url);
+    expect(url.searchParams.get('compression')).toBe('gzip-js');
+    expect(url.origin + url.pathname).toBe('https://analytics.example.com/batch/');
+    // The beacon body is gzip bytes carrying the gzip [WIRE] content type — NOT JSON.
+    expect(beacons[0].contentType).toBe('text/plain');
+    expect(beacons[0].body).toBeInstanceOf(Uint8Array);
+    const bytes = beacons[0].body as Uint8Array;
+    expect([bytes[0], bytes[1]]).toEqual([0x1f, 0x8b]);
+
+    vi.restoreAllMocks();
+  });
+
+  test('a client with no ingestHost drains the buffers on unload but beacons nothing (no target)', () => {
+    const adapter = makeAdapter({ key: freshKey(), compression: false });
+    const beacons = spyBeacon();
+
+    adapter.capture(makeEvent({ dedupeId: 'no-target' }));
+    adapter.unload();
+
+    // No ingest target ⇒ the buffer is drained (not left dangling) but nothing is beaconed.
+    expect(beacons).toHaveLength(0);
+
+    vi.restoreAllMocks();
+  });
+
+  // --- bar A: transport selection + unload stay adapter-internal ---
+
+  test('the neutral surface carries NO transport-selection / beacon vocabulary (bar A)', () => {
+    const adapter: AnalyticsAdapter = makeAdapter({ key: freshKey(), ingestHost: INGEST });
+    const surface = adapter as unknown as Record<string, unknown>;
+
+    // No transport choice, keepalive, or beacon knob leaks onto the neutral surface.
+    expect(surface.transport).toBeUndefined();
+    expect(surface.sendBeacon).toBeUndefined();
+    expect(surface.keepalive).toBeUndefined();
+    expect(surface.beacon).toBeUndefined();
+    // The neutral SPI signature is unchanged — fetch() still takes (url, options).
+    expect(adapter.fetch.length).toBe(2);
+  });
+
+  test('the neutral NeutralFetchOptions carries no keepalive/transport field (SPI unchanged)', () => {
+    // A structural pin: the options object the SPI accepts is exactly method/headers/body.
+    const options: NeutralFetchOptions = { method: 'POST', headers: {}, body: '{}' };
+    expect(Object.keys(options).sort()).toEqual(['body', 'headers', 'method']);
   });
 });

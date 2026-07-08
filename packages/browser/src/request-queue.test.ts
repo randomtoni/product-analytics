@@ -285,3 +285,40 @@ describe('RequestQueue — drop (opt-out)', () => {
     expect(batches).toEqual([['a']]);
   });
 });
+
+describe('RequestQueue — drain (take-all, no send) [S6]', () => {
+  test('returns the buffered events, clears the buffer, and does NOT send', () => {
+    const { queue, batches } = makeQueue();
+    queue.enable();
+    queue.enqueue('a');
+    queue.enqueue('b');
+
+    const drained = queue.drain();
+
+    expect(drained).toEqual(['a', 'b']);
+    // Take-all did NOT invoke `send` — the beacon transport is the adapter's concern.
+    expect(batches).toHaveLength(0);
+  });
+
+  test('clears the interval so a pending timer cannot re-flush drained events', () => {
+    vi.useFakeTimers();
+    const { queue, batches } = makeQueue();
+    queue.enable();
+    queue.enqueue('a');
+
+    queue.drain();
+    vi.advanceTimersByTime(DEFAULT_FLUSH_INTERVAL_MS);
+
+    // No auto-flush of the already-drained events after the interval elapses.
+    expect(batches).toHaveLength(0);
+  });
+
+  test('a second drain returns an empty buffer (nothing re-sent)', () => {
+    const { queue } = makeQueue();
+    queue.enable();
+    queue.enqueue('a');
+
+    expect(queue.drain()).toEqual(['a']);
+    expect(queue.drain()).toEqual([]);
+  });
+});

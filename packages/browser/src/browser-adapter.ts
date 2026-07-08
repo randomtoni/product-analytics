@@ -41,6 +41,7 @@ import { RateLimiter, DEFAULT_BATCH_SCOPE } from './rate-limiter';
 import { interpretBodyBackPressure } from './back-pressure-interpreter';
 import { gzipCompress, gzipSyncFallback, isGzipSupported, isGzipData } from './gzip';
 import { appendCompressedQueryParams, GZIP_CONTENT_TYPE, JSON_CONTENT_TYPE } from './transport-wire';
+import { beaconSend, hasFetch, postViaXhr, KEEPALIVE_THRESHOLD_BYTES } from './transport';
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
@@ -129,6 +130,12 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // native/sync primitive can run. Adapter-internal — the wire encoding it drives
   // never reaches the neutral surface.
   private readonly compressionEnabled: boolean;
+  // Removes the pagehide/visibilitychange/beforeunload listeners bound in the
+  // constructor; undefined in a non-DOM (SSR/test) context where none were bound.
+  private readonly detachUnloadListeners: (() => void) | undefined;
+  // One-shot latch: a real page unload fires more than one lifecycle event, so the
+  // beacon drain runs at most once — the second event is a no-op, not a beacon storm.
+  private unloadDrained = false;
 
   constructor(options: BrowserAdapterOptions) {
     this.compressionEnabled = options.compression !== false && isGzipSupported();
@@ -195,6 +202,100 @@ export class BrowserAdapter implements AnalyticsAdapter {
       idleTimeoutMs: options.sessionIdleTimeoutMs,
       maxLengthMs: options.sessionMaxLengthMs,
     });
+
+    this.detachUnloadListeners = this.bindUnloadListeners();
+  }
+
+  // Bind the page-lifecycle events that signal a close/navigation so buffered events
+  // are beacon-drained before teardown. Mirrors RetryQueue's online/offline binding:
+  // guarded for the non-DOM context, torn down on shutdown(). visibilitychange(hidden)
+  // + pagehide are the bfcache-safe triggers; beforeunload is the legacy belt-and-braces.
+  // Returns an unbinder, or undefined when there is no DOM to bind to.
+  private bindUnloadListeners(): (() => void) | undefined {
+    const win = typeof window === 'undefined' ? undefined : window;
+    const doc = typeof document === 'undefined' ? undefined : document;
+    if (win === undefined) {
+      return undefined;
+    }
+    const onPageHide = (): void => this.unload();
+    const onBeforeUnload = (): void => this.unload();
+    const onVisibilityChange = (): void => {
+      if (doc?.visibilityState === 'hidden') {
+        this.unload();
+      }
+    };
+    win.addEventListener('pagehide', onPageHide);
+    win.addEventListener('beforeunload', onBeforeUnload);
+    doc?.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      win.removeEventListener('pagehide', onPageHide);
+      win.removeEventListener('beforeunload', onBeforeUnload);
+      doc?.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }
+
+  // The unload drain: beacon-send every buffered event so a last/pageleave event is not
+  // dropped when the page closes. Drains BOTH queues — the S2 batch buffer AND the S3
+  // retry queue (drain() = atomic take-all + teardown, no send) — via navigator.sendBeacon.
+  // Idempotent: the latch guards against the several lifecycle events a real unload fires.
+  // Best-effort and synchronous: the beacon body is encoded with the SYNC gzip primitive
+  // (the async CompressionStream cannot resolve during teardown); S9 catches what beacon
+  // cannot persist past the unload window. Adapter-internal — the transport never surfaces.
+  /** @internal Public only so a unit test can invoke the drain without dispatching a real
+   * DOM lifecycle event; not stable adapter API. */
+  unload(): void {
+    if (this.unloadDrained) {
+      return;
+    }
+    this.unloadDrained = true;
+
+    const url = this.ingestUrl();
+    if (url === undefined) {
+      // No ingest target: still take the buffers so they aren't left dangling, but there
+      // is nowhere to beacon them.
+      this.queue.drain();
+      this.retryQueue.drain();
+      return;
+    }
+
+    const batchBuffer = this.queue.drain();
+    if (batchBuffer.length > 0) {
+      this.beaconBatch(url, batchBuffer);
+    }
+    for (const retryBatch of this.retryQueue.drain()) {
+      if (retryBatch.length > 0) {
+        this.beaconBatch(url, [...retryBatch]);
+      }
+    }
+  }
+
+  // Assemble one batch's `data:[]` envelope and beacon it. Encoded synchronously (the
+  // async gzip path can't resolve during unload): sync-gzip when compression is on,
+  // else the JSON string. The [WIRE] compression query params ride the URL for the
+  // gzip case, mirroring the normal binary POST. Body-type handling stays internal.
+  private beaconBatch(url: string, batch: WireEvent[]): void {
+    const json = assembleBatchBody(batch, Date.now());
+    const encoded = this.encodeBatchSync(json);
+    if (typeof encoded.body === 'string') {
+      beaconSend(url, encoded.body, encoded.contentType);
+      return;
+    }
+    const compressedUrl = appendCompressedQueryParams(url, LIBRARY_VERSION);
+    beaconSend(compressedUrl, encoded.body, encoded.contentType);
+  }
+
+  // Synchronous batch encode for the beacon path: gzip via the SYNC fflate fallback
+  // when compression is enabled and it yields valid gzip bytes, else the uncompressed
+  // JSON string. Never the async native primitive — it cannot resolve during teardown.
+  private encodeBatchSync(json: string): EncodedBatch {
+    if (!this.compressionEnabled) {
+      return { body: json, contentType: JSON_CONTENT_TYPE, compressed: false };
+    }
+    const sync = gzipSyncFallback(json);
+    if (isGzipData(sync)) {
+      return { body: sync, contentType: GZIP_CONTENT_TYPE, compressed: true };
+    }
+    return { body: json, contentType: JSON_CONTENT_TYPE, compressed: false };
   }
 
   capture(event: NeutralEvent): void {
@@ -370,6 +471,9 @@ export class BrowserAdapter implements AnalyticsAdapter {
   }
 
   async shutdown(): Promise<void> {
+    // Unbind the page-lifecycle listeners so a post-shutdown unload can't re-drain, then
+    // flush any remaining buffer through the normal transport.
+    this.detachUnloadListeners?.();
     await this.flush();
   }
 
@@ -440,31 +544,47 @@ export class BrowserAdapter implements AnalyticsAdapter {
     return { body: json, contentType: JSON_CONTENT_TYPE, compressed: false };
   }
 
-  // The single adapter-internal transport. A string body (uncompressed, or
-  // compression off) rides the neutral fetch() SPI — the string-delivery contract
-  // consumers and a second adapter share. A binary (gzipped) body cannot cross that
-  // string-bodied SPI, so it goes to the DOM fetch directly, below the seam, with the
-  // [WIRE] compression=/ver=/_= query params appended to the URL. S6 takes ownership
-  // of this method to add fetch → XHR → sendBeacon selection + keepalive.
+  // The single adapter-internal transport. Selects the delivery mechanism by runtime
+  // availability — fetch preferred, XHR the fallback — behind the neutral fetch() SPI,
+  // which never learns of the choice. A string body (uncompressed, or compression off)
+  // rides the neutral fetch() SPI on the fetch path: the string-delivery contract
+  // consumers and a second adapter share, and the fetch-transport branch these tests
+  // intercept. A binary (gzipped) body cannot cross that string-bodied SPI, so it goes
+  // to the DOM fetch directly, below the seam, with the [WIRE] compression=/ver=/_=
+  // query params appended and keepalive set for a POST under the ~52 KB cap. sendBeacon
+  // is NOT a normal-POST transport — it is the unload-drain path only (see unload()).
   private async postEncoded(url: string, encoded: EncodedBatch): Promise<NeutralFetchResponse> {
     if (typeof encoded.body === 'string') {
-      return this.fetch(url, {
+      // fetch preferred: the neutral SPI is the fetch-transport branch. When fetch is
+      // absent at runtime, fall to a direct XHR POST — both resolve the neutral response.
+      if (hasFetch()) {
+        return this.fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': encoded.contentType },
+          body: encoded.body,
+        });
+      }
+      return postViaXhr(url, {
         method: 'POST',
         headers: { 'Content-Type': encoded.contentType },
         body: encoded.body,
       });
     }
     const compressedUrl = appendCompressedQueryParams(url, LIBRARY_VERSION);
-    // Ship the gzip bytes as an ArrayBuffer body with the [WIRE] Content-Type header —
-    // the shape fetch and XHR accept directly (S6 adds XHR/sendBeacon selection and can
-    // re-wrap as a Blob where sendBeacon needs it). Copy into a fresh ArrayBuffer so the
-    // BodyInit is a plain (non-shared) buffer.
+    // Copy into a fresh ArrayBuffer so the BodyInit is a plain (non-shared) buffer.
     const buffer = encoded.body.slice().buffer as ArrayBuffer;
-    return fetch(compressedUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': encoded.contentType },
-      body: buffer,
-    });
+    const headers = { 'Content-Type': encoded.contentType };
+    if (hasFetch()) {
+      return fetch(compressedUrl, {
+        method: 'POST',
+        headers,
+        body: buffer,
+        // Best-effort delivery for a closing page; only ever set under the ~52 KB cap
+        // (over it, fetch keepalive errors). The gzipped body is near-always well under.
+        keepalive: encoded.body.byteLength < KEEPALIVE_THRESHOLD_BYTES,
+      });
+    }
+    return postViaXhr(compressedUrl, { method: 'POST', headers, body: buffer });
   }
 
   getConsentState(): ConsentState {

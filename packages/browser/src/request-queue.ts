@@ -98,6 +98,18 @@ export class RequestQueue<T> {
     this.clearTimer();
   }
 
+  // Take ALL buffered events and clear the queue WITHOUT sending — mirrors
+  // RetryQueue.drain(). The unload slice (S6) calls this and beacon-sends the returned
+  // events; the beacon transport is the adapter's concern, so this stays transport-free
+  // (it never touches `send`). The interval is cleared so a pending timer cannot fire a
+  // redundant flush of events already handed to the beacon.
+  drain(): T[] {
+    const drained = this.buffer;
+    this.buffer = [];
+    this.clearTimer();
+    return drained;
+  }
+
   private armTimer(): void {
     if (this.paused || this.flushTimer !== undefined || this.buffer.length === 0) {
       return;
