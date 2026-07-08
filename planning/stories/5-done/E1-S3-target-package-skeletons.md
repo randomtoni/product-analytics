@@ -49,8 +49,17 @@ The three targets are where platform specifics land in later cycles; scaffolding
 - **`^build` order comes from the workspace dep graph, not imports** — turbo derives the `analytics-kit`-before-targets ordering from each target's `"analytics-kit": "workspace:*"` dependency, NOT from any import in `src/index.ts`. The placeholder `src/index.ts` stays import-free (no cross-target, and it need not import the seam either); the AC "build `analytics-kit` before the targets" holds purely from the declared workspace dep. Do NOT add a bogus seam import to "make ordering work."
 - **vitest / eslint / tooling reach (same as S2, — architect 2026-07-07)** — each target ships its own `vitest.config.ts` merging the root base (vitest doesn't walk up); `eslint .` is covered by the root flat config's `dist`/`.turbo` ignores (S1); root-only dev tooling resolves from each target's CWD via the upward `node_modules` walk — targets carry no build/test devDeps of their own for E1 (only the `analytics-kit` workspace dep, plus react's `react` peer).
 - Keep each `src/index.ts` a neutral placeholder — no platform logic, no cross-target imports.
+- > Reviewer suggestion (2026-07-07): E9 should confirm whether the React binding renders anything needing `react-dom` as a peer; if so add it alongside `react`. For an S3 skeleton the single `react` peer is correct — no change now.
+- > Reviewer suggestion (2026-07-07): publish hygiene (`"files": ["dist"]`, `"sideEffects": false`) is absent on the targets AND the seam — a cross-cutting future packaging/publish story, not an S3 gap. Do not add per-story.
 
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/
-(files changed/added, new public API, tests added, commit, reviewer notes). Do not hand-edit. -->
+> Captured by `implement-epics` on 2026-07-07.
+
+- **Files added:** `packages/{browser,node,react}/{package.json, tsconfig.json, tsup.config.ts, vitest.config.ts, src/index.ts}` (15 files)
+- **Files changed:** `pnpm-lock.yaml` (3 new workspace importers + `react` peer resolution)
+- **New public API:** `version = '0.0.0'` per target — neutral placeholders; no platform logic (deferred to E4–E9)
+- **Tests added:** none (`passWithNoTests`; trivial tests are S4)
+- **Commit:** `E1-S3-target-package-skeletons — Target package skeletons (@analytics-kit/{browser,node,react})` on `core-cycle`
+- **Reviewer notes:** see Technical notes — 2 suggestions (react-dom check at E9, publish hygiene as future story); 0 critical
+- **Cross-story seams exposed (for S4):** all four packages now build green — seam `analytics-kit` + `@analytics-kit/{browser,node,react}`. S4's trivial test lands per package at `packages/<pkg>/src/*.test.ts` (vitest default include, scoped per package); each already exports `version='0.0.0'` so `expect(version).toBe('0.0.0')` is the natural assertion. Inward-only graph + `^build` topo order verified via turbo dry-run (targets depend on `analytics-kit#build`; seam depends on nothing).
