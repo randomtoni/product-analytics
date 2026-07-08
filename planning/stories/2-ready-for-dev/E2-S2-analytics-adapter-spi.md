@@ -27,7 +27,7 @@ The `AnalyticsAdapter` SPI is the minimal surface any backend satisfies — it *
     - `flush(): Promise<void>`
     - `shutdown(): Promise<void>`
   - **Neutral platform primitives** (the genuinely-neutral lower-level capabilities a target provides):
-    - transport: `fetch(...)` — a neutral transport primitive (adapter maps to the wire internally)
+    - transport: `fetch(url: string, options: NeutralFetchOptions): Promise<NeutralFetchResponse>` — a neutral transport primitive (adapter maps to the wire internally). `NeutralFetchOptions`/`NeutralFetchResponse` are the seam's **own** neutral types (see Technical notes), **not** DOM `fetch`/`Response`/`RequestInit`.
     - persisted-property storage: `getPersistedProperty<T>(key: string): T | undefined` · `setPersistedProperty<T>(key: string, value: T | null): void`
     - client identity: `getLibraryId(): string` · `getLibraryVersion(): string` · `getCustomUserAgent(): string | undefined`
 - Export `AnalyticsAdapter` from the seam's public surface.
@@ -44,6 +44,7 @@ The `AnalyticsAdapter` SPI is the minimal surface any backend satisfies — it *
 - [ ] `AnalyticsAdapter` is declared and exported from the seam; its `capture` verb takes a `NeutralEvent` (from S1), not a `distinctId` positional arg.
 - [ ] The SPI carries the neutral verbs (capture/identify/group/alias/flush/shutdown) **and** the neutral platform primitives (transport `fetch`, persisted-property get/set, client-identity id/version/user-agent) — no more.
 - [ ] No `$`-prefixed names, no `/batch/` envelope, no vendor endpoint, no compression header appears anywhere in the SPI type.
+- [ ] `fetch` is typed against the seam's own `NeutralFetchOptions`/`NeutralFetchResponse` (exported from the seam) — **no** DOM `RequestInit`/`Response`/global `fetch` reference (the seam has no DOM lib), and `json()` returns `Promise<unknown>`, not `Promise<any>`.
 - [ ] `flush`/`shutdown` return `Promise<void>`; the capture-path verbs are fire-and-forget (`void`).
 - [ ] `pnpm --filter analytics-kit typecheck`, `lint`, `test`, `build` all exit 0.
 - [ ] `grep -ri posthog packages/analytics-kit/src` is clean.
@@ -55,6 +56,11 @@ The `AnalyticsAdapter` SPI is the minimal surface any backend satisfies — it *
 - **`alias` is SPI-only** (— architect 2026-07-07): included so E4's anonymous→identified merge can use it; it is **not** exposed on the facade (BRIEF §1 lists no `alias`). Keep the param shape a minimal sketch here; E4 finalizes it when the merge lands — non-breaking to the epic's SPI shape.
 - **Adapter-internal mechanics may differ per target (— architect 2026-07-07):** batching/transport/persistence are below this contract. PostHog's own asymmetry — node **extends** the stateless base (`posthog-js/packages/node/src/client.ts:125`), browser is a **sibling** implementing the interface (`posthog-js/packages/browser/src/posthog-core.ts:389`) — is exactly the freedom the neutral SPI preserves.
 - **Do NOT freeze the identity-resolution mechanism (— architect 2026-07-07):** the storage capability (`getPersistedProperty`/`setPersistedProperty`) is on the SPI per the epic's committed contract, but *how the facade uses it to resolve `distinctId`* (through this SPI storage vs. a separately-injected identity port) is an E4 signature detail — sketch, don't freeze. E2 only commits: (1) the storage capability exists on the SPI, (2) `capture` takes a resolved `NeutralEvent`, (3) the adapter receives a resolved id and never resolves one itself.
+- **`fetch` carries neutral types, NOT DOM types (code-shape pin, load-bearing):** the seam builds under `lib:["ES2022"]` with **no DOM lib** (confirmed in E1-S2's shipped note; the seam has no `@types/node` dep either). A `fetch(url, options: RequestInit): Promise<Response>` signature will **not typecheck** — `RequestInit`/`Response`/global `fetch` are DOM types that don't resolve here. Do exactly what PostHog's isomorphic core does: define the SPI's own neutral option/response types and reference those. De-brand from `posthog-js/packages/core/src/types.ts:292` (`PostHogFetchOptions`) and `:316` (`PostHogFetchResponse`) → `NeutralFetchOptions` / `NeutralFetchResponse`. Keep them **minimal and DOM-free**:
+  - `NeutralFetchOptions` = `{ method: 'GET'|'POST'|'PUT'|'PATCH'; headers: Record<string,string>; body?: string }` — **omit** DOM/node-only ambient types (`Blob`, `AbortSignal`, `ReadableStream`); timeout/abort is adapter-internal.
+  - `NeutralFetchResponse` = `{ status: number; text(): Promise<string>; json(): Promise<unknown> }` — note `json` returns `Promise<unknown>`, **not** `Promise<any>` (PostHog's literal shape uses `any`, which trips eslint `no-explicit-any` in `tseslint.configs.recommended`).
+  - Export both neutral fetch types from the seam's public surface alongside `AnalyticsAdapter` (the `NoopAdapter` in S4 and every real adapter implement against them).
+- **`getCustomUserAgent(): string | undefined`** de-brands PostHog's `string | void` (`posthog-core-stateless.ts:250`) — `undefined` is the idiomatic neutral form and typechecks under `strict`; keep it, don't lift `void`.
 - **Reference-backend sanity check (REFERENCE-BACKEND.md, 2026-07-07):** the SPI stays expressed in capability terms (capture/identify/query), never wire terms — this is what lets the self-hosted reference adapter slot in without SPI churn. Confirm no wire term leaks onto the interface before closing this story.
 
 ## Shipped
