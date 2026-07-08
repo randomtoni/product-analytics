@@ -7,12 +7,23 @@ import {
 import { NoopAdapter } from './noop-adapter';
 import type { ShapeOf, Taxonomy, TaxonomyDecl } from './taxonomy';
 
+export interface CountryEnrichmentConfig {
+  // A consumer-injected source of the country value — a plain value or a synchronous
+  // provider (e.g. reading an edge header the consumer has surfaced). Consumer-supplied,
+  // so its resolved VALUE crosses the E3 allowlist via the facade register({ country }).
+  countrySource?: string | (() => string | undefined);
+  // Signal the backend to skip its server-side GeoIP. A library-set toggle (not a consumer
+  // value) → it does NOT cross the allowlist; it sets the adapter-internal wire flag only.
+  disableGeoip?: boolean;
+}
+
 export interface EnrichmentConfig {
   page?: boolean;
   device?: boolean;
   referrer?: boolean;
   utm?: boolean;
   pageleave?: boolean;
+  country?: CountryEnrichmentConfig;
 }
 
 export interface AnalyticsConfig {

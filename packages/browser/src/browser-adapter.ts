@@ -167,6 +167,11 @@ export interface BrowserAdapterOptions {
   // ⇒ enriched); setting one false disables ONLY that module. Gates S3's page/device/
   // referrer context groups, S4's utm campaign parse, and S2's pageleave independently.
   enrichment?: EnrichmentConfig;
+  // Signal the backend to skip its server-side GeoIP (E6-S6). A library-SET toggle, not
+  // a consumer value, so it does NOT cross the E3 allowlist — it stamps the adapter-internal
+  // [WIRE] $geoip_disable property (via the wire-mapper). The country VALUE, by contrast, is
+  // consumer-supplied and routes through the facade register() gate, never through here.
+  disableGeoip?: boolean;
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
@@ -236,10 +241,15 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // (opt-out semantics). Only the page/device/referrer/utm gates read it live; pageleave
   // is resolved once into capturePageleaveEnabled above.
   private readonly enrichment: EnrichmentConfig;
+  // Whether to stamp the [WIRE] $geoip_disable flag on every wire event (E6-S6). Resolved
+  // once at construction; a library-set toggle, off unless explicitly true. Adapter-internal —
+  // it drives only the wire-mapper stamp, never the neutral surface.
+  private readonly disableGeoip: boolean;
 
   constructor(options: BrowserAdapterOptions) {
     this.compressionEnabled = options.compression !== false && isGzipSupported();
     this.enrichment = options.enrichment ?? {};
+    this.disableGeoip = options.disableGeoip === true;
     this.capturePageleaveEnabled =
       (options.enrichment?.pageleave ?? options.capturePageleave) !== false;
     this.botFilterEnabled = options.botFilter !== false;
@@ -594,9 +604,10 @@ export class BrowserAdapter implements AnalyticsAdapter {
    * out into its [WIRE] shape, placing the neutral `dedupeId` at the top-level `uuid`.
    * S2's batch queue calls this per event before enqueue; S2 extends the wire-mapper
    * module (not this method) with the MERGE_EVENT / traits-key normalization. Adapter-
-   * internal — the WireEvent shape never reaches the neutral surface. */
+   * internal — the WireEvent shape never reaches the neutral surface. The library-set
+   * disableGeoip toggle rides here as a [WIRE] map option — never a consumer value. */
   toWireEvent(event: NeutralEvent): WireEvent {
-    return mapEventToWire(event);
+    return mapEventToWire(event, { disableGeoip: this.disableGeoip });
   }
 
   /** @internal The current-pageview record (undefined before the first `page` event

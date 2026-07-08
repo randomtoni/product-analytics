@@ -50,3 +50,18 @@ Country is NOT derived client-side by PostHog (it's server-side GeoIP). This exp
 - `disableGeoip` → adapter-internal wire flag; `$geoip_disable` is [WIRE], never neutral surface. — posthog-source-guide / architect (2026-07-07).
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate): `resolveCountry` doesn't guard a throwing `countrySource` provider — a consumer sync provider (e.g. reading an edge header) that throws propagates out of `createAnalytics` and aborts client construction. Wrap the provider call in try/catch treating a throw as "yields nothing" (graceful degrade), OR document fail-loud as the deliberate contract in the pin comment.
+- > Reviewer note (2026-07-08, cosmetic): `resolveAdapter` passes `disableGeoip: boolean | undefined`; the adapter normalizes `undefined → false` via `=== true` in the constructor (intentional, not the resolver).
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Two mechanisms:** (1) country VALUE (consumer-supplied) → facade `register({country})` (E3-GATED — off-list rejected loudly per `onViolation`; adapter stays allowlist-agnostic; super-prop DEFAULT, per-call `track` overrides; yields-nothing→no register). (2) `disableGeoip` (library toggle, NOT gated) → adapter-internal `$geoip_disable` `[WIRE]` stamp, confined to browser wire layer.
+- **Files changed (seam):** `create-analytics.ts` (+`CountryEnrichmentConfig {countrySource?, disableGeoip?}` NESTED into `EnrichmentConfig` → `{page?,device?,referrer?,utm?,pageleave?,country?}`) + shape-pin, `index.ts` (barrel-export)
+- **Files changed (browser):** `create-analytics.ts` (`resolveCountry` value-or-sync-provider + `registerCountry` via facade `register` AFTER facade built; `disableGeoip` whitelist), `browser-adapter.ts` (`disableGeoip?` option → `toWireEvent`; NO `country`), `wire-mapper.ts` (`WireMapOptions` + stamp `$geoip_disable` in properties, undefined-props guard), `persistence-keys.ts` (+`GEOIP_DISABLE_WIRE_KEY='$geoip_disable'` — the SOLE `[WIRE]` const)
+- **New public API:** `AnalyticsConfig.enrichment.country?: CountryEnrichmentConfig` (additive). Pin stays 15. `$geoip_disable` grep-EMPTY in seam.
+- **Tests added:** browser +18 (country via register value+provider, super-prop-default+override, yields-nothing/absent→no-key, off-list rejected throw + drop-and-error-log, no-allowlist ungated, disableGeoip threads→`$geoip_disable` wire + bar-A NeutralEvent-clean + never-registers, undefined-props mint, merge composition) → 529; seam 139
+- **Commit:** `E6-S6-pluggable-country-source — Pluggable country source + GeoIP disable` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (guard throwing countrySource; normalization note)
+- **Cross-story seams exposed (S8):** `country` is a first-class `EnrichmentConfig` member — a per-context profile carries its own `country` config with no shape change. BUT: the country VALUE `register()` happens ONCE at global init (browser `create-analytics.ts`) not per-context — per-context country needs the resolution site to move (gate path unchanged). `disableGeoip` is resolved once at adapter construction into a private field → per-context GeoIP toggling would need the wire-stamp to read the active profile at map-time (stays below neutral surface). Country is a once-at-init snapshot (per-session stable — R1 caveat).

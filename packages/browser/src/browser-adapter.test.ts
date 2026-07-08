@@ -3648,3 +3648,27 @@ describe('per-module enrichment opt-out — structured `enrichment` object (E6-S
     expect(props.utm_source).toBe('news');
   });
 });
+
+describe('disableGeoip → adapter-internal [WIRE] $geoip_disable, never on the neutral surface (E6-S6)', () => {
+  test('with disableGeoip on, the wire event carries $geoip_disable but the pipeline NeutralEvent does not (bar A)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), disableGeoip: true });
+
+    // The neutral event that the pipeline produces (what a second adapter would receive) is
+    // clean — the $geoip_disable token lives ONLY in the wire layer.
+    const neutral = adapter.runCapturePipeline(makeEvent({ properties: { plan: 'pro' } }));
+    expect(neutral.properties ?? {}).not.toHaveProperty('$geoip_disable');
+
+    // The wire mapping stamps it.
+    const wire = adapter.toWireEvent(neutral) as unknown as { properties?: Record<string, unknown> };
+    expect(wire.properties).toHaveProperty('$geoip_disable', true);
+  });
+
+  test('disableGeoip is a library toggle — it never registers a super-prop (no allowlist crossing)', () => {
+    const registerSpy = vi.spyOn(BrowserAdapter.prototype, 'register');
+    new BrowserAdapter({ key: freshKey(), disableGeoip: true });
+
+    // Constructing with disableGeoip must not call register() — the country VALUE gate is
+    // the only register() crossing; disableGeoip is a wire toggle set at construction.
+    expect(registerSpy).not.toHaveBeenCalled();
+  });
+});

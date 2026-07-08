@@ -275,3 +275,53 @@ describe('wire-mapper — data:[] batch envelope + timestamp→offset (S2)', () 
     expect(assembleBatchBody([], Date.now())).toBe('{"data":[]}');
   });
 });
+
+describe('wire-mapper — disableGeoip stamps the [WIRE] $geoip_disable property (E6-S6)', () => {
+  test('stamps $geoip_disable: true into properties when the toggle is on', () => {
+    const wire = mapEventToWire(makeEvent({ properties: { plan: 'pro' } }), { disableGeoip: true });
+
+    expect(wire.properties).toMatchObject({ plan: 'pro', $geoip_disable: true });
+  });
+
+  test('mints a properties bag carrying the flag when the event has NO properties (undefined guard)', () => {
+    const wire = mapEventToWire(makeEvent({ properties: undefined }), { disableGeoip: true });
+
+    expect(wire.properties).toEqual({ $geoip_disable: true });
+  });
+
+  test('omits $geoip_disable when the toggle is absent (default)', () => {
+    const wire = mapEventToWire(makeEvent({ properties: { plan: 'pro' } }));
+
+    expect(wire.properties ?? {}).not.toHaveProperty('$geoip_disable');
+  });
+
+  test('omits $geoip_disable when the toggle is explicitly false', () => {
+    const wire = mapEventToWire(makeEvent({ properties: { plan: 'pro' } }), { disableGeoip: false });
+
+    expect(wire.properties ?? {}).not.toHaveProperty('$geoip_disable');
+  });
+
+  test('stamps the flag on a merge event AFTER the trait-bag normalization (both wire transforms compose)', () => {
+    const wire = mapEventToWire(
+      makeEvent({
+        event: MERGE_EVENT,
+        properties: {
+          [ANONYMOUS_DISTINCT_ID_KEY]: 'anon-1',
+          [SET_TRAITS_KEY]: { plan: 'pro' },
+          [SET_TRAITS_ONCE_KEY]: { signup: '2026' },
+        },
+      }),
+      { disableGeoip: true }
+    );
+
+    // The trait bags were lifted to top-level wire keys; the merge link + the geoip flag
+    // remain inside properties.
+    expect(wire.set_traits).toEqual({ plan: 'pro' });
+    expect(wire.set_traits_once).toEqual({ signup: '2026' });
+    expect(wire.properties).toMatchObject({
+      [ANONYMOUS_DISTINCT_ID_KEY]: 'anon-1',
+      $geoip_disable: true,
+    });
+    expect(wire.properties ?? {}).not.toHaveProperty(SET_TRAITS_KEY);
+  });
+});

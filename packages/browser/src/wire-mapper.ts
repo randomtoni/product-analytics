@@ -1,5 +1,6 @@
 import { RESERVED_PAGELEAVE_EVENT, type NeutralEvent, type NeutralProperties } from 'analytics-kit';
 import {
+  GEOIP_DISABLE_WIRE_KEY,
   MERGE_EVENT,
   PAGELEAVE_WIRE_EVENT,
   PAGEVIEW_WIRE_EVENT,
@@ -43,7 +44,15 @@ export interface WireEvent {
 // the base every event takes; the merge/traits normalization (keyed off
 // `MERGE_EVENT`, the adapter-emitted merge name — NOT a consumer string) layers on
 // top of it, lifting the trait bags to top-level wire keys.
-export function mapEventToWire(event: NeutralEvent): WireEvent {
+// The adapter-internal, library-set wire toggles the mapper stamps onto the event.
+// disableGeoip resolves once at adapter construction — never a consumer value, so it
+// crosses no allowlist; it is applied here, at the [WIRE] boundary, not on the neutral
+// surface.
+export interface WireMapOptions {
+  disableGeoip?: boolean;
+}
+
+export function mapEventToWire(event: NeutralEvent, options?: WireMapOptions): WireEvent {
   const base: WireEvent = {
     event: wireEventName(event),
     distinct_id: event.distinctId,
@@ -52,10 +61,22 @@ export function mapEventToWire(event: NeutralEvent): WireEvent {
     uuid: event.dedupeId,
   };
 
-  if (event.event !== MERGE_EVENT || event.properties === undefined) {
-    return base;
+  const mapped =
+    event.event !== MERGE_EVENT || event.properties === undefined
+      ? base
+      : normalizeMergeEvent(base, event.properties);
+
+  return stampGeoipDisable(mapped, options?.disableGeoip);
+}
+
+// Stamp the [WIRE] $geoip_disable property when the library toggle is on. An event with
+// no other properties still carries the flag (the properties bag is minted here if
+// absent — mirrors posthog-core-stateless.ts:1168's undefined guard).
+function stampGeoipDisable(wire: WireEvent, disableGeoip?: boolean): WireEvent {
+  if (disableGeoip !== true) {
+    return wire;
   }
-  return normalizeMergeEvent(base, event.properties);
+  return { ...wire, properties: { ...wire.properties, [GEOIP_DISABLE_WIRE_KEY]: true } };
 }
 
 // Swap the neutral event name/marker for its [WIRE] name. A pageview is recognized by

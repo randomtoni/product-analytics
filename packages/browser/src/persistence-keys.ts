@@ -33,6 +33,12 @@ export const MERGE_EVENT = 'identify';
 export const PAGEVIEW_WIRE_EVENT = '$pageview';
 export const PAGELEAVE_WIRE_EVENT = '$pageleave';
 
+// The [WIRE] property name that signals the backend to skip its server-side GeoIP
+// (de-branded from posthog-core's $geoip_disable). Stamped into the wire event's
+// properties by the wire-mapper when the library-set disableGeoip toggle is on. A
+// library toggle, never a consumer value — the neutral surface never sees this token.
+export const GEOIP_DISABLE_WIRE_KEY = '$geoip_disable';
+
 // Adapter-internal [WIRE] property names carried on the merge / traits event only —
 // the retained prior anon id (the merge link) and the two person-trait bags. The
 // E5 wire-mapper normalizes these to the vendor conventions; the neutral surface
