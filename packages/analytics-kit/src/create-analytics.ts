@@ -45,6 +45,11 @@ export interface AnalyticsConfig {
   flushAt?: number;
   compression?: boolean;
   enrichment?: EnrichmentConfig;
+  // Opt into minimal DOM autocapture (click/change/submit → element metadata). Default
+  // OFF: unset/false binds ZERO DOM listeners. A capture MECHANISM, so a plain top-level
+  // boolean sibling of `enrichment`, NOT a member of the enrichment opt-out object. On/off
+  // is purely local — the library never phones home for autocapture gating.
+  autocapture?: boolean;
 }
 
 interface AnalyticsDeps {

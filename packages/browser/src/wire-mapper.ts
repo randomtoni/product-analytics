@@ -1,5 +1,7 @@
 import { RESERVED_PAGELEAVE_EVENT, type NeutralEvent, type NeutralProperties } from 'analytics-kit';
 import {
+  AUTOCAPTURE_EVENT,
+  AUTOCAPTURE_WIRE_EVENT,
   GEOIP_DISABLE_WIRE_KEY,
   MERGE_EVENT,
   PAGELEAVE_WIRE_EVENT,
@@ -90,6 +92,9 @@ function wireEventName(event: NeutralEvent): string {
   }
   if (event.event === RESERVED_PAGELEAVE_EVENT) {
     return PAGELEAVE_WIRE_EVENT;
+  }
+  if (event.event === AUTOCAPTURE_EVENT) {
+    return AUTOCAPTURE_WIRE_EVENT;
   }
   return event.event;
 }

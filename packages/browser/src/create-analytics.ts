@@ -33,6 +33,7 @@ export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
         compression: config.compression,
         enrichment: config.enrichment,
         disableGeoip: config.enrichment?.country?.disableGeoip,
+        autocapture: config.autocapture,
       });
 }
 

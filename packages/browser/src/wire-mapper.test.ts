@@ -4,6 +4,8 @@ import { assembleBatchBody, mapEventToWire } from './wire-mapper';
 import { containsInsertId } from './wire-scan.test-helper';
 import {
   ANONYMOUS_DISTINCT_ID_KEY,
+  AUTOCAPTURE_EVENT,
+  AUTOCAPTURE_WIRE_EVENT,
   MERGE_EVENT,
   PAGELEAVE_WIRE_EVENT,
   PAGEVIEW_WIRE_EVENT,
@@ -209,6 +211,33 @@ describe('wire-mapper — pageview / pageleave [WIRE] event names (E6-S2)', () =
 
     expect(wire.event).toBe(PAGELEAVE_WIRE_EVENT);
     expect(wire.event).toBe('$pageleave');
+  });
+
+  test('the neutral autocapture event maps to the [WIRE] $autocapture name (E6-S7)', () => {
+    const wire = mapEventToWire(makeEvent({ event: AUTOCAPTURE_EVENT }));
+
+    expect(wire.event).toBe(AUTOCAPTURE_WIRE_EVENT);
+    expect(wire.event).toBe('$autocapture');
+    // The neutral event name carries no vendor `$`-prefix.
+    expect(AUTOCAPTURE_EVENT).not.toContain('$');
+  });
+
+  test('an autocapture event carries its element-metadata properties + uuid through unchanged', () => {
+    const wire = mapEventToWire(
+      makeEvent({
+        event: AUTOCAPTURE_EVENT,
+        properties: { event_type: 'click', el_text: 'Buy', elements_chain: 'button:...' },
+        dedupeId: 'ac-1',
+      })
+    );
+
+    expect(wire.event).toBe('$autocapture');
+    expect(wire.properties).toEqual({
+      event_type: 'click',
+      el_text: 'Buy',
+      elements_chain: 'button:...',
+    });
+    expect(wire.uuid).toBe('ac-1');
   });
 
   test('a pageview carries its properties + uuid through unchanged — only the event name is swapped', () => {

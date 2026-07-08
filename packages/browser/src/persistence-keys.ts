@@ -25,6 +25,13 @@ export const IDENTIFIED_IDENTITY_STATE: IdentityState = 'identified';
 // event. De-branded — no `$`-prefixed name.
 export const MERGE_EVENT = 'identify';
 
+// The neutral event NAME of an autocaptured DOM interaction (click/change/submit),
+// minted entirely inside the browser adapter — the consumer never types it (same
+// adapter-internal posture as MERGE_EVENT, NOT a seam-reserved facade verb). The
+// wire-mapper maps it to AUTOCAPTURE_WIRE_EVENT. De-branded from posthog's
+// `$autocapture` — no `$`-prefixed name on the neutral surface.
+export const AUTOCAPTURE_EVENT = 'autocapture';
+
 // The [WIRE] event names for pageview / pageleave — the ONLY place the `$`-prefixed
 // vendor tokens live. The wire-mapper emits PAGEVIEW_WIRE_EVENT for an event carrying
 // the neutral `isPageView` marker (the router path stays in the neutral `event` name),
@@ -32,6 +39,11 @@ export const MERGE_EVENT = 'identify';
 // surface — the mapper is the boundary that swaps the neutral name/marker for these.
 export const PAGEVIEW_WIRE_EVENT = '$pageview';
 export const PAGELEAVE_WIRE_EVENT = '$pageleave';
+
+// The [WIRE] event name for an autocaptured DOM interaction — the ONLY place the
+// `$`-prefixed vendor token lives. The wire-mapper emits this for an event carrying the
+// neutral AUTOCAPTURE_EVENT name. Never on the neutral surface.
+export const AUTOCAPTURE_WIRE_EVENT = '$autocapture';
 
 // The [WIRE] property name that signals the backend to skip its server-side GeoIP
 // (de-branded from posthog-core's $geoip_disable). Stamped into the wire event's

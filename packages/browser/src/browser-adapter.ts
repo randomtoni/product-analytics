@@ -26,6 +26,7 @@ import {
   storeName,
   ANONYMOUS_DISTINCT_ID_KEY,
   ANONYMOUS_IDENTITY_STATE,
+  AUTOCAPTURE_EVENT,
   MERGE_EVENT,
   RESERVED_EVENT_KEYS,
   SESSION_ENTRY_PROPS_KEY,
@@ -56,6 +57,7 @@ import {
   parseCampaignParams,
   type EntryInfo,
 } from './attribution-enrichment';
+import { bindAutocaptureListeners } from './autocapture';
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
@@ -172,6 +174,11 @@ export interface BrowserAdapterOptions {
   // [WIRE] $geoip_disable property (via the wire-mapper). The country VALUE, by contrast, is
   // consumer-supplied and routes through the facade register() gate, never through here.
   disableGeoip?: boolean;
+  // Opt into minimal DOM autocapture (E6-S7). Default OFF: unset/false binds ZERO DOM
+  // listeners and captures nothing. When true, capture-phase click/change/submit listeners
+  // are bound (SSR-guarded), each interaction minting a neutral autocapture event through
+  // the SAME capture() pipeline. On/off is purely local — no remote-config phone-home.
+  autocapture?: boolean;
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
@@ -218,6 +225,9 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // Removes the pagehide/visibilitychange/beforeunload listeners bound in the
   // constructor; undefined in a non-DOM (SSR/test) context where none were bound.
   private readonly detachUnloadListeners: (() => void) | undefined;
+  // Removes the capture-phase click/change/submit autocapture listeners (E6-S7);
+  // undefined when autocapture is off OR in a non-DOM (SSR) context where none were bound.
+  private readonly detachAutocaptureListeners: (() => void) | undefined;
   // One-shot latch: a real page unload fires more than one lifecycle event, so the
   // beacon drain runs at most once — the second event is a no-op, not a beacon storm.
   private unloadDrained = false;
@@ -334,6 +344,29 @@ export class BrowserAdapter implements AnalyticsAdapter {
     });
 
     this.detachUnloadListeners = this.bindUnloadListeners();
+    // Autocapture is opt-in, default OFF (E6-S7): bind the DOM listeners ONLY when the
+    // config boolean is explicitly true. Unset/false ⇒ this is undefined ⇒ zero listeners,
+    // zero events. No remote-config gate — on/off is purely this local flag.
+    this.detachAutocaptureListeners =
+      options.autocapture === true ? this.bindAutocapture() : undefined;
+  }
+
+  // Bind the capture-phase autocapture listeners (SSR-guarded inside the module, exactly
+  // like bindUnloadListeners). Each DOM interaction mints a neutral autocapture event that
+  // rides the SAME capture() pipeline (bot gate → rate limiter → enrichment → wire map →
+  // transport). Element metadata is library-computed ⇒ TRUSTED — it is NOT allowlist-gated
+  // (capture() is downstream of the E3 facade gate). Returns an unbinder, or undefined in a
+  // non-DOM context. NO gating network call — the listeners are bound purely from config.
+  private bindAutocapture(): (() => void) | undefined {
+    return bindAutocaptureListeners((properties) => {
+      this.capture({
+        event: AUTOCAPTURE_EVENT,
+        distinctId: this.identity.getDistinctId(),
+        properties,
+        timestamp: new Date(),
+        dedupeId: generateUuidV7(),
+      });
+    });
   }
 
   // Bind the page-lifecycle events that signal a close/navigation so buffered events
@@ -777,9 +810,11 @@ export class BrowserAdapter implements AnalyticsAdapter {
   }
 
   async shutdown(): Promise<void> {
-    // Unbind the page-lifecycle listeners so a post-shutdown unload can't re-drain, then
+    // Unbind the page-lifecycle listeners so a post-shutdown unload can't re-drain, and the
+    // autocapture DOM listeners so a post-shutdown interaction can't mint an event, then
     // flush any remaining buffer through the normal transport.
     this.detachUnloadListeners?.();
+    this.detachAutocaptureListeners?.();
     await this.flush();
   }
 

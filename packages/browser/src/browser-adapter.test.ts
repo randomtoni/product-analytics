@@ -11,6 +11,8 @@ import { resolveAdapter } from './create-analytics';
 import { containsInsertId } from './wire-scan.test-helper';
 import {
   ANONYMOUS_DISTINCT_ID_KEY,
+  AUTOCAPTURE_EVENT,
+  AUTOCAPTURE_WIRE_EVENT,
   DEVICE_ID_KEY,
   DISTINCT_ID_KEY,
   IDENTITY_STATE_KEY,
@@ -3670,5 +3672,286 @@ describe('disableGeoip → adapter-internal [WIRE] $geoip_disable, never on the 
     // Constructing with disableGeoip must not call register() — the country VALUE gate is
     // the only register() crossing; disableGeoip is a wire toggle set at construction.
     expect(registerSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('DOM autocapture (E6-S7)', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  type Recorded = { url: string; options: NeutralFetchOptions };
+  function mockFetch(adapter: BrowserAdapter): Recorded[] {
+    const calls: Recorded[] = [];
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+    return calls;
+  }
+
+  function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
+    return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  test('autocapture:true — a click mints a neutral autocapture event through the normal pipeline', async () => {
+    const adapter = new BrowserAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      autocapture: true,
+    });
+    const calls = mockFetch(adapter);
+    const button = document.createElement('button');
+    button.textContent = 'Sign up';
+    button.id = 'signup';
+    document.body.appendChild(button);
+
+    button.click();
+    await adapter.flush();
+
+    expect(calls).toHaveLength(1);
+    const [event] = batchOf(calls[0].options);
+    // The event rode the SAME pipeline: it is session-stamped (a sessionId is minted for
+    // every captured event) and carries the always-on `lib` context enrichment.
+    const props = event.properties as Record<string, unknown>;
+    expect(props.event_type).toBe('click');
+    expect(props.el_text).toBe('Sign up');
+    expect(typeof props.elements_chain).toBe('string');
+    expect(props).toHaveProperty('lib'); // enrichment ran (normal pipeline)
+    expect(typeof event.uuid).toBe('string'); // dedupe id stamped
+  });
+
+  test('autocapture:true — change and submit also mint events', async () => {
+    const adapter = new BrowserAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      autocapture: true,
+    });
+    const calls = mockFetch(adapter);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    document.body.appendChild(input);
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+
+    const form = document.createElement('form');
+    document.body.appendChild(form);
+    form.dispatchEvent(new Event('submit', { bubbles: true }));
+
+    await adapter.flush();
+
+    const data = batchOf(calls[0].options);
+    expect(data).toHaveLength(2);
+    expect((data[0].properties as Record<string, unknown>).event_type).toBe('change');
+    expect((data[1].properties as Record<string, unknown>).event_type).toBe('submit');
+  });
+
+  test('the neutral autocapture event name maps to the [WIRE] $autocapture name only at the wire', async () => {
+    const adapter = new BrowserAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      autocapture: true,
+    });
+    const calls = mockFetch(adapter);
+    const button = document.createElement('button');
+    button.textContent = 'x';
+    document.body.appendChild(button);
+
+    button.click();
+    await adapter.flush();
+
+    const [event] = batchOf(calls[0].options);
+    // The wire carries the de-branded [WIRE] token; the neutral name never has a `$`.
+    expect(event.event).toBe(AUTOCAPTURE_WIRE_EVENT);
+    expect(AUTOCAPTURE_EVENT).not.toContain('$');
+    // No autocaptured event is a pageview — the wireEventName order must not misroute it.
+    expect(event.event).not.toBe('$pageview');
+  });
+
+  test('default (autocapture unset) — NO DOM listeners bound, a click mints zero events (bar B)', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const calls = mockFetch(adapter);
+    const button = document.createElement('button');
+    button.textContent = 'x';
+    document.body.appendChild(button);
+
+    button.click();
+    await adapter.flush();
+
+    // Nothing captured ⇒ nothing to flush ⇒ no POST at all.
+    expect(calls).toHaveLength(0);
+  });
+
+  test('autocapture:false — explicit opt-out binds nothing', async () => {
+    const adapter = new BrowserAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      autocapture: false,
+    });
+    const calls = mockFetch(adapter);
+    const button = document.createElement('button');
+    document.body.appendChild(button);
+
+    button.click();
+    await adapter.flush();
+
+    expect(calls).toHaveLength(0);
+  });
+
+  test('default off does not even add a document click listener (spy on addEventListener)', () => {
+    const addSpy = vi.spyOn(document, 'addEventListener');
+    new BrowserAdapter({ key: freshKey() });
+
+    const boundEvents = addSpy.mock.calls.map((c) => c[0]);
+    // The only document listener the adapter binds by default is the unload
+    // visibilitychange — never a click/change/submit autocapture listener.
+    expect(boundEvents).not.toContain('click');
+    expect(boundEvents).not.toContain('change');
+    expect(boundEvents).not.toContain('submit');
+  });
+
+  test('autocapture:true DOES bind the capture-phase click/change/submit listeners', () => {
+    const addSpy = vi.spyOn(document, 'addEventListener');
+    new BrowserAdapter({ key: freshKey(), autocapture: true });
+
+    const domEventCalls = addSpy.mock.calls.filter(([type]) =>
+      ['click', 'change', 'submit'].includes(type as string)
+    );
+    expect(domEventCalls.map(([type]) => type).sort()).toEqual(['change', 'click', 'submit']);
+    // Bound in the capture phase (third arg true), matching the reference semantics.
+    for (const call of domEventCalls) {
+      expect(call[2]).toBe(true);
+    }
+  });
+
+  test('NO network call is made for autocapture gating — init + autocapture make no gating request (load-bearing)', async () => {
+    // The load-bearing divergence: the remote-config phone-home is REMOVED. Autocapture
+    // on/off is purely local config. Spy on the GLOBAL fetch across construction AND a
+    // real click: the ONLY fetch that ever fires is the ingest POST we trigger — there is
+    // no separate gating request at init, and the click did not trigger one either.
+    const globalFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response('', { status: 200 })
+    );
+    try {
+      const adapter = new BrowserAdapter({
+        key: freshKey(),
+        ingestHost: INGEST,
+        compression: false,
+        autocapture: true,
+      });
+      // Construction alone made zero network calls (no remote-config fetch to gate on).
+      expect(globalFetch).not.toHaveBeenCalled();
+
+      const button = document.createElement('button');
+      button.textContent = 'x';
+      document.body.appendChild(button);
+      button.click();
+      // The click enqueued an event but nothing is flushed yet — still zero fetches, and
+      // crucially none of them a gating request.
+      expect(globalFetch).not.toHaveBeenCalled();
+
+      await adapter.flush();
+      // After flush the ONLY fetch is the ingest POST — to the ingest URL, never a gate.
+      expect(globalFetch).toHaveBeenCalledTimes(1);
+      const [url] = globalFetch.mock.calls[0];
+      expect(String(url)).toContain(INGEST);
+    } finally {
+      globalFetch.mockRestore();
+    }
+  });
+
+  test('a block class (ak-no-capture) on the clicked element suppresses the event end-to-end', async () => {
+    const adapter = new BrowserAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      autocapture: true,
+    });
+    const calls = mockFetch(adapter);
+    const button = document.createElement('button');
+    button.className = 'ak-no-capture';
+    button.textContent = 'secret';
+    document.body.appendChild(button);
+
+    button.click();
+    await adapter.flush();
+
+    expect(calls).toHaveLength(0);
+  });
+
+  test('a password field value never reaches the wire (sensitive-value scrub end-to-end)', async () => {
+    const adapter = new BrowserAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      autocapture: true,
+    });
+    const calls = mockFetch(adapter);
+    const input = document.createElement('input');
+    input.type = 'password';
+    input.value = 'hunter2';
+    input.name = 'pw';
+    document.body.appendChild(input);
+
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await adapter.flush();
+
+    // The change still captures (an input captures on change), but the password element is
+    // dropped by shouldCaptureElement so no value leaks anywhere in the payload.
+    const body = calls.map((c) => c.options.body as string).join('');
+    expect(body).not.toContain('hunter2');
+  });
+
+  test('shutdown() tears down the autocapture listeners — a post-shutdown click mints nothing', async () => {
+    const adapter = new BrowserAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      autocapture: true,
+    });
+    const calls = mockFetch(adapter);
+    const button = document.createElement('button');
+    button.textContent = 'x';
+    document.body.appendChild(button);
+
+    await adapter.shutdown();
+    button.click();
+    await adapter.flush();
+
+    // After shutdown the listeners are gone: the click captured nothing to flush.
+    expect(calls).toHaveLength(0);
+  });
+
+  test('shutdown() removes the capture-phase listeners (spy on removeEventListener)', async () => {
+    const removeSpy = vi.spyOn(document, 'removeEventListener');
+    const adapter = new BrowserAdapter({ key: freshKey(), autocapture: true });
+
+    await adapter.shutdown();
+
+    const removed = removeSpy.mock.calls
+      .map(([type]) => type)
+      .filter((type) => ['click', 'change', 'submit'].includes(type as string));
+    expect(removed.sort()).toEqual(['change', 'click', 'submit']);
+  });
+
+  test('SSR guard — an autocapture:true adapter constructs with no document without throwing', () => {
+    const globals = globalThis as { document?: Document };
+    const original = globals.document;
+    globals.document = undefined;
+    try {
+      expect(() => new BrowserAdapter({ key: freshKey(), autocapture: true })).not.toThrow();
+    } finally {
+      globals.document = original;
+    }
   });
 });

@@ -55,3 +55,20 @@ DOM autocapture (clicks/changes/form-submits → element metadata) is the larges
 - **Element metadata is library-computed ⇒ trusted** and rides `runCapturePipeline` as normal — do NOT allowlist-gate the autocapture element props (they are not consumer-supplied event props; same trusted posture as S3/S4 enrichment). — architect (2026-07-08).
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate): add ONE shadow-root test — `e.composedPath()[0]` shadow-piercing + the `isShadowRoot`/host-hop path in `buildElementTree` are the only branches with no direct coverage (ported correctly from the reference, but uncovered).
+- > Reviewer suggestion (2026-07-08, future): `matchesIgnoreSelector`/block-class ancestor walk is O(ancestors × selectors) per event (matches reference cost) — worth revisiting only if a heatmap/high-frequency-event story lands.
+- > Reviewer note (2026-07-08): `AUTOCAPTURE_EVENT='autocapture'` has the same latent `track('autocapture',…)`→`$autocapture` collision `MERGE_EVENT='identify'` already has — follows established precedent, not introduced here; a future reserved-name-collision story should cover both uniformly.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08. THE epic's large/high-risk story — landed in one pass, no split.
+
+- **Files added (browser):** `autocapture.ts` (de-branded minimal port: capture-phase click/change/submit listeners SSR-guarded + teardown-returning; `shouldCaptureDomEvent` gating tree; element metadata → neutral `event_type`/`elements_chain`/`el_text`/`tag_name`/`classes`/`nth_child`/`nth_of_type`/`attr__<name>`; `ak-`-namespaced skip vocabulary via override-ready `AutocaptureOptions`; universal CC/SSN + password/hidden sensitive scrub. **Remote-config phone-home NOT ported.**) + test
+- **Files changed (seam):** `create-analytics.ts` (+top-level `autocapture?: boolean` default OFF, sibling of `enrichment`) + shape-pin
+- **Files changed (browser):** `create-analytics.ts` (whitelist), `browser-adapter.ts` (`bindAutocapture()` binds only when `=== true`; `detachAutocaptureListeners` torn down in `shutdown()`; autocaptured events ride the normal `capture()` pipeline; metadata library-computed ⇒ trusted, NOT gated), `persistence-keys.ts` (+`AUTOCAPTURE_EVENT='autocapture'` browser-internal + `AUTOCAPTURE_WIRE_EVENT='$autocapture'` sole `[WIRE]`), `wire-mapper.ts` (`autocapture`→`$autocapture`)
+- **New public API:** `AnalyticsConfig.autocapture?: boolean` (additive, default OFF). Pin stays 15.
+- **Load-bearing divergence:** the remote-config phone-home (`isEnabled` wait-for-server + `onRemoteConfig`/`autocapture_opt_out`) is ABSENT — autocapture on/off is PURELY local config. Proven: global `fetch` spy = 0 gating calls at construction + on click (only the flush POST to ingest).
+- **Tests added:** browser +42 (autocapture module 28 + adapter 12 + wire-mapper 2): click/change/submit-via-pipeline, default-off-no-listeners (addEventListener spy), NO-network-gating, block-class/ignore-selector, **password/hidden/CC never on wire body**, capture-phase binding, shutdown teardown, SSR guard → 572; seam 139
+- **Commit:** `E6-S7-autocapture-opt-in — DOM autocapture (opt-in, default OFF)` on `core-cycle`
+- **Reviewer notes:** 0 critical, 3 suggestions (shadow-root test; ancestor-walk perf; reserved-name-collision consistency)
+- **Cross-story seams exposed (S8):** the adapter reads `options.autocapture === true` in ONE place (`bindAutocapture()` gate); the module accepts an `AutocaptureOptions` override (`blockClasses`/`ignoreSelectors`, list-shaped). A per-context profile toggles autocapture on/off + (when object-config lands) overrides skip-class names WITHOUT touching the module — S8 flips the binding through the same `detachAutocaptureListeners` seam (re-bind/tear-down) since identity/session/transport stay shared on the core adapter.
