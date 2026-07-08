@@ -74,3 +74,10 @@ E2 left opt-out in-memory only; a reload re-enabled capture and an unkeyed/opted
 
 <!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/
 (files changed/added, new public API, tests added, commit, reviewer notes). Do not hand-edit. -->
+
+## Follow-up
+
+> E4 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Consent-cookie invariant documented** — a one-line note on the no-localStorage fallback: a non-granted client stores its opt-out in ONE strictly-necessary *preference* cookie deliberately (the decision, not tracking).
+- **"side-effect-free" comment tightened** — scoped to the consent VALUE read; the capability probe (`isSupported()`) that picks the backend does write/remove a probe key and is the caller's concern. (Addresses S3 reviewer suggestions.)

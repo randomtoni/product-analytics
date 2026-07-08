@@ -23,9 +23,12 @@ function isConsentState(value: unknown): value is ConsentState {
 }
 
 // A durable single-value store for the consent decision, held under a dedicated
-// name on a backend separate from the property store it gates. The decision is
-// read once at construction (side-effect-free) and cached; a DNT/GPC signal
-// collapses the resolved value to denied so the caller sees ONE tri-state.
+// name on a backend separate from the property store it gates. The decision VALUE
+// is read once at construction and cached; that value read is side-effect-free
+// (the capability probe that PICKS the backend — localStorageBackend.isSupported()
+// — does write/remove a probe key, but that is the caller's concern, not this
+// read). A DNT/GPC signal collapses the resolved value to denied so the caller
+// sees ONE tri-state.
 export class ConsentStore {
   private readonly backend: StorageBackend;
   private readonly name: string;

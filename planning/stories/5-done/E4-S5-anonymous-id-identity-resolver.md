@@ -71,3 +71,10 @@ Every browser event needs a stable actor before `identify()` is ever called. Thi
 
 <!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/
 (files changed/added, new public API, tests added, commit, reviewer notes). Do not hand-edit. -->
+
+## Follow-up
+
+> E4 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Stale seed-equal doc removed** — `identity-store.ts` class-doc reworded to "two INDEPENDENT ids; the seed-equal trick is deliberately dropped" so a future reader can't restore the equality.
+- **`getDeviceId()` cast dropped** — return type widened `string` → `string | undefined`, unchecked `as string` removed (zero callers, so a clean honest widening). (Addresses S5 reviewer suggestions.)

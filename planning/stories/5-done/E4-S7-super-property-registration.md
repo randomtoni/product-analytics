@@ -68,3 +68,10 @@ Super-properties ride on every event, which makes them the one consumer-supplied
 
 <!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/
 (files changed/added, new public API, tests added, commit, reviewer notes). Do not hand-edit. -->
+
+## Follow-up
+
+> E4 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **`unregister` sentinel coupling documented** — a one-line comment on the `{ [key]: undefined }` gate noting it is sound only because `allowed()` inspects `Object.keys` and never values. (Addresses S7 reviewer suggestion.)
+- Skipped-with-reason: the per-event merge-snapshot perf note is a deferred later-slice optimization.

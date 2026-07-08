@@ -68,3 +68,10 @@ The first target-package epic can't land any identity/persistence feature until 
 - **Commit:** `E4-S1-browser-substrate-spike — Shared browser substrate + seam consolidation + injectable UUID + jsdom env` on `core-cycle`
 - **Reviewer notes:** 0 critical, 3 suggestions → see Technical notes (1 improvement-pass candidate: `@internal` on runCapturePipeline)
 - **Cross-story seams exposed (S2–S9):** derivation invariant — write `this.adapter` NEVER directly, only via `resyncActiveAdapter()`; post-construction swaps via `installAdapter(next)`. Routing: capture/mutation→`this.adapter` (consent-swappable), `flush`/`shutdown`/(S5)`getDistinctId`/(S9)`reset`→`liveAdapter`. `BrowserAdapter.runCapturePipeline(event)` → `stampSessionId` (S8 hook) → `mergeSuperProperties` (S7 hook), both pass-through pinned. `generateUuidV7()` in `browser/src/uuid-v7.ts` for S5/S8 (v7, NOT crypto.randomUUID). Browser `resolveAdapter(config)` is the config-only selection seam; S2+ add a config-consuming `BrowserAdapter` constructor (persistence mode/cookieDomain). `capture()` currently drops post-pipeline — E5 adds transport. DOM infra (jsdom+DOM lib+jsdom devDep+`dom.ts` probes) landed for all later browser stories.
+
+## Follow-up
+
+> E4 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression (seam 128 / browser 178 green).
+
+- **`@internal` on `runCapturePipeline`** — added a JSDoc `@internal` tag so the S7/S8 regression-pin hook reads as internal, not stable adapter API. (Addresses S1 reviewer suggestion.)
+- Skipped-with-reason: the `fetch`-returns-DOM-`Response` and uuid `resetCounter`-headroom notes are E5 / S8-shipped forward notes, not E4-improvement edits.

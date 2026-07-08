@@ -238,6 +238,10 @@ export function resolveConsentBackend(
   if (mode === 'memory') {
     return memoryBackend;
   }
+  // No-localStorage fallback: a non-granted client stores its opt-out decision in
+  // ONE cookie here — deliberate. That cookie records the consent PREFERENCE, not
+  // tracking, so it is a legitimate strictly-necessary preference cookie, distinct
+  // from the tracking cookies the (consent-gated) property store suppresses.
   return localStorageBackend.isSupported() ? localStorageBackend : cookieBackend;
 }
 

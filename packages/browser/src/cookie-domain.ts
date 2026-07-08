@@ -10,17 +10,8 @@ const PROBE_COOKIE_PREFIX = 'domain_probe_';
 // pathological input, not a real domain.
 const MAX_DOMAIN_LABELS = 8;
 
-// A conservative host-only fallback: the last registrable-looking label pair
-// (`<name>.<tld>`), used only when the probe finds nothing.
-const REGISTRABLE_DOMAIN_REGEX = /[a-z0-9][a-z0-9-]+\.[a-z]{2,}$/i;
-
 interface CookieJar {
   cookie: string;
-}
-
-function registrableFallback(hostname: string): string {
-  const match = hostname.match(REGISTRABLE_DOMAIN_REGEX);
-  return match ? match[0] : '';
 }
 
 // Browsers offer no API to test whether a domain is a public suffix (`.co.uk`,
@@ -65,18 +56,6 @@ export function seekFirstNonPublicSubDomain(
   return found;
 }
 
-// Turn a cross-subdomain host into the `; domain=.<d>` cookie attribute. The
-// public-suffix probe is preferred; a registrable-domain regex is the last-ditch
-// fallback when the probe finds nothing. Returns '' when cross-subdomain sharing
-// is off (a host-only cookie). De-branded port of `chooseCookieDomain`.
-export function chooseCookieDomain(hostname: string, crossSubdomain: boolean): string {
-  if (!crossSubdomain) {
-    return '';
-  }
-  const matched = seekFirstNonPublicSubDomain(hostname) || registrableFallback(hostname);
-  return matched ? `.${matched}` : '';
-}
-
 export interface ResolveCookieDomainOptions {
   configDomain?: string;
   crossSubdomain?: boolean;
@@ -86,7 +65,9 @@ export interface ResolveCookieDomainOptions {
 // the probe NEVER runs (no throwaway cookie). Only when it is unset AND
 // cross-subdomain sharing is requested does the probe derive the domain. The
 // return is the bare domain (no leading dot) or undefined for a host-only cookie;
-// `createCookieBackend` applies the `.` and `domain=` attribute.
+// `createCookieBackend` applies the `.` and `domain=` attribute. The registrable
+// regex fallback is deliberately omitted: `configDomain` is authoritative and the
+// probe is the only derivation — a fragile regex guess is not a safe last resort.
 export function resolveCookieDomain(options: ResolveCookieDomainOptions): string | undefined {
   if (options.configDomain !== undefined) {
     return options.configDomain;

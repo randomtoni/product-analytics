@@ -118,6 +118,7 @@ export class BrowserAdapter implements AnalyticsAdapter {
     this.runCapturePipeline(event);
   }
 
+  /** @internal Public only so pass-through tests can pin the enrichment pipeline; not stable adapter API. */
   runCapturePipeline(event: NeutralEvent): NeutralEvent {
     return this.mergeSuperProperties(this.stampSessionId(event));
   }
@@ -208,11 +209,12 @@ export class BrowserAdapter implements AnalyticsAdapter {
     traits?: NeutralTraits,
     traitsOnce?: NeutralTraits
   ): NeutralEvent {
+    const bags = this.traitBags(traits, traitsOnce);
     return {
       ...this.buildTraitsEvent(distinctId, traits, traitsOnce),
       properties: {
         [ANONYMOUS_DISTINCT_ID_KEY]: retainedAnonId,
-        ...this.traitBags(traits, traitsOnce),
+        ...bags,
       },
     };
   }

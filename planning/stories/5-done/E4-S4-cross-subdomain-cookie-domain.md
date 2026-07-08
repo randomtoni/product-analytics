@@ -61,3 +61,10 @@ Pre-login funnels stitch across subdomains only if the identity cookie is shared
 
 <!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/
 (files changed/added, new public API, tests added, commit, reviewer notes). Do not hand-edit. -->
+
+## Follow-up
+
+> E4 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Dead code removed** — dropped the unused `chooseCookieDomain`/`registrableFallback`/`REGISTRABLE_DOMAIN_REGEX` (probe-or-host-only is the deliberate path; `cookieDomain` authoritative) + a note on `resolveCookieDomain`; removed the orphaned test.
+- **Precedence pinned** — added a test: `{ cookieDomain, crossSubdomainCookie: false }` still writes `domain=` (explicit domain = explicit cross-subdomain opt-in; the flag governs only the probe). (Addresses both S4 reviewer suggestions.)

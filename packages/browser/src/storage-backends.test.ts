@@ -221,6 +221,33 @@ describe('buildPropsBackend', () => {
     expect(document.cookie).toBe(before);
   });
 
+  test('an explicit cookieDomain still carries the domain= attribute when crossSubdomainCookie is false — the flag governs only the probe', () => {
+    const before = document.cookie;
+    const writes: string[] = [];
+    const spy = vi.spyOn(document, 'cookie', 'set').mockImplementation((value: string) => {
+      writes.push(value);
+    });
+    try {
+      const backend = buildPropsBackend('cookie', createMemoryBackend(), {
+        cookieDomain: 'example.com',
+        crossSubdomainCookie: false,
+      });
+      backend.set('entry_precedence', { device_id: 'd' });
+
+      // An explicit domain is an explicit cross-subdomain opt-in: it wins over the
+      // false flag and is threaded into the write. The flag only gates the probe.
+      expect(writes.at(-1)).toContain('; domain=.example.com');
+      expect(writes.some((w) => w.includes('domain_probe_'))).toBe(false);
+    } finally {
+      spy.mockRestore();
+      const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
+      if (descriptor) {
+        Object.defineProperty(document, 'cookie', descriptor);
+      }
+    }
+    expect(document.cookie).toBe(before);
+  });
+
   test('localStorage+cookie mode threads the configured domain into the identity mirror cookie', () => {
     const writes: string[] = [];
     const spy = vi.spyOn(document, 'cookie', 'set').mockImplementation((value: string) => {

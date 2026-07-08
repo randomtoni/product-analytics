@@ -21,11 +21,12 @@ export interface IdentityStoreOptions {
 }
 
 // Owns the browser adapter's identity: mints the anonymous distinct id and a
-// separate device id at first load, models the explicit `anonymous | identified`
-// state, and serves the distinct id from an in-memory cache (no per-read storage
-// hit). The [WIRE] encoding — the two id keys, the state key, and the fact that
-// at first load the distinct id is seeded equal to the device id — lives here,
-// never on the neutral surface.
+// separate device id at first load — as two INDEPENDENT ids (the reference's
+// seed-equal trick, distinct id == device id, is deliberately dropped; do not
+// restore it) — models the explicit `anonymous | identified` state, and serves
+// the distinct id from an in-memory cache (no per-read storage hit). The [WIRE]
+// encoding — the two id keys and the state key — lives here, never on the neutral
+// surface.
 export class IdentityStore {
   private readonly store: PersistenceStore;
   private readonly deviceIdGenerator: IdGenerator;
@@ -68,8 +69,8 @@ export class IdentityStore {
     return this.distinctId;
   }
 
-  getDeviceId(): string {
-    return this.store.getProperty<string>(DEVICE_ID_KEY) as string;
+  getDeviceId(): string | undefined {
+    return this.store.getProperty<string>(DEVICE_ID_KEY);
   }
 
   // Adapter-internal only — E4 exposes no public identity-state getter. Kept for

@@ -1,9 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import {
-  chooseCookieDomain,
-  resolveCookieDomain,
-  seekFirstNonPublicSubDomain,
-} from './cookie-domain';
+import { resolveCookieDomain, seekFirstNonPublicSubDomain } from './cookie-domain';
 
 // A stand-in for `document.cookie` that refuses a cookie set on a known public
 // suffix, exactly as a browser would — so the probe walks up until the widest
@@ -70,13 +66,6 @@ describe('seekFirstNonPublicSubDomain', () => {
     // delete (max-age=0). Both writes are recorded by the jar.
     expect(jar.stored).toContain('max-age=3');
     expect(jar.stored).toContain('max-age=0');
-  });
-});
-
-describe('chooseCookieDomain', () => {
-  test('crossSubdomain off ⇒ host-only cookie (empty domain attribute), probe never runs', () => {
-    // No jar dependency: with crossSubdomain false the probe is skipped entirely.
-    expect(chooseCookieDomain('www.example.com', false)).toBe('');
   });
 });
 

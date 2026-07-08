@@ -114,6 +114,9 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
     // Gate consistently with register: a key not on the allowlist behaves like an
     // off-list track key (throw / drop-and-error-log). Routing the removal through
     // the consent-swappable adapter keeps it inert under opt-out.
+    // The `undefined` sentinel is sound ONLY because allowed() inspects Object.keys
+    // and never the values — if allowed() ever starts inspecting values, pass a real
+    // presence sentinel here instead.
     if (!this.allowed({ [key]: undefined })) return;
     this.adapter.unregister(key);
   }
