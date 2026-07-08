@@ -45,8 +45,20 @@ Events group into sessions, and E6 enrichment + transport session-props consume 
 - **De-brand:** normalize the `$sesid` tuple + key inside the adapter; neutral role-named storage key. Consumes S1's crypto UUIDv7 generator (`crypto.getRandomValues` + `Date.now()` prefix — NOT `crypto.randomUUID`, which is v4; the v7 timestamp is what lets a session-start time be read back out of the id).
 - **Expose a session-reset entry point for S9 (refiner 2026-07-08):** S9's `reset()` clears the session. Port the de-branded manager with a public reset/regenerate method (PostHog's `SessionIdManager.resetSessionId()`, `sessionid.ts`) so S9 can call it without reaching into manager internals. Adapter-internal — no SPI / neutral-surface addition.
 - reference: `posthog-js/packages/browser/src/sessionid.ts`; de-brand.
+- > Reviewer suggestion (2026-07-08, forward note): `stampSessionId` unconditionally overwrites a caller-preset `event.sessionId` (adapter authoritative — fine now, facade never sets it). If a future slice introduces an authoritative INBOUND session id (replay/bootstrap/server-forwarded event), revisit this precedence rather than inheriting the silent clobber.
+- > Reviewer suggestion (2026-07-08, deferred-scope): every `checkAndGetSessionId` writes the tuple back — even the live-extension path — vs PostHog's `readOnly` + activity-persist granularity gate. Coalesced by the 250ms save-debounce so not a correctness issue; the activity-persist granularity is the deferred cross-tab/hardening slice.
 
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (browser):** `session-id-manager.ts` (de-branded `SessionIdManager`: UUIDv7 id, idle 30m/max 24h expiry, `checkAndGetSessionId(timestamp)`, `resetSessionId()`, injectable `sessionIdGenerator`) + test
+- **Files changed:** `browser-adapter.ts` (`stampSessionId` implemented over the shared store + thread timeouts), `browser/create-analytics.ts` (pass timeouts), `analytics-kit/create-analytics.ts` (+`AnalyticsConfig.sessionIdleTimeoutMs?`/`sessionMaxLengthMs?`) + shape pin
+- **New public API:** `AnalyticsConfig.sessionIdleTimeoutMs?` / `sessionMaxLengthMs?` (additive). NO new SPI verb (`adapter.ts` unchanged); `NeutralEvent.sessionId?` stays optional (adapter-populated).
+- **Tests added:** browser +22 (session-id-manager 13: assignment/idle-boundary/max-boundary/config-override/resetSessionId/tuple-normalization; adapter 9: pipeline stamp, memory-mode mint, timestamp-driven expiry, no-`$`-leak) → 122; seam 126 (extended shape pin)
+- **Commit:** `E4-S8-session-id-expiry — Session id assignment + idle/max expiry, stamped in the capture pipeline` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (both deferred-scope forward notes)
+- **Cross-story seams exposed:** **S9 reset()** calls `this.session.resetSessionId()` (clears the tuple → next event mints fresh; intent-named, no internals reach). **E6** reads the session id off `NeutralEvent.sessionId` (pipeline-stamped) OR `session.checkAndGetSessionId(timestamp)` directly (timestamp-driven, no SPI accessor); the v7 id carries a readable ms start-time prefix for session-age. `session_id` stays in `RESERVED_EVENT_KEYS` (S7 merge can't leak it).
 
 <!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/
 (files changed/added, new public API, tests added, commit, reviewer notes). Do not hand-edit. -->

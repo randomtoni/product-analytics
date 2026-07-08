@@ -19,6 +19,7 @@ import { consentStoreName, storeName, RESERVED_EVENT_KEYS } from './persistence-
 import { ConsentStore } from './consent';
 import { PersistenceStore } from './persistence-store';
 import { IdentityStore, type IdGenerator } from './identity-store';
+import { SessionIdManager } from './session-id-manager';
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
@@ -33,6 +34,8 @@ export interface BrowserAdapterOptions {
   // Swap the id scheme (device id) without touching identity semantics; defaults
   // to the crypto UUIDv7 generator.
   deviceIdGenerator?: IdGenerator;
+  sessionIdleTimeoutMs?: number;
+  sessionMaxLengthMs?: number;
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
@@ -40,6 +43,7 @@ export class BrowserAdapter implements AnalyticsAdapter {
   private readonly consent: ConsentStore;
   private readonly store: PersistenceStore;
   private readonly identity: IdentityStore;
+  private readonly session: SessionIdManager;
 
   constructor(options: BrowserAdapterOptions) {
     const mode = options.persistence ?? DEFAULT_PERSISTENCE_MODE;
@@ -71,6 +75,16 @@ export class BrowserAdapter implements AnalyticsAdapter {
       store: this.store,
       deviceIdGenerator: options.deviceIdGenerator,
     });
+
+    // The session id is minted lazily on the first captured event and expires on
+    // idle / max length. It rides the same property store, so it is minted even
+    // in memory mode (the mint is independent of the storage backing) — E6 needs
+    // a session id regardless of persistence.
+    this.session = new SessionIdManager({
+      store: this.store,
+      idleTimeoutMs: options.sessionIdleTimeoutMs,
+      maxLengthMs: options.sessionMaxLengthMs,
+    });
   }
 
   capture(event: NeutralEvent): void {
@@ -84,8 +98,11 @@ export class BrowserAdapter implements AnalyticsAdapter {
   }
 
   private stampSessionId(event: NeutralEvent): NeutralEvent {
-    // S8 (session id) replaces this pass-through with a real NeutralEvent.sessionId stamp.
-    return event;
+    // Advance the idle clock from the EVENT timestamp and mint on expiry — a
+    // stateful call, not a KV read. The facade leaves sessionId undefined; the
+    // browser adapter is what stamps it.
+    const timestamp = event.timestamp?.getTime() ?? Date.now();
+    return { ...event, sessionId: this.session.checkAndGetSessionId(timestamp) };
   }
 
   private mergeSuperProperties(event: NeutralEvent): NeutralEvent {

@@ -17,7 +17,12 @@ export function cryptoRandomId(): string {
 export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
   return config.key === undefined
     ? new NoopAdapter()
-    : new BrowserAdapter({ key: config.key, persistence: config.persistence });
+    : new BrowserAdapter({
+        key: config.key,
+        persistence: config.persistence,
+        sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
+        sessionMaxLengthMs: config.sessionMaxLengthMs,
+      });
 }
 
 export function createAnalytics<const T extends TaxonomyDecl>(

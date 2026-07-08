@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { AnalyticsAdapter, NeutralEvent } from 'analytics-kit';
 import { BrowserAdapter } from './browser-adapter';
 import { DEVICE_ID_KEY, DISTINCT_ID_KEY, IDENTITY_STATE_KEY } from './persistence-keys';
@@ -21,6 +21,10 @@ function freshKey(): string {
   return `test-${keySeq}-${Math.random().toString(36).slice(2)}`;
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 test('satisfies the shipped AnalyticsAdapter SPI (structural conformance)', () => {
   const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey() });
   expect(adapter).toBeInstanceOf(BrowserAdapter);
@@ -31,26 +35,28 @@ test('capture runs without throwing and returns void', () => {
   expect(adapter.capture(makeEvent())).toBeUndefined();
 });
 
-test('the capture pipeline leaves sessionId untouched with no super-props registered — S8 hook not yet stamping', () => {
+test('the capture pipeline stamps a UUIDv7 sessionId with no super-props registered — S8 hook now stamping', () => {
   const adapter = new BrowserAdapter({ key: freshKey() });
   const event = makeEvent();
 
   const result = adapter.runCapturePipeline(event);
 
-  expect(result.sessionId).toBeUndefined();
+  expect(result.sessionId).toMatch(UUID_V7);
   // No consumer super-props registered ⇒ properties bag is unchanged (identity keys
   // in the store are reserved and never merged in).
   expect(result.properties).toBeUndefined();
 });
 
-test('the capture pipeline preserves an already-set sessionId while merging super-props', () => {
+test('the capture pipeline stamps a fresh sessionId even when the event carried one — the adapter is authoritative', () => {
   const adapter = new BrowserAdapter({ key: freshKey() });
   adapter.register({ plan: 'pro' });
-  const event = makeEvent({ sessionId: 'session-1', properties: { a: 1 } });
+  const event = makeEvent({ sessionId: 'stale-caller-value', properties: { a: 1 } });
 
   const result = adapter.runCapturePipeline(event);
 
-  expect(result.sessionId).toBe('session-1');
+  // The adapter owns the session id; a value the caller happened to set is overwritten.
+  expect(result.sessionId).toMatch(UUID_V7);
+  expect(result.sessionId).not.toBe('stale-caller-value');
   expect(result.properties).toEqual({ plan: 'pro', a: 1 });
 });
 
@@ -341,5 +347,105 @@ describe('super-property registration (S7)', () => {
     const result = adapter.runCapturePipeline(makeEvent({ properties: { a: 1 } }));
 
     expect(result.properties).toEqual({ plan: 'pro', theme: 'dark', a: 1 });
+  });
+});
+
+describe('session id stamping (S8)', () => {
+  const IDLE_MS = 30 * 60 * 1000;
+  const MAX_MS = 24 * 60 * 60 * 1000;
+
+  test('stamps a UUIDv7 sessionId on the event via the pipeline', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    const result = adapter.runCapturePipeline(makeEvent());
+
+    expect(result.sessionId).toMatch(UUID_V7);
+  });
+
+  test('the same session id is stamped across events within the idle window', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    const first = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base) }));
+    const second = adapter.runCapturePipeline(
+      makeEvent({ timestamp: new Date(base + 10 * 60 * 1000) })
+    );
+
+    expect(second.sessionId).toBe(first.sessionId);
+  });
+
+  test('idle expiry (default 30 min, event-timestamp driven) stamps a NEW id', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    const first = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base) }));
+    const afterIdle = adapter.runCapturePipeline(
+      makeEvent({ timestamp: new Date(base + IDLE_MS + 1) })
+    );
+
+    expect(afterIdle.sessionId).toMatch(UUID_V7);
+    expect(afterIdle.sessionId).not.toBe(first.sessionId);
+  });
+
+  test('max-length expiry (default 24 h) stamps a NEW id even under steady activity', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    const first = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base) }));
+    // Keep it active every 20 min so idle never triggers, up past 24h.
+    let last = first;
+    for (let t = base + 20 * 60 * 1000; t <= base + MAX_MS; t += 20 * 60 * 1000) {
+      last = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(t) }));
+    }
+    expect(last.sessionId).toBe(first.sessionId);
+
+    const pastMax = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base + MAX_MS + 1) }));
+    expect(pastMax.sessionId).not.toBe(first.sessionId);
+  });
+
+  test('config-overridable via BrowserAdapterOptions — a custom idle timeout is honored', () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), sessionIdleTimeoutMs: 5_000 });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    const first = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base) }));
+    const withinCustom = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base + 4_000) }));
+    const pastCustom = adapter.runCapturePipeline(
+      makeEvent({ timestamp: new Date(base + 4_000 + 5_001) })
+    );
+
+    expect(withinCustom.sessionId).toBe(first.sessionId);
+    expect(pastCustom.sessionId).not.toBe(first.sessionId);
+  });
+
+  test('a session id is minted even in persistence: memory mode', () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), persistence: 'memory' });
+
+    const result = adapter.runCapturePipeline(makeEvent());
+
+    expect(result.sessionId).toMatch(UUID_V7);
+  });
+
+  test('an event without a timestamp falls back to now (fake timers) — still stamps', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-08T12:00:00.000Z'));
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    const result = adapter.runCapturePipeline(makeEvent({ timestamp: undefined }));
+
+    expect(result.sessionId).toMatch(UUID_V7);
+  });
+
+  test('the [WIRE] session tuple is normalized inside the adapter — never on the event, no $-key', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    const result = adapter.runCapturePipeline(makeEvent());
+
+    // The event carries only the neutral string id, never the [lastActivity,id,start] tuple.
+    expect(typeof result.sessionId).toBe('string');
+    // No reserved / library-computed key (including the session tuple key) leaks into props.
+    expect(result.properties ?? {}).not.toHaveProperty('session_id');
+    for (const key of Object.keys(result.properties ?? {})) {
+      expect(key).not.toContain('$');
+    }
   });
 });
