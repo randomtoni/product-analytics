@@ -14,6 +14,7 @@ import {
   MERGE_EVENT,
   SET_TRAITS_KEY,
   SET_TRAITS_ONCE_KEY,
+  queueStoreName,
   storeName,
 } from './persistence-keys';
 
@@ -2241,5 +2242,275 @@ describe('transport selection + keepalive + unload drain (S6)', () => {
     // A structural pin: the options object the SPI accepts is exactly method/headers/body.
     const options: NeutralFetchOptions = { method: 'POST', headers: {}, body: '{}' };
     expect(Object.keys(options).sort()).toEqual(['body', 'headers', 'method']);
+  });
+});
+
+describe('offline queue persistence — survives a reload (S9, NEW WORK)', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  // Each adapter binds page-lifecycle listeners on the shared jsdom window; track them
+  // so afterEach detaches — otherwise a stale adapter drains on a later test's unload.
+  const liveAdapters: BrowserAdapter[] = [];
+  function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
+    const adapter = new BrowserAdapter(options);
+    liveAdapters.push(adapter);
+    return adapter;
+  }
+
+  afterEach(() => {
+    for (const adapter of liveAdapters.splice(0)) {
+      (adapter as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    }
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  type Recorded = { url: string; options: NeutralFetchOptions };
+
+  // A mock fetch resolving each POST with the next scripted status (last repeats).
+  // status 0 models a network / offline failure — a retryable status that lands the
+  // batch in the retry queue (and thus the durable mirror).
+  function mockFetchStatuses(adapter: BrowserAdapter, statuses: number[]): Recorded[] {
+    const calls: Recorded[] = [];
+    let i = 0;
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      const status = statuses[Math.min(i, statuses.length - 1)];
+      i += 1;
+      return { status, text: async () => '', json: async () => ({}) };
+    });
+    return calls;
+  }
+
+  function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
+    return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
+  }
+
+  // Read the persisted envelope straight off durable storage for a given key.
+  function persistedEnvelope(key: string): { batches: unknown[] } | null {
+    const raw = localStorage.getItem(queueStoreName(key));
+    return raw === null ? null : (JSON.parse(raw) as { batches: unknown[] });
+  }
+
+  // THE headline reload test.
+  test('events captured offline are written to durable storage and rehydrate + flush on a fresh adapter (reload)', async () => {
+    vi.useFakeTimers();
+    const key = freshKey();
+
+    // --- load 1: capture while offline (fetch fails with status 0) ---
+    const writer = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    writer.setConsentState('granted');
+    mockFetchStatuses(writer, [0]); // every send is a network failure (offline)
+
+    writer.capture(makeEvent({ dedupeId: 'offline-1' }));
+    await writer.flush();
+    // The failed send parked the batch in the retry queue and mirrored it to disk.
+    const envelope = persistedEnvelope(key);
+    expect(envelope).not.toBeNull();
+    const wired = envelope!.batches as Record<string, unknown>[][];
+    expect(wired[0][0].uuid).toBe('offline-1');
+
+    // Stop load-1's adapter re-sending on the shared window before the reload.
+    (writer as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    (writer as unknown as { retryQueue: { drain: () => void } }).retryQueue.drain();
+
+    // --- load 2: a FRESH adapter against the SAME localStorage, now online (200) ---
+    const reloaded = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    const reloadedCalls = mockFetchStatuses(reloaded, [200]); // now delivers
+
+    // The rehydrated batch is scheduled back into the retry queue on construction;
+    // the poller re-sends it once its backoff elapses. Advance past two poll ticks.
+    await vi.advanceTimersByTimeAsync(6000);
+
+    // It flushed on next load, carrying the SAME uuid (idempotent replay).
+    expect(reloadedCalls.length).toBeGreaterThanOrEqual(1);
+    expect(batchOf(reloadedCalls[0].options)[0].uuid).toBe('offline-1');
+    // And the durable store is pruned once delivered.
+    expect(persistedEnvelope(key)).toBeNull();
+  });
+
+  test('a confirmed-delivered (2xx) batch is pruned — durable storage empty after a successful flush', async () => {
+    vi.useFakeTimers();
+    const key = freshKey();
+    const adapter = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    adapter.setConsentState('granted');
+    // Fail once (parks + mirrors), then succeed on the retry (prunes).
+    mockFetchStatuses(adapter, [503, 200]);
+
+    adapter.capture(makeEvent({ dedupeId: 'to-deliver' }));
+    await adapter.flush();
+    // After the 503 the batch is mirrored.
+    expect(persistedEnvelope(key)).not.toBeNull();
+
+    // The retry succeeds — the mirror re-persists an empty snapshot ⇒ storage cleared.
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(persistedEnvelope(key)).toBeNull();
+  });
+
+  test('a batch delivered first try is never persisted (no mirror of an empty queue)', async () => {
+    const key = freshKey();
+    const adapter = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    adapter.setConsentState('granted');
+    mockFetchStatuses(adapter, [200]);
+
+    adapter.capture(makeEvent({ dedupeId: 'clean' }));
+    await adapter.flush();
+
+    // A 200 first try never enters the retry queue, so nothing is ever mirrored.
+    expect(persistedEnvelope(key)).toBeNull();
+  });
+
+  test('the persisted queue is size-capped — a permanently-offline client cannot grow storage unbounded', async () => {
+    vi.useFakeTimers();
+    const key = freshKey();
+    const adapter = makeAdapter({
+      key,
+      persistence: 'localStorage+cookie',
+      ingestHost: INGEST,
+      compression: false,
+      flushAt: 1, // each capture flushes its own batch ⇒ one retry element per event
+    });
+    adapter.setConsentState('granted');
+    mockFetchStatuses(adapter, [0]); // every send fails ⇒ every batch parks in the retry queue
+
+    // Capture far more distinct failing batches than any sane cap.
+    for (let i = 0; i < 250; i += 1) {
+      adapter.capture(makeEvent({ dedupeId: `n-${i}` }));
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    const envelope = persistedEnvelope(key);
+    expect(envelope).not.toBeNull();
+    // Bounded, not unbounded — far fewer than the 250 captured.
+    expect(envelope!.batches.length).toBeLessThan(250);
+    expect(envelope!.batches.length).toBeGreaterThan(0);
+  });
+
+  test('an opted-out client persists NOTHING — durable storage stays empty after opt-out', async () => {
+    vi.useFakeTimers();
+    const key = freshKey();
+    const adapter = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    adapter.setConsentState('denied'); // opted out BEFORE capture
+    mockFetchStatuses(adapter, [0]); // a failing send would otherwise mirror
+
+    adapter.capture(makeEvent({ dedupeId: 'never-persisted' }));
+    await adapter.flush();
+    await vi.advanceTimersByTimeAsync(6000);
+
+    // Opted out ⇒ the mirror persists nothing.
+    expect(persistedEnvelope(key)).toBeNull();
+  });
+
+  test('opting out DROPS an already-persisted queue — it cannot rehydrate after a reload', async () => {
+    vi.useFakeTimers();
+    const key = freshKey();
+
+    // Build up a persisted queue while granted.
+    const writer = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    writer.setConsentState('granted');
+    mockFetchStatuses(writer, [0]);
+    writer.capture(makeEvent({ dedupeId: 'pre-optout' }));
+    await writer.flush();
+    expect(persistedEnvelope(key)).not.toBeNull();
+
+    // Opt out — the durable queue is dropped alongside the in-memory buffer.
+    writer.setConsentState('denied');
+    expect(persistedEnvelope(key)).toBeNull();
+
+    // A reload while opted out rehydrates nothing.
+    (writer as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    (writer as unknown as { retryQueue: { drain: () => void } }).retryQueue.drain();
+    const reloaded = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    const reloadedCalls = mockFetchStatuses(reloaded, [200]);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(reloadedCalls).toHaveLength(0);
+  });
+
+  test('the persisted queue lives under its OWN store name — it does not pollute the property store', async () => {
+    const key = freshKey();
+    // Grant consent in a prior instance so the reloaded adapter builds a localStorage-
+    // backed property store (consent is read at construction — the E4 convention).
+    makeAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('granted');
+
+    const adapter = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    adapter.register({ plan: 'pro' }); // a super-prop lands in the property store
+    mockFetchStatuses(adapter, [0]);
+
+    adapter.capture(makeEvent({ dedupeId: 'own-store' }));
+    await adapter.flush();
+
+    // The two stores are distinct top-level keys — the queue is NOT the property store.
+    expect(queueStoreName(key)).not.toBe(storeName(key));
+    expect(localStorage.getItem(queueStoreName(key))).not.toBeNull();
+
+    // The transport batch envelope lives ONLY under the queue key: it holds `batches`
+    // and carries none of the identity/super-prop vocabulary the property store owns.
+    const queueEntry = JSON.parse(localStorage.getItem(queueStoreName(key)) as string) as Record<string, unknown>;
+    expect(queueEntry).toHaveProperty('batches');
+    expect(queueEntry).not.toHaveProperty('plan');
+
+    // Force the (debounced) property write out, then confirm the super-prop landed in
+    // the property store — and the transport envelope did NOT leak into it.
+    (adapter as unknown as { store: { flush: () => void } }).store.flush();
+    const propStore = JSON.parse(localStorage.getItem(storeName(key)) as string) as Record<string, unknown>;
+    expect(propStore.plan).toBe('pro');
+    expect(propStore).not.toHaveProperty('batches');
+    expect(propStore).not.toHaveProperty('data');
+  });
+
+  test('the persisted envelope is an OBJECT { batches: [...] } — not a bare array (IndexedDB round-trip seam)', async () => {
+    const key = freshKey();
+    const adapter = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    adapter.setConsentState('granted');
+    mockFetchStatuses(adapter, [0]);
+
+    adapter.capture(makeEvent({ dedupeId: 'envelope' }));
+    await adapter.flush();
+
+    const raw = JSON.parse(localStorage.getItem(queueStoreName(key)) as string) as Record<string, unknown>;
+    // An object envelope (room for a version/metadata field), readable via parse()?.batches.
+    expect(Array.isArray(raw)).toBe(false);
+    expect(raw).toHaveProperty('batches');
+    expect(Array.isArray(raw.batches)).toBe(true);
+  });
+
+  test('rehydrate replays the SAME uuid so a double-send after reload is idempotent (S8 dedupe)', async () => {
+    vi.useFakeTimers();
+    const key = freshKey();
+
+    const writer = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    writer.setConsentState('granted');
+    mockFetchStatuses(writer, [0]);
+    writer.capture(makeEvent({ dedupeId: 'idem-uuid' }));
+    await writer.flush();
+    (writer as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    (writer as unknown as { retryQueue: { drain: () => void } }).retryQueue.drain();
+
+    // The persisted batch carries its original uuid — the reload re-sends that exact
+    // value, so the backend dedupes an actually-delivered-but-unpruned batch.
+    expect((persistedEnvelope(key)!.batches as Record<string, unknown>[][])[0][0].uuid).toBe('idem-uuid');
+
+    const reloaded = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    const reloadedCalls = mockFetchStatuses(reloaded, [200]);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(batchOf(reloadedCalls[0].options)[0].uuid).toBe('idem-uuid');
+  });
+
+  test('all offline-persistence state stays adapter-internal — no persisted-queue vocabulary on the neutral surface (bar A)', () => {
+    const adapter: AnalyticsAdapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const surface = adapter as unknown as Record<string, unknown>;
+
+    // No persisted-queue knob, no offline-queue state, no rehydrate/persist member on
+    // the neutral surface — it all lives inside the adapter.
+    expect(surface.offlineQueue).toBeDefined(); // exists, but as a private impl field
+    expect(surface.persist).toBeUndefined();
+    expect(surface.rehydrate).toBeUndefined();
+    expect(surface.persistedQueue).toBeUndefined();
+    expect(surface.maxBatches).toBeUndefined();
+    // The neutral adapter contract is unchanged: no persisted-queue method added.
+    const contract: Array<keyof AnalyticsAdapter> = ['capture', 'identify', 'flush', 'shutdown', 'fetch'];
+    for (const member of contract) {
+      expect(typeof adapter[member]).toBe('function');
+    }
   });
 });

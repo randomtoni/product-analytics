@@ -12,6 +12,7 @@ import type {
 import {
   buildPropsBackend,
   createMemoryBackend,
+  localStorageBackend,
   resolveConsentBackend,
   DEFAULT_PERSISTENCE_MODE,
   type PersistenceMode,
@@ -19,6 +20,7 @@ import {
 } from './storage-backends';
 import {
   consentStoreName,
+  queueStoreName,
   storeName,
   ANONYMOUS_DISTINCT_ID_KEY,
   ANONYMOUS_IDENTITY_STATE,
@@ -35,6 +37,7 @@ import { resolveIngestUrl } from './ingest-url';
 import { mapEventToWire, assembleBatchBody, type WireEvent } from './wire-mapper';
 import { RequestQueue } from './request-queue';
 import { RetryQueue, isRetryableStatus, maxRetriesForStatus } from './retry-queue';
+import { OfflineQueueStore } from './offline-queue';
 import { generateUuidV7 } from './uuid-v7';
 import { isLikelyBot } from './bot-detection';
 import { RateLimiter, DEFAULT_BATCH_SCOPE } from './rate-limiter';
@@ -119,6 +122,12 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // exponential retry; a 4xx is a permanent rejection and is never re-enqueued. The
   // retry state is entirely adapter-internal — it never reaches the neutral surface.
   private readonly retryQueue: RetryQueue<WireEvent>;
+  // The offline-persistence sidecar (NEW WORK): mirrors the retry queue's
+  // undelivered batches to durable storage so events captured offline survive a
+  // reload, and rehydrates them on construction. It is a thin persistence wrapper —
+  // the retry queue stays the in-memory retry engine; this only mirrors its snapshot
+  // and reads it back. Gated on granted consent; entirely adapter-internal.
+  private readonly offlineQueue: OfflineQueueStore<WireEvent>;
   // The client rate limiter. Two gates, both adapter-internal: a token bucket
   // throttles capture PROACTIVELY (over-limit events dropped before the queue), and
   // a per-scope server cool-off honours the backend's body-borne back-pressure
@@ -171,6 +180,22 @@ export class BrowserAdapter implements AnalyticsAdapter {
       consentStoreName(options.key)
     );
     const effectiveMode: PersistenceMode = this.consent.get() === 'granted' ? mode : 'memory';
+
+    // The offline transport buffer rides the localStorage backend DIRECTLY (its own
+    // graceful fallback), NOT the consent-swapped property store — persistence is
+    // instead gated explicitly on live consent here, so an opted-out client persists
+    // nothing without entangling the transport buffer in the identity store's
+    // memory-swap machinery. It lives under its own store name (transport state, not
+    // identity/super-props). Rehydrate now: read-then-clear any persisted undelivered
+    // batches and hand them to the retry queue to re-send on this load.
+    this.offlineQueue = new OfflineQueueStore<WireEvent>({
+      backend: localStorageBackend,
+      name: queueStoreName(options.key),
+      isPersistenceAllowed: () => this.getConsentState() === 'granted',
+    });
+    for (const batch of this.offlineQueue.rehydrate()) {
+      this.retryQueue.scheduleRetry([...batch], 0);
+    }
 
     // The cookie-domain resolution (and its public-suffix probe) lives inside
     // buildPropsBackend's non-memory branches, reached only when effectiveMode is
@@ -487,14 +512,18 @@ export class BrowserAdapter implements AnalyticsAdapter {
   private async sendBatchWithRetry(batch: WireEvent[], attempt: number): Promise<void> {
     const response = await this.postBatch(batch);
     if (response === undefined) {
+      // No send happened (no target / empty / cooling off) — the retry queue is
+      // unchanged, so the durable mirror is too. Nothing to re-persist.
       return;
     }
-    if (!isRetryableStatus(response.status)) {
-      return;
-    }
-    if (attempt < maxRetriesForStatus(response.status)) {
+    if (isRetryableStatus(response.status) && attempt < maxRetriesForStatus(response.status)) {
       this.retryQueue.scheduleRetry(batch, attempt);
     }
+    // Mirror the retry queue's current undelivered set to durable storage after
+    // every send outcome. A grow (a newly scheduled retry), a prune (this batch was
+    // delivered, permanently rejected, or exhausted its budget — so it is no longer
+    // in the snapshot), and the size cap all fall out of re-persisting the snapshot.
+    this.offlineQueue.persist(this.retryQueue.snapshot());
   }
 
   // The adapter-owned batch POST: build the [WIRE] `data:[]` envelope, encode it
@@ -594,9 +623,12 @@ export class BrowserAdapter implements AnalyticsAdapter {
   setConsentState(state: ConsentState): void {
     // Opt-out contract (E4-S3): a denial DROPS the unsent buffer without flushing —
     // events captured before the opt-out must not leave the app. optIn ('granted')
-    // does NOT drop. The drop is additive to the durable consent write below.
+    // does NOT drop. The drop is additive to the durable consent write below. It
+    // also drops the persisted offline queue, so events captured before the opt-out
+    // cannot rehydrate and re-send after a reload.
     if (state === 'denied') {
       this.queue.drop();
+      this.offlineQueue.drop();
     }
     this.consent.set(state);
   }

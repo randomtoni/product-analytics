@@ -50,3 +50,19 @@ The single BRIEF §4 requirement PostHog does NOT satisfy: an offline queue that
 - Reference for the retry structure being persisted: `posthog-js/packages/browser/src/retry-queue.ts` (the in-memory shape S9 durably mirrors).
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate): `rehydrate()` re-schedules every persisted batch at `attempt: 0`, discarding the pre-reload retry-attempt count — deliberate (fresh load = fresh delivery opportunity; `uuid` dedupe makes re-send harmless; a 4xx prunes on first re-send). But the size cap bounds STORAGE, not retry-attempts-across-reloads. Add a one-line comment at the rehydrate site documenting attempt-reset-on-reload is deliberate, so a future reader doesn't "fix" it by persisting the attempt count (which would then need to enter the envelope + a format-version).
+- > Reviewer suggestion (2026-07-08, IndexedDB follow-up): the size cap is a count of BATCHES (`DEFAULT_MAX_PERSISTED_BATCHES=100`), not a byte budget — a consumer capturing very large events could approach the ~5MB localStorage quota with <100 batches (`localStorageBackend.set` then fails silently, safe degradation but invisible). A byte-aware cap becomes natural with the IndexedDB backend.
+- > Reviewer suggestion (2026-07-08, perf): `persist()` runs a full `JSON.stringify`+`setItem` synchronously per send outcome (incl. pure-grow). Correct+bounded; if it shows on a profile, coalesce/debounce the mirror like the property store's `SAVE_DEBOUNCE_MS=250`.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (browser):** `offline-queue.ts` (`OfflineQueueStore<T>`: `persist(snapshot)` capped overwrite-mirror, `rehydrate()` read-then-clear drain, `drop()`; consent-gated, object-envelope, `Array.isArray` fail-closed) + test
+- **Files changed:** `browser-adapter.ts` (construct via `localStorageBackend` directly gated on live `getConsentState()==='granted'`; rehydrate at construction → `scheduleRetry(batch,0)`; mirror `retryQueue.snapshot()` at tail of `sendBatchWithRetry`; drop durable queue in `setConsentState('denied')`), `persistence-keys.ts` (+`queueStoreName(key)` distinct `analytics_kit_queue` prefix)
+- **New public API:** none — all persistence adapter-internal (bar A); SPI unchanged
+- **Persist format:** object envelope `{ batches: [...] }` (room for a version field → IndexedDB later), read via `parse(name)?.batches`
+- **Tests added:** browser +25 (offline-queue 15: round-trip/envelope/prune/size-cap/consent-gate/read-then-clear/corrupt-fail-closed; adapter 10: **THE reload rehydrate+flush**, 2xx-prunes, first-try-200-never-persisted, size-cap-bounded, opted-out-persists-nothing, optout-drops-persisted, own-store-name bidirectional, envelope, uuid-replay idempotent, bar-A) → 396; seam 128
+- **Commit:** `E5-S9-offline-queue-persistence — Offline queue that survives reloads (NEW WORK)` on `core-cycle`
+- **Reviewer notes:** 0 critical, 3 suggestions (attempt-reset doc; byte-budget cap; per-outcome write debounce); S1..S8 + E4 green
+- **Cross-story seams / scope boundary:** wraps S3 (mirrors `snapshot()`, does NOT reimplement retry). The `RequestQueue`-buffer pre-flush hard-crash window is a documented R1 non-goal (S6 unload beacon covers tab-close; "survives a reload" = the durable retry mirror). **E6:** track/page/pageleave inherit offline-persistence for free via `runCapturePipeline`→`enqueue`, but only batches that reached the retry queue are mirrored — a pageleave at unload relies on the S6 beacon, not S9. **E7 (node):** `dedupeId` is a neutral `NeutralEvent` field → node inherits the S8 idempotency guarantee; keep the batch-envelope + dedupe contract stable.

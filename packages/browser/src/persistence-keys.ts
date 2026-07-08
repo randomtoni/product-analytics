@@ -50,6 +50,7 @@ export const RESERVED_EVENT_KEYS: ReadonlySet<string> = new Set([
 
 const STORE_NAME_PREFIX = 'analytics_kit';
 const CONSENT_STORE_PREFIX = 'analytics_kit_consent';
+const QUEUE_STORE_PREFIX = 'analytics_kit_queue';
 
 function sanitize(key: string): string {
   return key.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -64,4 +65,12 @@ export function storeName(key: string): string {
 // property store is built.
 export function consentStoreName(key: string): string {
   return `${CONSENT_STORE_PREFIX}_${sanitize(key)}`;
+}
+
+// The persisted offline transport buffer lives under its OWN top-level name —
+// separate from both the property store and the consent decision. It is transport
+// state (undelivered ingest batches mirrored so they survive a reload), never
+// identity/super-props, so it must not share the property blob.
+export function queueStoreName(key: string): string {
+  return `${QUEUE_STORE_PREFIX}_${sanitize(key)}`;
 }
