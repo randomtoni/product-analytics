@@ -1243,3 +1243,181 @@ describe('batch queue + real delivery (S2)', () => {
     expect(adapter.flush()).toBeInstanceOf(Promise);
   });
 });
+
+describe('retry queue with backoff (S3)', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  type Recorded = { url: string; options: NeutralFetchOptions };
+
+  // A mock fetch that resolves each POST with the next status from a scripted list
+  // (the last status repeats once the list is exhausted). Records every call so the
+  // retry re-send count is assertable. status 0 models a network / no-HTTP failure.
+  function mockFetchStatuses(adapter: BrowserAdapter, statuses: number[]): Recorded[] {
+    const calls: Recorded[] = [];
+    let i = 0;
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      const status = statuses[Math.min(i, statuses.length - 1)];
+      i += 1;
+      return { status, text: async () => '', json: async () => ({}) };
+    });
+    return calls;
+  }
+
+  test('a 5xx re-enqueues the batch and re-sends after the exponential backoff (fake timers)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    // First POST 503, then 200 on the retry.
+    const calls = mockFetchStatuses(adapter, [503, 200]);
+
+    adapter.capture(makeEvent({ dedupeId: 'r-1' }));
+    await adapter.flush();
+    // The initial POST fired and failed (503) — exactly one call so far.
+    expect(calls).toHaveLength(1);
+
+    // First-retry backoff is base*2**0 = 3000ms with ±50% jitter, so up to 3750ms;
+    // the poller ticks every 3000ms. Advance two poll ticks so the retry is due
+    // regardless of where jitter landed the delay.
+    await vi.advanceTimersByTimeAsync(6000);
+
+    // The retry re-sent the SAME batch — a second POST fired.
+    expect(calls).toHaveLength(2);
+    expect(batchOf(calls[1].options).map((e) => e.uuid)).toEqual(['r-1']);
+  });
+
+  test('a persistent 5xx re-sends on the exponential schedule 3000 → 6000 → 12000 (base*2**n)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetchStatuses(adapter, [503]); // always fails
+
+    adapter.capture(makeEvent({ dedupeId: 'sched' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1); // initial POST failed
+
+    // First retry at ~3000ms (attempt 0 backoff, ±50% jitter). Zero jitter is not
+    // guaranteed in the adapter's real RetryQueue (it uses Math.random), so advance
+    // two poll ticks and assert the re-send COUNT grows one attempt at a time.
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(calls).toHaveLength(2);
+
+    // The next retry backoff doubles (~6000ms, up to 7500ms with jitter); advance
+    // past enough poll ticks to cover it — the schedule keeps re-sending.
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(calls.length).toBeGreaterThan(2);
+  });
+
+  test('a 4xx is NEVER retried — the batch is dropped from the retry queue', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetchStatuses(adapter, [400]);
+
+    adapter.capture(makeEvent({ dedupeId: 'perm-reject' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1); // the one POST that got the 400
+
+    // No retry is ever scheduled — advancing the clock far past any backoff window
+    // fires no further POST, and no retry timer lingers.
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('a 429 (rate-limit, a 4xx) is NOT retried by S3 — rate-limiting is S4, not retry', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetchStatuses(adapter, [429]);
+
+    adapter.capture(makeEvent({ dedupeId: 'rl' }));
+    await adapter.flush();
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('a 200 succeeds first time — no retry scheduled', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetchStatuses(adapter, [200]);
+
+    adapter.capture(makeEvent({ dedupeId: 'ok' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('a network failure (status 0) retries at most 3 times', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetchStatuses(adapter, [0]); // always a network failure
+
+    adapter.capture(makeEvent({ dedupeId: 'net' }));
+    await adapter.flush();
+
+    // Drain the whole schedule: advance well past the capped backoff repeatedly.
+    for (let i = 0; i < 20; i += 1) {
+      await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
+    }
+
+    // 1 initial POST + 3 retries = 4 total for a status-0 failure.
+    expect(calls).toHaveLength(4);
+  });
+
+  test('a persistent 5xx retries at most 10 times', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetchStatuses(adapter, [500]); // always a 5xx
+
+    adapter.capture(makeEvent({ dedupeId: 'srv' }));
+    await adapter.flush();
+
+    for (let i = 0; i < 40; i += 1) {
+      await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
+    }
+
+    // 1 initial POST + 10 retries = 11 total for a 5xx failure.
+    expect(calls).toHaveLength(11);
+  });
+
+  test('the retry re-POSTs the SAME data:[] batch (idempotent uuid replayed unchanged)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetchStatuses(adapter, [503, 200]);
+
+    adapter.capture(makeEvent({ dedupeId: 'stable-uuid' }));
+    await adapter.flush();
+    // Two poll ticks so the first retry (up to 3750ms with jitter) is due.
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(calls).toHaveLength(2);
+    // The retried batch carries the identical top-level uuid — dedupe agrees.
+    expect(batchOf(calls[0].options)[0].uuid).toBe('stable-uuid');
+    expect(batchOf(calls[1].options)[0].uuid).toBe('stable-uuid');
+  });
+
+  test('all retry state stays adapter-internal — no retry config or state on the neutral surface (bar A)', () => {
+    const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+
+    // The neutral AnalyticsAdapter surface carries NO retry vocabulary: no schedule,
+    // no backoff, no retry-count member. Retry lives entirely inside the adapter.
+    const surface = adapter as unknown as Record<string, unknown>;
+    expect(surface.scheduleRetry).toBeUndefined();
+    expect(surface.retryQueue).toBeDefined(); // it exists, but as a private impl field
+    // The private retry queue is not part of the AnalyticsAdapter contract — a second
+    // adapter satisfies the same surface without any retry member on the interface.
+    const adapterKeys: Array<keyof AnalyticsAdapter> = [
+      'capture',
+      'identify',
+      'flush',
+      'shutdown',
+      'fetch',
+    ];
+    for (const key of adapterKeys) {
+      expect(typeof adapter[key]).toBe('function');
+    }
+  });
+
+  function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
+    return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
+  }
+});

@@ -47,3 +47,17 @@ A flaky network or a transient 5xx must not lose events. This wraps the S2 flush
 - Reference: `posthog-js/packages/browser/src/retry-queue.ts`.
 
 ## Shipped
+- > Reviewer note (2026-07-08): `POLL_INTERVAL_MS = 3000` = `BACKOFF_BASE_MS`, so the first retry (now + up to 3750ms jitter) can land just after the 3000ms tick → deferred to 6000ms. Intended poller model (matches reference), not a bug — poll granularity quantizes the effective first-retry delay. S6/S9 authors: this is by design.
+- > Reviewer suggestion (2026-07-08, for S9): `snapshot()` copies the OUTER array but shares inner `T[]` batches by reference with the live queue. Fine for S9 (it serializes immediately); note the inner-batch sharing so S9 doesn't rely on inner isolation.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (browser):** `retry-queue.ts` (transport-free `RetryQueue<T>` scheduler: in-memory `{retryAt,attempt,batch}`, single 3000ms poller, `navigator.onLine` gate + online/offline listeners, `snapshot()`/`drain()`; pure `pickNextRetryDelay(attempt,random?)`/`isRetryableStatus`/`maxRetriesForStatus` + budgets) + test
+- **Files changed:** `browser-adapter.ts` (split `sendBatch`→`postBatch(batch): Promise<NeutralFetchResponse|undefined>` + `sendBatchWithRetry(batch,attempt)`; retry decision reads `NeutralFetchResponse.status`; re-enqueue on retryable+within-budget, drop 4xx). NO SPI/`AnalyticsConfig` change.
+- **New public API:** none — all retry state adapter-internal (bar A); not consumer-configurable
+- **Tests added:** browser +34 (retry-queue 25: backoff exact/cap/jitter-bounds, isRetryable every-4xx, budgets, poller, online/offline, snapshot/drain; adapter +9: 5xx re-enqueues+schedule, 4xx+429 never, status-0 caps 3, 5xx caps 10, retry-same-uuid, bar-A) → 301; seam 128 unchanged
+- **Commit:** `E5-S3-retry-queue-backoff — Retry queue with exponential backoff + jitter` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 doc-note suggestions; S2 + E4 suites green
+- **Cross-story seams exposed:** **S6 (unload)** calls `retryQueue.drain(): ReadonlyArray<ReadonlyArray<WireEvent>>` — atomic take-all + teardown (stops poller, unbinds listeners); does NOT send (beacon is S6's). **S9 (offline)** calls `retryQueue.snapshot()` — non-destructive read to mirror durably (widen it if S9 needs `retryAt`/`attempt` to resume backoff across reload; no restore hook built). Both wire in without reaching private queue state. Retry re-assembles `assembleBatchBody(batch, Date.now())` fresh per attempt (offset stays correct); replays identical `uuid` (idempotent). 429 is dropped-not-retried (S4 owns back-pressure).

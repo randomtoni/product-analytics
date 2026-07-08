@@ -34,6 +34,7 @@ import { SessionIdManager } from './session-id-manager';
 import { resolveIngestUrl } from './ingest-url';
 import { mapEventToWire, assembleBatchBody, type WireEvent } from './wire-mapper';
 import { RequestQueue } from './request-queue';
+import { RetryQueue, isRetryableStatus, maxRetriesForStatus } from './retry-queue';
 import { generateUuidV7 } from './uuid-v7';
 import { isLikelyBot } from './bot-detection';
 
@@ -92,15 +93,23 @@ export class BrowserAdapter implements AnalyticsAdapter {
   private readonly botFilterEnabled: boolean;
   private readonly blockedUserAgents: string[];
   // The batch buffer. A pure timing/batching queue (paused at start); capture()
-  // enqueues the mapped wire event, and the queue calls back to sendBatch() on the
-  // earlier of its interval or size trigger. sendBatch() owns the actual POST.
+  // enqueues the mapped wire event, and the queue calls back to sendBatchWithRetry()
+  // on the earlier of its interval or size trigger.
   private readonly queue: RequestQueue<WireEvent>;
+  // The retry scheduler wrapping the batch POST failure path. On a transient
+  // failure (network/status-0 or 5xx) the delivery re-enqueues here for a jittered
+  // exponential retry; a 4xx is a permanent rejection and is never re-enqueued. The
+  // retry state is entirely adapter-internal — it never reaches the neutral surface.
+  private readonly retryQueue: RetryQueue<WireEvent>;
 
   constructor(options: BrowserAdapterOptions) {
     this.botFilterEnabled = options.botFilter !== false;
     this.blockedUserAgents = options.blockedUserAgents ?? [];
+    this.retryQueue = new RetryQueue<WireEvent>({
+      send: (batch, attempt) => this.sendBatchWithRetry(batch, attempt),
+    });
     this.queue = new RequestQueue<WireEvent>({
-      send: (batch) => this.sendBatch(batch),
+      send: (batch) => this.sendBatchWithRetry(batch, 0),
       flushInterval: options.flushInterval,
       flushAt: options.flushAt,
     });
@@ -328,17 +337,38 @@ export class BrowserAdapter implements AnalyticsAdapter {
     await this.flush();
   }
 
-  // The adapter-owned batch delivery the queue calls back into: build the [WIRE]
-  // `data:[]` envelope and POST it (uncompressed JSON) to the S1-resolved ingest
-  // URL via the neutral fetch() SPI. When no ingest target is configured the batch
-  // is dropped (an unkeyed / no-delivery client). S3 wraps this call's failure for
-  // retry; S4 rate-limits it; S5 compresses the body — all below this seam.
-  private async sendBatch(batch: WireEvent[]): Promise<void> {
-    const url = this.ingestUrl();
-    if (url === undefined || batch.length === 0) {
+  // The retry-wrapped batch delivery the request queue and retry queue both call
+  // back into. POSTs the batch; on a transient failure (network/status-0 or 5xx,
+  // within the per-status budget) it re-enqueues the SAME WireEvent[] for a jittered
+  // retry — re-assembling the envelope against a fresh send-time Date.now() each
+  // attempt so event ages stay correct. A 4xx is a permanent rejection: dropped, not
+  // retried. Returns void to the request queue (its send boundary is untouched);
+  // retry state lives in the retry queue, all adapter-internal.
+  private async sendBatchWithRetry(batch: WireEvent[], attempt: number): Promise<void> {
+    const response = await this.postBatch(batch);
+    if (response === undefined) {
       return;
     }
-    await this.fetch(url, {
+    if (!isRetryableStatus(response.status)) {
+      return;
+    }
+    if (attempt < maxRetriesForStatus(response.status)) {
+      this.retryQueue.scheduleRetry(batch, attempt);
+    }
+  }
+
+  // The adapter-owned batch POST: build the [WIRE] `data:[]` envelope and POST it
+  // (uncompressed JSON) to the S1-resolved ingest URL via the neutral fetch() SPI,
+  // returning the neutral response so the retry wrapper can read its status. When no
+  // ingest target is configured, or the batch is empty, nothing is sent (an unkeyed
+  // / no-delivery client) and undefined is returned. S4 rate-limits this; S5
+  // compresses the body — all below this seam.
+  private async postBatch(batch: WireEvent[]): Promise<NeutralFetchResponse | undefined> {
+    const url = this.ingestUrl();
+    if (url === undefined || batch.length === 0) {
+      return undefined;
+    }
+    return this.fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: assembleBatchBody(batch, Date.now()),
