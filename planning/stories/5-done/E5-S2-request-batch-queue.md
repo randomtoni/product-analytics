@@ -53,3 +53,17 @@ The transport core: this is where `BrowserAdapter.capture()` stops dropping the 
 - Reference: `posthog-js/packages/browser/src/request-queue.ts` + the POST assembly in `request.ts`.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, forward note for S3): `sendBatch` computes the `timestamp→offset` rewrite against `Date.now()` at send time (matches posthog). On retry, re-invoking `assembleBatchBody` with a fresh `Date.now()` would inflate event age — S3 should retry at the `send`-fn boundary ABOVE assembly (the queue already supports this: it retries the batch, not the assembled body). No S2 change.
+- > Reviewer note (2026-07-08, confirmation not defect): `armTimer` measures the interval from the FIRST enqueue in a batch window (subsequent sub-threshold enqueues are no-ops via the `flushTimer !== undefined` guard) — intended posthog semantics, well-tested. Add an inline note only if a future reader mistakes it for a debounce.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (browser):** `request-queue.ts` (pure `RequestQueue<T>`: paused-at-start, interval [250,5000]/3000 + `flushAt`/20 size trigger, `enable`/`enqueue`/`flushNow`/`drop`; adapter-supplied `send` fn owns the wire) + test
+- **Files changed:** `wire-mapper.ts` (extended ONE module: `MERGE_EVENT`-keyed merge/traits normalization `set_traits`/`set_traits_once`→top-level, `anonymous_distinct_id`→properties; `assembleBatchBody` = `data:[]` + `timestamp→offset`), `browser-adapter.ts` (capture ENQUEUES post-pipeline; real `flush()`/`shutdown()` drain; `sendBatch()` POSTs `data:[]` JSON to `ingestUrl()` via SPI `fetch`; `setConsentState('denied')` drops buffer), `analytics-kit/create-analytics.ts` (+`AnalyticsConfig.flushInterval?`/`flushAt?`) + shape-pin, `browser/create-analytics.ts` (thread). SPI (`adapter.ts`) UNCHANGED.
+- **New public API:** `AnalyticsConfig.flushInterval?`/`flushAt?` (additive). Wire shape stays adapter-internal (bar A).
+- **Tests added:** browser +45 (request-queue 20 fake-timer, wire-mapper +14 merge/traits+envelope, adapter +11 enqueue/flush-POST/triggers/optOut-drops/optIn-keeps/bar-A) → 267; seam 128
+- **Commit:** `E5-S2-request-batch-queue — Time-based batch queue + wire-mapper + real delivery` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 forward-notes; E4 consent + S7 bot + S8 wire-mapper suites all green
+- **Cross-story seams exposed:** the queue's injected `send(batch): Promise<void>` boundary is where **S3** wraps retry (queue swallows rejection today; 4xx-vs-5xx reads `NeutralFetchResponse.status` at `sendBatch`); **S4** reads body-borne back-pressure via `text()`/`json()` at `sendBatch` (no SPI change); **S5** gzips the body at `sendBatch` (below the neutral `body:string`); **S6** adds a beacon-variant drain alongside `flushNow()` + swaps transport behind `fetch()` (do NOT overload `flush()`); **S9** mirrors the `RequestQueue` buffer (holds replay-ready `WireEvent`) to durable storage + rehydrates, leaning on top-level `uuid` for idempotent double-send.

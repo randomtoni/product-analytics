@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import type { AnalyticsAdapter, NeutralEvent } from 'analytics-kit';
+import type { AnalyticsAdapter, NeutralEvent, NeutralFetchOptions } from 'analytics-kit';
 import { BrowserAdapter } from './browser-adapter';
 import {
   ANONYMOUS_DISTINCT_ID_KEY,
@@ -1053,5 +1053,193 @@ describe('bot/crawler suppression at capture time (S7)', () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe('batch queue + real delivery (S2)', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  // A mock fetch SPI: records every POST and resolves a benign 200 — never a real
+  // backend. The adapter's own fetch() is the seam we stub (the E2 neutral primitive).
+  type Recorded = { url: string; options: NeutralFetchOptions };
+  function mockFetch(adapter: BrowserAdapter): Recorded[] {
+    const calls: Recorded[] = [];
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+    return calls;
+  }
+
+  function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
+    return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
+  }
+
+  test('capture enqueues the post-pipeline enriched event — it is no longer dropped', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter);
+    adapter.register({ plan: 'pro' });
+
+    adapter.capture(makeEvent({ properties: { a: 1 } }));
+    // Not sent yet — buffered until an interval / size trigger or explicit flush.
+    expect(calls).toHaveLength(0);
+
+    await adapter.flush();
+
+    expect(calls).toHaveLength(1);
+    const [event] = batchOf(calls[0].options);
+    // The enriched (super-prop-merged, session-stamped) event rode the wire.
+    expect((event.properties as Record<string, unknown>).plan).toBe('pro');
+    expect((event.properties as Record<string, unknown>).a).toBe(1);
+    expect(typeof event.uuid).toBe('string');
+  });
+
+  test('flush() POSTs the data:[] envelope to the S1-resolved ingest URL via the fetch() SPI', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 'd-1' }));
+    adapter.capture(makeEvent({ dedupeId: 'd-2' }));
+    await adapter.flush();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('https://analytics.example.com/batch/');
+    expect(calls[0].options.method).toBe('POST');
+    expect(calls[0].options.headers['Content-Type']).toBe('application/json');
+    const data = batchOf(calls[0].options);
+    expect(data.map((e) => e.uuid)).toEqual(['d-1', 'd-2']);
+  });
+
+  test('each wired event carries an offset (not an absolute timestamp) in the envelope', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter);
+
+    adapter.capture(makeEvent({ timestamp: new Date(Date.now() - 5000) }));
+    await adapter.flush();
+
+    const [event] = batchOf(calls[0].options);
+    expect(event).not.toHaveProperty('timestamp');
+    expect(typeof event.offset).toBe('number');
+  });
+
+  test('the interval trigger flushes buffered events without an explicit flush (fake timers)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushInterval: 1000 });
+    const calls = mockFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 'interval-1' }));
+    expect(calls).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(calls).toHaveLength(1);
+    expect(batchOf(calls[0].options)[0].uuid).toBe('interval-1');
+  });
+
+  test('the size trigger flushes at flushAt events, before the interval elapses (fake timers)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      flushInterval: 5000,
+      flushAt: 2,
+    });
+    const calls = mockFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 's-1' }));
+    expect(calls).toHaveLength(0);
+    // The second event hits flushAt=2 — flush fires immediately, no timer wait.
+    adapter.capture(makeEvent({ dedupeId: 's-2' }));
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(calls).toHaveLength(1);
+    expect(batchOf(calls[0].options).map((e) => e.uuid)).toEqual(['s-1', 's-2']);
+  });
+
+  test('a keyed client with no ingestHost buffers but POSTs nothing (no target)', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const calls = mockFetch(adapter);
+
+    adapter.capture(makeEvent());
+    await adapter.flush();
+
+    expect(calls).toHaveLength(0);
+  });
+
+  test('optOut (setConsentState denied) DROPS the unsent buffer — no POST fires after opt-out', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 'pre-optout' }));
+    adapter.setConsentState('denied');
+    await adapter.flush();
+
+    // The buffered event was dropped, not flushed — zero POSTs.
+    expect(calls).toHaveLength(0);
+  });
+
+  test('optIn (setConsentState granted) does NOT drop the buffer — the E4 regression guard', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 'kept' }));
+    adapter.setConsentState('granted');
+    await adapter.flush();
+
+    // Granting must not drop already-buffered events — they still flush.
+    expect(calls).toHaveLength(1);
+    expect(batchOf(calls[0].options)[0].uuid).toBe('kept');
+  });
+
+  test('a merge (identify) event flushes with set_traits lifted to a top-level wire key', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter);
+
+    adapter.identify('user-1', { plan: 'pro' });
+    await adapter.flush();
+
+    const [merge] = batchOf(calls[0].options);
+    expect(merge.event).toBe(MERGE_EVENT);
+    // The trait bag is a top-level wire key, and the merge link stays in properties.
+    expect(merge.set_traits).toEqual({ plan: 'pro' });
+    expect(merge.properties).toHaveProperty(ANONYMOUS_DISTINCT_ID_KEY);
+    expect((merge.properties as Record<string, unknown>)).not.toHaveProperty(SET_TRAITS_KEY);
+  });
+
+  test('shutdown drains the buffer just like flush', async () => {
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 'on-shutdown' }));
+    await adapter.shutdown();
+
+    expect(calls).toHaveLength(1);
+    expect(batchOf(calls[0].options)[0].uuid).toBe('on-shutdown');
+  });
+
+  test('the batch envelope / data:[] / offset stay adapter-internal — no wire shape on the neutral surface (bar A)', async () => {
+    const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
+    const calls = mockFetch(adapter as BrowserAdapter);
+
+    // The consumer captures a plain NeutralEvent — it carries NO wire vocabulary
+    // (no data:[] envelope, no offset). capture() takes it and returns void.
+    const neutralEvent = makeEvent({ dedupeId: 'neutral-1' });
+    expect(neutralEvent).not.toHaveProperty('data');
+    expect(neutralEvent).not.toHaveProperty('offset');
+    expect(adapter.capture(neutralEvent)).toBeUndefined();
+
+    await adapter.flush();
+
+    // The data:[] envelope + timestamp→offset rewrite appear ONLY inside the string
+    // body the adapter POSTs — assembled below the neutral SPI, never on a value the
+    // neutral surface hands back. The wire shape lives only here, in the transport.
+    const parsed = JSON.parse(calls[0].options.body as string) as { data: Record<string, unknown>[] };
+    expect(parsed).toHaveProperty('data');
+    expect(parsed.data[0]).toHaveProperty('offset');
+    // The neutral surface is unchanged: capture/flush are the only transport-facing
+    // members, and neither returns nor accepts a wire-shaped value.
+    expect(typeof adapter.capture).toBe('function');
+    expect(adapter.flush()).toBeInstanceOf(Promise);
   });
 });

@@ -28,6 +28,8 @@ export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
         ingestPath: config.ingestPath,
         botFilter: config.botFilter,
         blockedUserAgents: config.blockedUserAgents,
+        flushInterval: config.flushInterval,
+        flushAt: config.flushAt,
       });
 }
 

@@ -1,4 +1,5 @@
 import type { NeutralEvent, NeutralProperties } from 'analytics-kit';
+import { MERGE_EVENT, SET_TRAITS_KEY, SET_TRAITS_ONCE_KEY } from './persistence-keys';
 
 // The [WIRE] shape of a single captured event — the object the transport POSTs
 // (S2 wraps a `data:[]` array of these). Every key here is adapter-internal wire
@@ -12,12 +13,18 @@ import type { NeutralEvent, NeutralProperties } from 'analytics-kit';
 //   here). The neutral field name is `dedupeId` — the SAME name node (E7) exposes
 //   for its own idempotency key — so client- and server-side retries dedupe on one
 //   agreed value.
+// - On a merge/traits event (`event === MERGE_EVENT`) the two person-trait bags are
+//   lifted OUT of `properties` to the top-level `set_traits` / `set_traits_once`
+//   wire keys; the retained prior anon id (`anonymous_distinct_id`) stays inside
+//   `properties`. All of these are de-branded [WIRE] names, never neutral surface.
 export interface WireEvent {
   event: string;
   distinct_id: string;
   properties?: NeutralProperties;
   timestamp?: string;
   uuid: string;
+  set_traits?: NeutralProperties;
+  set_traits_once?: NeutralProperties;
 }
 
 // Lay a NeutralEvent out into its [WIRE] shape. Value-agnostic on the id: it
@@ -25,17 +32,65 @@ export interface WireEvent {
 // re-generate or re-version the id (the id is stamped once, at capture, then
 // replayed unchanged across a retry, which is all dedupe requires).
 //
-// This is the single wire-mapper for the E5 transport: S2 extends THIS module to
-// key off `MERGE_EVENT` (and the `set_traits` / `set_traits_once` /
-// `anonymous_distinct_id` [WIRE] keys) and normalize the merge/traits event into
-// the vendor merge shape. The pass-through mapping below is the base every event
-// takes; S2's merge/traits normalization layers on top of it, not beside it.
+// This is the single wire-mapper for the E5 transport. The pass-through mapping is
+// the base every event takes; the merge/traits normalization (keyed off
+// `MERGE_EVENT`, the adapter-emitted merge name — NOT a consumer string) layers on
+// top of it, lifting the trait bags to top-level wire keys.
 export function mapEventToWire(event: NeutralEvent): WireEvent {
-  return {
+  const base: WireEvent = {
     event: event.event,
     distinct_id: event.distinctId,
     properties: event.properties,
     timestamp: event.timestamp?.toISOString(),
     uuid: event.dedupeId,
   };
+
+  if (event.event !== MERGE_EVENT || event.properties === undefined) {
+    return base;
+  }
+  return normalizeMergeEvent(base, event.properties);
+}
+
+// Split the merge event's property bag: the two trait bags become top-level
+// `set_traits` / `set_traits_once` wire keys; every other property (including the
+// retained `anonymous_distinct_id` merge link) stays inside `properties`. An absent
+// bag is omitted rather than emitted as an empty object.
+function normalizeMergeEvent(base: WireEvent, properties: NeutralProperties): WireEvent {
+  const rest: NeutralProperties = {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (key === SET_TRAITS_KEY || key === SET_TRAITS_ONCE_KEY) {
+      continue;
+    }
+    rest[key] = value;
+  }
+
+  const wire: WireEvent = {
+    ...base,
+    properties: Object.keys(rest).length > 0 ? rest : undefined,
+  };
+  if (SET_TRAITS_KEY in properties) {
+    wire.set_traits = properties[SET_TRAITS_KEY] as NeutralProperties;
+  }
+  if (SET_TRAITS_ONCE_KEY in properties) {
+    wire.set_traits_once = properties[SET_TRAITS_ONCE_KEY] as NeutralProperties;
+  }
+  return wire;
+}
+
+// Assemble the [WIRE] `data:[]` batch body from mapped wire events, applying the
+// per-event `timestamp → offset` rewrite. `offset` is the millisecond age of the
+// event relative to `now` (send time); the absolute `timestamp` is dropped in
+// favour of the offset. An event with no timestamp carries no offset. This whole
+// envelope shape is adapter-internal — it never reaches the neutral surface.
+export function assembleBatchBody(wireEvents: WireEvent[], now: number): string {
+  const data = wireEvents.map((wire) => rewriteTimestampToOffset(wire, now));
+  return JSON.stringify({ data });
+}
+
+function rewriteTimestampToOffset(wire: WireEvent, now: number): Record<string, unknown> {
+  const { timestamp, ...rest } = wire;
+  if (timestamp === undefined) {
+    return rest;
+  }
+  return { ...rest, offset: Math.abs(now - new Date(timestamp).getTime()) };
 }

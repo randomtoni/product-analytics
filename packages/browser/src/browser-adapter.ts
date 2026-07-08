@@ -32,7 +32,8 @@ import { PersistenceStore } from './persistence-store';
 import { IdentityStore, type IdGenerator } from './identity-store';
 import { SessionIdManager } from './session-id-manager';
 import { resolveIngestUrl } from './ingest-url';
-import { mapEventToWire, type WireEvent } from './wire-mapper';
+import { mapEventToWire, assembleBatchBody, type WireEvent } from './wire-mapper';
+import { RequestQueue } from './request-queue';
 import { generateUuidV7 } from './uuid-v7';
 import { isLikelyBot } from './bot-detection';
 
@@ -68,6 +69,11 @@ export interface BrowserAdapterOptions {
   // Consumer extension of the default UA denylist — extra case-insensitive
   // substrings that also flag a client as a bot.
   blockedUserAgents?: string[];
+  // Batch transport timing: flush the buffered events on the EARLIER of this many
+  // ms elapsing (clamped [250, 5000], default 3000) or flushAt events buffered
+  // (default 20). Both optional with sane defaults.
+  flushInterval?: number;
+  flushAt?: number;
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
@@ -85,10 +91,19 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // unless botFilter is explicitly false; blockedUserAgents extends the default denylist.
   private readonly botFilterEnabled: boolean;
   private readonly blockedUserAgents: string[];
+  // The batch buffer. A pure timing/batching queue (paused at start); capture()
+  // enqueues the mapped wire event, and the queue calls back to sendBatch() on the
+  // earlier of its interval or size trigger. sendBatch() owns the actual POST.
+  private readonly queue: RequestQueue<WireEvent>;
 
   constructor(options: BrowserAdapterOptions) {
     this.botFilterEnabled = options.botFilter !== false;
     this.blockedUserAgents = options.blockedUserAgents ?? [];
+    this.queue = new RequestQueue<WireEvent>({
+      send: (batch) => this.sendBatch(batch),
+      flushInterval: options.flushInterval,
+      flushAt: options.flushAt,
+    });
 
     this.resolvedIngestUrl = resolveIngestUrl({
       ingestHost: options.ingestHost,
@@ -145,13 +160,16 @@ export class BrowserAdapter implements AnalyticsAdapter {
 
   capture(event: NeutralEvent): void {
     // Bot/crawler suppression gates capture BEFORE the enrichment pipeline and
-    // before any (E5-S2) enqueue — a blocked client's event never enters either.
+    // before the enqueue — a blocked client's event never enters the queue.
     if (this.isBot()) {
       return;
     }
-    // Transport (batching / flush) lands in E5; the skeleton runs the enrichment
-    // pipeline so the S7 / S8 hook points exist for later slices to extend.
-    this.runCapturePipeline(event);
+    // Run the enrichment pipeline (S7 super-props + S8 session stamp), map to the
+    // [WIRE] shape, then buffer it. The queue flushes on its interval / size trigger;
+    // sendBatch() POSTs. enable() is idempotent — the first capture arms the queue.
+    const enriched = this.runCapturePipeline(event);
+    this.queue.enable();
+    this.queue.enqueue(this.toWireEvent(enriched));
   }
 
   private isBot(): boolean {
@@ -300,15 +318,44 @@ export class BrowserAdapter implements AnalyticsAdapter {
 
   alias(): void {}
 
-  async flush(): Promise<void> {}
+  async flush(): Promise<void> {
+    // Force an immediate drain (bypassing the interval / size trigger) and resolve
+    // once the POST it fires — plus any auto-flush POST still on the wire — settle.
+    await this.queue.flushNow();
+  }
 
-  async shutdown(): Promise<void> {}
+  async shutdown(): Promise<void> {
+    await this.flush();
+  }
+
+  // The adapter-owned batch delivery the queue calls back into: build the [WIRE]
+  // `data:[]` envelope and POST it (uncompressed JSON) to the S1-resolved ingest
+  // URL via the neutral fetch() SPI. When no ingest target is configured the batch
+  // is dropped (an unkeyed / no-delivery client). S3 wraps this call's failure for
+  // retry; S4 rate-limits it; S5 compresses the body — all below this seam.
+  private async sendBatch(batch: WireEvent[]): Promise<void> {
+    const url = this.ingestUrl();
+    if (url === undefined || batch.length === 0) {
+      return;
+    }
+    await this.fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: assembleBatchBody(batch, Date.now()),
+    });
+  }
 
   getConsentState(): ConsentState {
     return this.consent.get();
   }
 
   setConsentState(state: ConsentState): void {
+    // Opt-out contract (E4-S3): a denial DROPS the unsent buffer without flushing —
+    // events captured before the opt-out must not leave the app. optIn ('granted')
+    // does NOT drop. The drop is additive to the durable consent write below.
+    if (state === 'denied') {
+      this.queue.drop();
+    }
     this.consent.set(state);
   }
 

@@ -22,6 +22,8 @@ export interface AnalyticsConfig {
   ingestPath?: string;
   botFilter?: boolean;
   blockedUserAgents?: string[];
+  flushInterval?: number;
+  flushAt?: number;
 }
 
 interface AnalyticsDeps {
