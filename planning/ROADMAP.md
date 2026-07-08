@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-07
+Last updated: 2026-07-07 — E1 closed (core cycle: E2, E3 remain)
 
 ## Status
 
@@ -22,7 +22,7 @@ The **adoption** cycle (`E10`, `E11`) closes: the example consumer needs the tar
 
 **Focus area: `core`** — the vendor-neutral seam. This cycle stabilizes the workspace, the provider contract + config-selected factory, and the taxonomy + allowlist mechanisms to v1. No consumer-facing capture yet; this is the substrate every target and adapter builds on.
 
-- **[E1-CORE-workspace-scaffold](epics/E1-CORE-workspace-scaffold.md)** *(active)* — pnpm + turbo workspace with all four gates (typecheck / lint / test / build) green on empty packages.
+- **[E1-CORE-workspace-scaffold](epics/done/E1-CORE-workspace-scaffold.md)** *(done)* — pnpm + turbo workspace with all four gates (typecheck / lint / test / build) green on empty packages.
 - **[E2-CORE-provider-seam](epics/E2-CORE-provider-seam.md)** *(planned)* — the `AnalyticsProvider` contract + config-selected factory + no-op adapter (silent when unkeyed).
 - **[E3-CORE-taxonomy-allowlist](epics/E3-CORE-taxonomy-allowlist.md)** *(planned)* — typed-taxonomy mechanism (`defineTaxonomy<T>()`) + payload-allowlist enforcement hook.
 
