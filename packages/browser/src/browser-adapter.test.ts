@@ -943,3 +943,115 @@ describe('reset — clear identity/persistence/session, keep device id (S9)', ()
     expect(document.cookie).not.toContain(key);
   });
 });
+
+describe('bot/crawler suppression at capture time (S7)', () => {
+  function stubNavigator(props: { userAgent?: string; webdriver?: boolean }): () => void {
+    const restores: (() => void)[] = [];
+    for (const [key, value] of Object.entries(props)) {
+      const prior = Object.getOwnPropertyDescriptor(window.navigator, key);
+      Object.defineProperty(window.navigator, key, { value, configurable: true });
+      restores.push(() => {
+        if (prior) {
+          Object.defineProperty(window.navigator, key, prior);
+        } else {
+          Reflect.deleteProperty(window.navigator, key);
+        }
+      });
+    }
+    return () => restores.forEach((r) => r());
+  }
+
+  test('a denylisted user-agent short-circuits capture() BEFORE the pipeline — no event reaches the (S2) queue', () => {
+    const restore = stubNavigator({ userAgent: 'Mozilla/5.0 (compatible; Googlebot/2.1)' });
+    try {
+      const adapter = new BrowserAdapter({ key: freshKey() });
+      const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
+
+      adapter.capture(makeEvent());
+
+      // The gate sits above the pipeline (and above S2's future enqueue): nothing runs.
+      expect(pipeline).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  test('navigator.webdriver flags an automated client even with a clean UA', () => {
+    const restore = stubNavigator({ userAgent: 'Mozilla/5.0 Chrome/120', webdriver: true });
+    try {
+      const adapter = new BrowserAdapter({ key: freshKey() });
+      const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
+
+      adapter.capture(makeEvent());
+
+      expect(pipeline).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  test('a non-bot client captures normally — the pipeline runs', () => {
+    const restore = stubNavigator({ userAgent: 'Mozilla/5.0 Chrome/120', webdriver: false });
+    try {
+      const adapter = new BrowserAdapter({ key: freshKey() });
+      const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
+
+      adapter.capture(makeEvent());
+
+      expect(pipeline).toHaveBeenCalledOnce();
+    } finally {
+      restore();
+    }
+  });
+
+  test('a consumer-supplied denylist extension suppresses a UA the default list misses', () => {
+    const restore = stubNavigator({ userAgent: 'Mozilla/5.0 AcmeInternalScanner/3.2', webdriver: false });
+    try {
+      // Without the extension, this UA captures normally...
+      const plain = new BrowserAdapter({ key: freshKey() });
+      const plainPipeline = vi.spyOn(plain, 'runCapturePipeline');
+      plain.capture(makeEvent());
+      expect(plainPipeline).toHaveBeenCalledOnce();
+
+      // ...with the extension, the same UA is now blocked before the pipeline.
+      const extended = new BrowserAdapter({
+        key: freshKey(),
+        blockedUserAgents: ['acmeinternalscanner'],
+      });
+      const extendedPipeline = vi.spyOn(extended, 'runCapturePipeline');
+      extended.capture(makeEvent());
+      expect(extendedPipeline).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  test('botFilter:false disables filtering entirely — an otherwise-blocked UA captures normally (bar B)', () => {
+    const restore = stubNavigator({ userAgent: 'Mozilla/5.0 (compatible; Googlebot/2.1)', webdriver: true });
+    try {
+      const adapter = new BrowserAdapter({ key: freshKey(), botFilter: false });
+      const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
+
+      adapter.capture(makeEvent());
+
+      // Filtering off ⇒ the blocked-and-webdriver client still flows through the pipeline.
+      expect(pipeline).toHaveBeenCalledOnce();
+    } finally {
+      restore();
+    }
+  });
+
+  test('filtering defaults ON — omitting botFilter still suppresses a blocked UA', () => {
+    const restore = stubNavigator({ userAgent: 'Googlebot/2.1', webdriver: false });
+    try {
+      const adapter = new BrowserAdapter({ key: freshKey() });
+      const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
+
+      adapter.capture(makeEvent());
+
+      expect(pipeline).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+});

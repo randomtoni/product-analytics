@@ -26,6 +26,8 @@ export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
         sessionMaxLengthMs: config.sessionMaxLengthMs,
         ingestHost: config.ingestHost,
         ingestPath: config.ingestPath,
+        botFilter: config.botFilter,
+        blockedUserAgents: config.blockedUserAgents,
       });
 }
 

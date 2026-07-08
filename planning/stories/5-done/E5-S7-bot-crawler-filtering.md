@@ -46,3 +46,17 @@ Bot and crawler traffic pollutes every downstream metric. Filtering at capture t
 - Reference: `posthog-js/packages/core/src/utils/bot-detection.ts` + the browser `posthog-js/packages/browser/src/utils/blocked-uas.ts`.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate / E7-critical): `bot-detection.ts` is isomorphic — `DEFAULT_BLOCKED_UA_STRS` + `isBlockedUA` have NO DOM dep (only `isLikelyBot` touches `Navigator`). E7 (node) will want the same server-side substring list. Hoist the PURE denylist + `isBlockedUA` into the shared seam (`analytics-kit`) now, leaving only `isLikelyBot` in browser — else E7 must re-port (drift) or depend on `@analytics-kit/browser` (a node→browser split violation).
+- > Reviewer suggestion (2026-07-08, forward note): `isBot()` short-circuits silently — a dropped-for-bot event is indistinguishable from a captured one. A bot-drop counter/debug hook (additive, later) would let consumers verify filtering without a network trace.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (browser):** `bot-detection.ts` (de-branded 1:1 port: 77-substring `DEFAULT_BLOCKED_UA_STRS` + `isBlockedUA` + `isLikelyBot` webdriver/userAgentData) + test
+- **Files changed:** `browser-adapter.ts` (`isBot()` short-circuit = FIRST statement of `capture()`, defensive `navigator` guard + `botFilter`/`blockedUserAgents` options), `analytics-kit/create-analytics.ts` (+`AnalyticsConfig.botFilter?`/`blockedUserAgents?`) + shape-pin, `browser/create-analytics.ts` (thread whitelist)
+- **New public API:** `AnalyticsConfig.botFilter?: boolean` (default ON, de-branded from `opt_out_useragent_filter`) + `blockedUserAgents?: string[]` (extends default denylist). Neutral names.
+- **Tests added:** browser +22 (bot-detection 16: denylist match/case/edge/extension, webdriver/userAgentData, count=77 + no-vendor hygiene; adapter 6: short-circuit-before-pipeline via spy, webdriver, extension, opt-out-captures-normally bar-B, default-on) → 224; seam 128 (shape-pin)
+- **Commit:** `E5-S7-bot-crawler-filtering — Suppress bot/crawler traffic at capture time` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (hoist isomorphic denylist to seam for E7; silent-drop observability)
+- **Cross-story seams exposed:** S7's gate sits ABOVE the pipeline + future S2 enqueue in `capture()` — **S2's queue only ever sees non-bot events** (no bot-awareness needed in S2; insert enqueue AFTER `runCapturePipeline`, leave `if (this.isBot()) return;` first). E7 wants the pure denylist server-side (see hoist suggestion).

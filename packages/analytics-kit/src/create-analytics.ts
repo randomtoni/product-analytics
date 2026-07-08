@@ -20,6 +20,8 @@ export interface AnalyticsConfig {
   sessionMaxLengthMs?: number;
   ingestHost?: string;
   ingestPath?: string;
+  botFilter?: boolean;
+  blockedUserAgents?: string[];
 }
 
 interface AnalyticsDeps {

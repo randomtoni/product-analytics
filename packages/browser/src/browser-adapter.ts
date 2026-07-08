@@ -34,6 +34,7 @@ import { SessionIdManager } from './session-id-manager';
 import { resolveIngestUrl } from './ingest-url';
 import { mapEventToWire, type WireEvent } from './wire-mapper';
 import { generateUuidV7 } from './uuid-v7';
+import { isLikelyBot } from './bot-detection';
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
@@ -61,6 +62,12 @@ export interface BrowserAdapterOptions {
   // capture path when ingestPath is absent. No vendor host / region default.
   ingestHost?: string;
   ingestPath?: string;
+  // Suppress bot/crawler traffic at capture time. On by default; set false to
+  // disable UA filtering entirely so an otherwise-blocked client captures normally.
+  botFilter?: boolean;
+  // Consumer extension of the default UA denylist — extra case-insensitive
+  // substrings that also flag a client as a bot.
+  blockedUserAgents?: string[];
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
@@ -74,8 +81,15 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // ingestHost is supplied (an unkeyed / no-delivery client). S2's POST reads this
   // via ingestUrl(); S5 appends its [WIRE] query params to the value it returns.
   private readonly resolvedIngestUrl: string | undefined;
+  // Bot/crawler suppression config, resolved once at construction. Filtering is on
+  // unless botFilter is explicitly false; blockedUserAgents extends the default denylist.
+  private readonly botFilterEnabled: boolean;
+  private readonly blockedUserAgents: string[];
 
   constructor(options: BrowserAdapterOptions) {
+    this.botFilterEnabled = options.botFilter !== false;
+    this.blockedUserAgents = options.blockedUserAgents ?? [];
+
     this.resolvedIngestUrl = resolveIngestUrl({
       ingestHost: options.ingestHost,
       ingestPath: options.ingestPath,
@@ -130,9 +144,24 @@ export class BrowserAdapter implements AnalyticsAdapter {
   }
 
   capture(event: NeutralEvent): void {
+    // Bot/crawler suppression gates capture BEFORE the enrichment pipeline and
+    // before any (E5-S2) enqueue — a blocked client's event never enters either.
+    if (this.isBot()) {
+      return;
+    }
     // Transport (batching / flush) lands in E5; the skeleton runs the enrichment
     // pipeline so the S7 / S8 hook points exist for later slices to extend.
     this.runCapturePipeline(event);
+  }
+
+  private isBot(): boolean {
+    if (!this.botFilterEnabled) {
+      return false;
+    }
+    // Defensive navigator read: DOM-typed under lib:["ES2022","DOM"], but the
+    // adapter stays safe in a non-DOM test/SSR context (mirrors consent.ts).
+    const nav = typeof navigator === 'undefined' ? undefined : navigator;
+    return isLikelyBot(nav, this.blockedUserAgents);
   }
 
   /** @internal Public only so pass-through tests can pin the enrichment pipeline; not stable adapter API. */
