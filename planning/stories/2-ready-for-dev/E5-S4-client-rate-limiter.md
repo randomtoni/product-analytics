@@ -38,7 +38,7 @@ A runaway loop or a backend under load must not hammer the ingest endpoint. A cl
 ## Technical notes
 
 - **Token bucket + server-limit handling.** Port `posthog-js/packages/browser/src/rate-limiter.ts`: client token-bucket (10 events/s, burst ×10 = 100; `:10-11,52-59`). `[WIRE]`: PostHog reads a response **body** `quota_limited: string[]` (not a `Retry-After` header) and blocks that batch-key for 60 s (`:95-108`) — neutralize by having the adapter interpret whatever back-pressure signal its backend sends. The `$$client_ingestion_warning` event (`:9,66-74`) is `[WIRE]`. — architect (2026-07-07): §E5.3.
-- **Reading the signal may need the response extension.** Interpreting the back-pressure signal likely requires reading the POST response (body and/or headers). Coordinate with the E5-S2 `NeutralFetchResponse` forward note: if S2 did not already extend `NeutralFetchResponse` with a DOM-free header accessor, extend it additively here (keep it neutral — no vendor header/field names on the type). — E5-S2 forward note.
+- **Read the back-pressure signal off the response BODY — no `NeutralFetchResponse` extension.** The signal is body-borne, not header-borne: PostHog reads `quota_limited: string[]` via `JSON.parse(httpResponse.text)` (`rate-limiter.ts:95-108`). The shipped `NeutralFetchResponse` already exposes `text()`/`json()` (`adapter.ts:11-15`), so read the signal off those directly. Do NOT extend `NeutralFetchResponse` with a header accessor — that hedge from the S2 forward-note was a false lead and is struck. The neutral type stays unchanged; only the adapter-internal interpretation of the body is `[WIRE]`. — story-refiner (architect-confirmed, 2026-07-08).
 - Reference: `posthog-js/packages/browser/src/rate-limiter.ts`.
 
 ## Shipped
