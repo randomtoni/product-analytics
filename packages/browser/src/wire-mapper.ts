@@ -20,6 +20,7 @@ import { MERGE_EVENT, SET_TRAITS_KEY, SET_TRAITS_ONCE_KEY } from './persistence-
 export interface WireEvent {
   event: string;
   distinct_id: string;
+  // Already allowlist-filtered by the neutral pipeline upstream; the mapper is the last [WIRE] boundary, NOT a filtering point.
   properties?: NeutralProperties;
   timestamp?: string;
   uuid: string;

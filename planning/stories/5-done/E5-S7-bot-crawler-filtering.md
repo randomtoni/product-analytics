@@ -60,3 +60,10 @@ Bot and crawler traffic pollutes every downstream metric. Filtering at capture t
 - **Commit:** `E5-S7-bot-crawler-filtering — Suppress bot/crawler traffic at capture time` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions (hoist isomorphic denylist to seam for E7; silent-drop observability)
 - **Cross-story seams exposed:** S7's gate sits ABOVE the pipeline + future S2 enqueue in `capture()` — **S2's queue only ever sees non-bot events** (no bot-awareness needed in S2; insert enqueue AFTER `runCapturePipeline`, leave `if (this.isBot()) return;` first). E7 wants the pure denylist server-side (see hoist suggestion).
+
+## Follow-up
+
+> E5 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Isomorphic-denylist hoist — DEFERRED to E7** (architect verdict, 2026-07-08). `DEFAULT_BLOCKED_UA_STRS` + `isBlockedUA` are pure/DOM-free and belong in the seam eventually, but hoisting NOW is premature abstraction (zero cross-package consumers until E7; server-side bot detection is a *different* problem — raw request-header UA / `Sec-CH-UA` + keep-or-drop-at-ingestion, not a live `Navigator` — better shaped by two real callers than one real + one guess). No compounding debt: ~50 lines of pure data + one pure function with a co-located test; E7 lifts them into a role-named internal seam module (e.g. `ua-denylist.ts`, NOT `index.ts`-exported) and re-points browser's one import, leaving `isLikelyBot` in browser. **→ carry into E7 PM prep.**
+- Skipped-with-reason: silent bot-drop observability is OBS/E12 territory.

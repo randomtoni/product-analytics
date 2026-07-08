@@ -60,3 +60,10 @@ The last event before a tab closes (a pageleave, a final click) is the one most 
 - **Commit:** `E5-S6-transport-selection-keepalive — Transport preference + unload flush via sendBeacon` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 doc/optional suggestions; S2/S3/S4/S5/E4 green (string path preserved on `this.fetch`)
 - **Cross-story seams exposed (S9):** S6's unload is **best-effort synchronous** (sendBeacon fire-and-forget + sync gzip; async `CompressionStream` can't resolve during teardown). It does NOT guarantee delivery — a beacon can be dropped, and anything captured after the latch fires is lost. **S9** durably mirrors the queues (E4 `StorageBackend` under its own store name) so undelivered events survive past the unload window + rehydrate on next load, leaning on S8's `uuid` for idempotent double-send. Seams present: `RetryQueue.snapshot()` (non-destructive) + `RequestQueue.drain()`/`RetryQueue.drain()` (take-all).
+
+## Follow-up
+
+> E5 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **XHR-not-unload-safe gotcha comment** — a one-line note in `postEncoded` that the XHR fallback is not unload-safe (the unload drain relies on sendBeacon, not this path). (Addresses the S6 doc suggestion.)
+- Skipped-with-reason: making `unload()` private via a test cast is low-value (the DOM-dispatch tests exercise the wiring; direct-invoke tests use it).

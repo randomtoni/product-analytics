@@ -66,3 +66,10 @@ The single BRIEF §4 requirement PostHog does NOT satisfy: an offline queue that
 - **Commit:** `E5-S9-offline-queue-persistence — Offline queue that survives reloads (NEW WORK)` on `core-cycle`
 - **Reviewer notes:** 0 critical, 3 suggestions (attempt-reset doc; byte-budget cap; per-outcome write debounce); S1..S8 + E4 green
 - **Cross-story seams / scope boundary:** wraps S3 (mirrors `snapshot()`, does NOT reimplement retry). The `RequestQueue`-buffer pre-flush hard-crash window is a documented R1 non-goal (S6 unload beacon covers tab-close; "survives a reload" = the durable retry mirror). **E6:** track/page/pageleave inherit offline-persistence for free via `runCapturePipeline`→`enqueue`, but only batches that reached the retry queue are mirrored — a pageleave at unload relies on the S6 beacon, not S9. **E7 (node):** `dedupeId` is a neutral `NeutralEvent` field → node inherits the S8 idempotency guarantee; keep the batch-envelope + dedupe contract stable.
+
+## Follow-up
+
+> E5 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Attempt-reset gotcha comment** — a one-line note at the `rehydrate()` re-schedule site that attempt-reset-on-reload is deliberate (uuid dedupe makes re-send harmless; a 4xx prunes on first re-send) — so a future reader doesn't "fix" it by persisting the attempt count. (Addresses the S9 reviewer suggestion.)
+- Skipped-with-reason: the byte-budget cap is an IndexedDB follow-up (count-cap satisfies "no unbounded growth"); the per-outcome-write debounce is a perf-only change gated on profiling.

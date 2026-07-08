@@ -194,6 +194,7 @@ export class BrowserAdapter implements AnalyticsAdapter {
       isPersistenceAllowed: () => this.getConsentState() === 'granted',
     });
     for (const batch of this.offlineQueue.rehydrate()) {
+      // Attempt-reset-on-reload is deliberate: uuid dedupe makes a re-send harmless and a 4xx prunes it on first re-send — do NOT persist the attempt count to "fix" this.
       this.retryQueue.scheduleRetry([...batch], 0);
     }
 
@@ -593,6 +594,7 @@ export class BrowserAdapter implements AnalyticsAdapter {
           body: encoded.body,
         });
       }
+      // The XHR fallback is NOT unload-safe; the unload drain relies on sendBeacon (see unload()), never this path.
       return postViaXhr(url, {
         method: 'POST',
         headers: { 'Content-Type': encoded.contentType },

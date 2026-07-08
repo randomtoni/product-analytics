@@ -6,6 +6,7 @@ import type {
   NeutralFetchOptions,
 } from 'analytics-kit';
 import { BrowserAdapter, type BrowserAdapterOptions } from './browser-adapter';
+import { containsInsertId } from './wire-scan.test-helper';
 import {
   ANONYMOUS_DISTINCT_ID_KEY,
   DEVICE_ID_KEY,
@@ -843,15 +844,16 @@ describe('wire-mapping seam — dedupeId → top-level uuid (S8)', () => {
     expect(wire.uuid).toMatch(UUID_V7);
   });
 
-  test('the mapped wire event emits no random $insert_id', () => {
+  test('the mapped wire event emits no random $insert_id (deep-scanned through the enriched event)', () => {
     const adapter = new BrowserAdapter({ key: freshKey() });
     adapter.register({ plan: 'pro' });
-    const event = adapter.runCapturePipeline(makeEvent({ properties: { a: 1 } }));
+    const event = adapter.runCapturePipeline(makeEvent({ properties: { a: 1, nested: { b: 2 } } }));
 
     const wire = adapter.toWireEvent(event);
 
     expect(wire).not.toHaveProperty('$insert_id');
     expect(wire.properties ?? {}).not.toHaveProperty('$insert_id');
+    expect(containsInsertId(wire)).toBe(false);
   });
 });
 

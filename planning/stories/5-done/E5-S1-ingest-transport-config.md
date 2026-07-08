@@ -61,3 +61,9 @@ The one clear neutral-surface touch of the whole transport layer: a consumer poi
 - **Commit:** `E5-S1-ingest-transport-config — Neutral ingest host/path config` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions (edge-case hardening) → see Technical notes
 - **Cross-story seams exposed:** **S2** reads `BrowserAdapter.ingestUrl(): string | undefined` (`@internal`) for the POST — `undefined` = no delivery target (skip/drop, don't default). `capture()` still drops post-pipeline (S2 flips to enqueue). **S5** appends `[WIRE]` query params (`compression=`/`ver=`/`_=`) to the string `ingestUrl()` returns. Default wire path is the module-private `DEFAULT_WIRE_CAPTURE_PATH='/batch/'` (adapter-internal — the single adjust point).
+
+## Follow-up
+
+> E5 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression (browser 402 / seam 128 green).
+
+- **Blank-host guard** — `resolveIngestUrl` now returns `undefined` for a blank/whitespace-only `ingestHost` (after trim), instead of a relative `/batch/` URL — a blank host is a no-target like an omitted one. Test added (blank + whitespace + whitespace-host-with-path → `undefined`). (Addresses the S1 reviewer suggestion.)

@@ -58,3 +58,10 @@ Batched event payloads compress well; gzipping the body cuts bandwidth on every 
 - **Commit:** `E5-S5-compression — gzip request bodies (native + fflate fallback)` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions (validateNativeGzip direct test; ver= hardcode); S2/S3/S4/E4 green
 - **Cross-story seams exposed (S6):** `postEncoded(url, encoded: EncodedBatch)` is the SINGLE delivery point below the neutral SPI — where **S6** adds fetch→XHR→sendBeacon selection + keepalive (<~52KB) + the unload sendBeacon path. Today: string body→neutral `this.fetch`; binary body (gzip `ArrayBuffer`)→direct DOM `fetch`. `EncodedBatch` = `{body: string|Uint8Array, contentType, compressed}` carries everything S6 needs (S6's sendBeacon re-wraps the gzip bytes as a `Blob` with Content-Type). `encodeBatch`/`postEncoded` untouched by `postBatch` — S6 layers selection on top.
+
+## Follow-up
+
+> E5 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **`validateNativeGzip` tested directly** — exported `@internal` (not on the public surface) + direct tests: too-short / corrupted-trailer-CRC / wrong-input-size-trailer Blobs each REJECT, and `gzipCompress` swallows a bad native result to `null`. Closes the coverage gap jsdom's null native path left (the validator's failure-detection was untested). (Addresses the S5 reviewer suggestion.)
+- Skipped-with-reason: the `ver=0.0.0` hardcode is a forward note for whoever sets a real library version.

@@ -6,6 +6,12 @@ test('no ingestHost resolves to undefined (an unkeyed / no-delivery client needs
   expect(resolveIngestUrl({ ingestPath: '/custom/' })).toBeUndefined();
 });
 
+test('a blank or whitespace-only ingestHost resolves to undefined (no relative-URL target)', () => {
+  expect(resolveIngestUrl({ ingestHost: '' })).toBeUndefined();
+  expect(resolveIngestUrl({ ingestHost: '   ' })).toBeUndefined();
+  expect(resolveIngestUrl({ ingestHost: '  ', ingestPath: '/ingest/' })).toBeUndefined();
+});
+
 test('a bare host appends the default wire capture path with a single separator', () => {
   expect(resolveIngestUrl({ ingestHost: 'https://analytics.example.com' })).toBe(
     'https://analytics.example.com/batch/'

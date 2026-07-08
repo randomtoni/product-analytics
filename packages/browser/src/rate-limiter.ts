@@ -114,8 +114,9 @@ export class RateLimiter {
 
   // Read the backend's back-pressure signal off a completed response (via the
   // injected interpreter) and arm the named scopes' cool-off windows. Called for
-  // EVERY response regardless of status — back-pressure is orthogonal to the
-  // status-based retry decision (a 200 may carry it; a 5xx may co-exist with it).
+  // every COMPLETED response regardless of status — back-pressure is orthogonal to
+  // the status-based retry decision (a 200 may carry it; a 5xx may co-exist with it).
+  // A network throw propagates before this runs — there is no body to interpret.
   async interpretBackPressure(response: NeutralFetchResponse): Promise<void> {
     const signals = await this.interpret(response);
     const now = this.now();

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import type { NeutralEvent } from 'analytics-kit';
 import { assembleBatchBody, mapEventToWire } from './wire-mapper';
+import { containsInsertId } from './wire-scan.test-helper';
 import {
   ANONYMOUS_DISTINCT_ID_KEY,
   MERGE_EVENT,
@@ -16,19 +17,6 @@ function makeEvent(overrides: Partial<NeutralEvent> = {}): NeutralEvent {
     timestamp: new Date('2026-07-08T00:00:00.000Z'),
     ...overrides,
   };
-}
-
-// A deep scan for the legacy random property name anywhere in the mapped shape —
-// top-level or nested inside properties. $insert_id is a separate browser-enrichment
-// property, NOT the dedup key; the de-branded mapper must never emit it.
-function containsInsertId(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(containsInsertId);
-  if (value !== null && typeof value === 'object') {
-    return Object.entries(value).some(
-      ([key, v]) => key === '$insert_id' || key === 'insert_id' || containsInsertId(v)
-    );
-  }
-  return false;
 }
 
 describe('wire-mapper — dedupeId → top-level uuid', () => {

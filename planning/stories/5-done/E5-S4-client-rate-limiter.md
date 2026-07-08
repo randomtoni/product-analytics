@@ -57,3 +57,10 @@ A runaway loop or a backend under load must not hammer the ingest endpoint. A cl
 - **Commit:** `E5-S4-client-rate-limiter — Client token bucket + neutralized back-pressure` on `core-cycle`
 - **Reviewer notes:** 0 critical, 3 suggestions (dead knob options, doc wording, S6 body single-use); S2/S3/E4 green
 - **Cross-story seams exposed:** S4 sits at two orthogonal seams leaving the pipeline intact — token gate (pre-enqueue, peer to bot) + cool-off gate + body-read (inside `postBatch`, ABOVE the fetch so a cooled-off batch never reaches **S5** compression). `undefined=nothing-sent` is the only cross-path signal (no `RequestQueue`/`RetryQueue`/`send` touch). **S6:** a `sendBeacon` path with no readable body → `text()`=''→ no cool-off (correct fire-and-forget); body is single-use in `postBatch` (tee if reading upward). Bar-A back-pressure seam = the injected `BackPressureInterpreter` (a 2nd adapter swaps only that).
+
+## Follow-up
+
+> E5 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Doc wording tightened** — `interpretBackPressure` now documents it runs for "every COMPLETED response" (a network throw propagates before it runs — no body to interpret). (Addresses the S4 cosmetic suggestion.)
+- Skipped-with-reason: the dead `eventsPerSecond`/`burstLimit` knob options wait for a later config-knob story (defaults-only was this epic's scope); the response-body single-use note was already addressed by S6.

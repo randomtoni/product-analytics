@@ -74,7 +74,8 @@ class GzipValidationError extends Error {
 // gzip header magic + deflate method, then the trailer's CRC32 and input-size fields
 // against the original bytes. A mismatch throws, which the caller catches to fall
 // back to the uncompressed path.
-const validateNativeGzip = async (compressed: Blob, inputBytes: Uint8Array): Promise<void> => {
+/** @internal Exported only so unit tests can exercise the failure-detection paths directly; not public API. */
+export const validateNativeGzip = async (compressed: Blob, inputBytes: Uint8Array): Promise<void> => {
   if (compressed.size < GZIP_MIN_VALID_SIZE) {
     throw new GzipValidationError('too-short');
   }

@@ -57,3 +57,10 @@ Idempotent retries only work if client (E5) and server (E7) agree on the single 
 - **Commit:** `E5-S8-per-event-dedupe-id — Settle dedupeId → wire uuid mapping` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions (clarity/test-hardening)
 - **Cross-story seams exposed (S2):** the SINGLE wire-mapper is `wire-mapper.ts` — S2 layers `MERGE_EVENT`/traits normalization ON TOP of `mapEventToWire` (one module, not two), keying off `MERGE_EVENT` + the `set_traits`/`set_traits_once`/`anonymous_distinct_id` `[WIRE]` keys. `WireEvent` (top-level `event`/`distinct_id`/`properties?`/`timestamp?`/`uuid`) is what S2 builds the `data:[]` envelope from. `BrowserAdapter.toWireEvent(event)` (`@internal`) is the per-event hook S2's queue calls before enqueue (pipeline runs first). S2's `flush()` POSTs to `ingestUrl()` (S1; `undefined`=skip). `dedupeId` is v4 for track/page, v7 for merge/traits — carried verbatim; do NOT re-version. Same neutral name as node (E7).
+
+## Follow-up
+
+> E5 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Adapter test deep-scans** — the adapter-level `$insert_id` test now reuses the recursive `containsInsertId` scan (extracted to a test-only `wire-scan.test-helper.ts`, shared with the wire-mapper test) against a nested-property fixture, instead of a shallow check.
+- **`WireEvent.properties` gotcha comment** — a one-line note that the bag is already allowlist-filtered upstream; the mapper is the last `[WIRE]` boundary, NOT a filtering point. (Addresses both S8 reviewer suggestions.)

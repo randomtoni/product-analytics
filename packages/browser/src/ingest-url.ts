@@ -22,6 +22,9 @@ export function resolveIngestUrl(options: IngestUrlOptions): string | undefined 
     return undefined;
   }
   const host = options.ingestHost.trim().replace(/\/+$/, '');
+  if (host === '') {
+    return undefined;
+  }
   const rawPath = options.ingestPath ?? DEFAULT_WIRE_CAPTURE_PATH;
   const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
   return `${host}${path}`;
