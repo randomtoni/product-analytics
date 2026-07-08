@@ -21,6 +21,20 @@ export const COOKIE_MIRRORED_KEYS: readonly string[] = [
   IDENTITY_STATE_KEY,
 ];
 
+// The library-computed / identity keys that share the property store with
+// consumer-registered super-props. They are stamped by the library (or are wire
+// state) — never consumer-supplied — so the super-prop merge-into-events must
+// exclude them. Distinct from COOKIE_MIRRORED_KEYS ("mirror to the cookie?"):
+// this answers "expose on events?", and the two lists will diverge as E6 adds
+// event-visible enrichment keys that are not cookie-mirrored.
+export const RESERVED_EVENT_KEYS: ReadonlySet<string> = new Set([
+  DISTINCT_ID_KEY,
+  DEVICE_ID_KEY,
+  SESSION_ID_KEY,
+  ANONYMOUS_DISTINCT_ID_KEY,
+  IDENTITY_STATE_KEY,
+]);
+
 const STORE_NAME_PREFIX = 'analytics_kit';
 const CONSENT_STORE_PREFIX = 'analytics_kit_consent';
 

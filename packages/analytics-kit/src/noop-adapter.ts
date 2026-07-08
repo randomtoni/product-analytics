@@ -11,6 +11,8 @@ const ANONYMOUS_DISTINCT_ID = 'anonymous';
 export class NoopAdapter implements AnalyticsAdapter {
   capture(): void {}
   identify(): void {}
+  register(): void {}
+  unregister(): void {}
   getDistinctId(): string {
     return ANONYMOUS_DISTINCT_ID;
   }

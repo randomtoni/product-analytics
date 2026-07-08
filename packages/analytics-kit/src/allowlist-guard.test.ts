@@ -4,8 +4,9 @@ import type {
   ConsentState,
   NeutralFetchOptions,
   NeutralFetchResponse,
+  RegisterOptions,
 } from './adapter';
-import type { NeutralEvent, NeutralTraits } from './neutral-event';
+import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 import { AnalyticsProviderImpl } from './analytics-provider';
 import { createAnalytics } from './create-analytics';
 
@@ -14,6 +15,8 @@ class SpyAdapter implements AnalyticsAdapter {
   identified: Array<{ distinctId: string; traits?: NeutralTraits; traitsOnce?: NeutralTraits }> = [];
   grouped: Array<{ type: string; key: string; traits?: NeutralTraits }> = [];
   aliased: Array<{ previousId: string; distinctId: string }> = [];
+  registered: Array<{ props: NeutralProperties; options?: RegisterOptions }> = [];
+  unregistered: string[] = [];
   flushed = 0;
   didShutdown = false;
 
@@ -22,6 +25,12 @@ class SpyAdapter implements AnalyticsAdapter {
   }
   identify(distinctId: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {
     this.identified.push({ distinctId, traits, traitsOnce });
+  }
+  register(props: NeutralProperties, options?: RegisterOptions): void {
+    this.registered.push({ props, options });
+  }
+  unregister(key: string): void {
+    this.unregistered.push(key);
   }
   getDistinctId(): string {
     return 'anonymous';
@@ -136,6 +145,86 @@ test('group props are gated; the group type and key are not gated keys', () => {
   expect(adapter.grouped).toHaveLength(1);
 
   expect(() => analytics.group('company', 'acme', { revenue: 1 })).toThrow(/revenue/);
+});
+
+test('off-list register super-prop throws by default and never reaches adapter.register (identical to a track off-list key)', () => {
+  const adapter = new SpyAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter, ['plan']);
+
+  expect(() => analytics.register({ ssn: '123' })).toThrow(/ssn/);
+  expect(adapter.registered).toHaveLength(0);
+});
+
+test('off-list register super-prop under drop-and-error-log drops-and-logs — no throw, no register call', () => {
+  const errorSpy = spyConsoleError();
+  const adapter = new SpyAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter, ['plan'], 'drop-and-error-log');
+
+  expect(() => analytics.register({ ssn: '123' })).not.toThrow();
+
+  expect(adapter.registered).toHaveLength(0);
+  expect(errorSpy).toHaveBeenCalledTimes(1);
+  expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('ssn'));
+});
+
+test('an on-list register super-prop passes the gate and reaches adapter.register', () => {
+  const adapter = new SpyAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter, ['plan']);
+
+  analytics.register({ plan: 'pro' }, { once: true });
+
+  expect(adapter.registered).toEqual([{ props: { plan: 'pro' }, options: { once: true } }]);
+});
+
+test('register gates the FIRST off-list key of a multi-key bag before persisting', () => {
+  const adapter = new SpyAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter, ['plan']);
+
+  expect(() => analytics.register({ plan: 'pro', ssn: '123' })).toThrow(/ssn/);
+  expect(adapter.registered).toHaveLength(0);
+});
+
+test('unregister is gated consistently — an off-list key throws and never reaches adapter.unregister', () => {
+  const adapter = new SpyAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter, ['plan']);
+
+  expect(() => analytics.unregister('ssn')).toThrow(/ssn/);
+  expect(adapter.unregistered).toHaveLength(0);
+
+  // an on-list key passes the gate and reaches the adapter
+  analytics.unregister('plan');
+  expect(adapter.unregistered).toEqual(['plan']);
+});
+
+test('the register gate fires even after optOut — a super-prop violation surfaces loudly while opted out', () => {
+  const adapter = new SpyAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter, ['plan']);
+
+  analytics.optOut();
+
+  expect(() => analytics.register({ secret: 1 })).toThrow(/secret/);
+  // an on-list super-prop while opted out is swallowed by the no-op — no throw, no register
+  expect(() => analytics.register({ plan: 'pro' })).not.toThrow();
+  expect(adapter.registered).toHaveLength(0);
+});
+
+test('an undefined allowlist leaves register ungated — any super-prop passes', () => {
+  const adapter = new SpyAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.register({ anyKey: 1 });
+
+  expect(adapter.registered).toEqual([{ props: { anyKey: 1 }, options: undefined }]);
+});
+
+test('createAnalytics threads the allowlist into register — off-list throws, on-list passes', () => {
+  const adapter = new SpyAdapter();
+  const analytics = createAnalytics({ allowlist: ['plan'] }, adapter);
+
+  analytics.register({ plan: 'pro' });
+  expect(adapter.registered).toHaveLength(1);
+
+  expect(() => analytics.register({ secret: 1 })).toThrow(/secret/);
 });
 
 test('setTraits traits are gated like track', () => {

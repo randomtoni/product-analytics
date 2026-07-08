@@ -30,6 +30,8 @@ export interface AnalyticsProvider<TX extends TaxonomyShape = DefaultTaxonomySha
   ): void;
   reset(): void;
   setTraits(traits: Partial<TX['traits']>, once?: boolean): void;
+  register(props: NeutralProperties, options?: { once?: boolean }): void;
+  unregister(key: string): void;
   optIn(): void;
   optOut(): void;
   hasOptedOut(): boolean;
@@ -97,6 +99,23 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
     } else {
       this.adapter.identify(this.currentDistinctId(), traits);
     }
+  }
+
+  register(props: NeutralProperties, options?: { once?: boolean }): void {
+    // Gate the incoming super-props at registration — the ONE consumer-supplied
+    // source that flows downstream into every event — reusing the E3 whole-bag
+    // drop/throw semantics verbatim. Stored super-props are trusted at merge time
+    // because they crossed the gate here.
+    if (!this.allowed(props)) return;
+    this.adapter.register(props, options);
+  }
+
+  unregister(key: string): void {
+    // Gate consistently with register: a key not on the allowlist behaves like an
+    // off-list track key (throw / drop-and-error-log). Routing the removal through
+    // the consent-swappable adapter keeps it inert under opt-out.
+    if (!this.allowed({ [key]: undefined })) return;
+    this.adapter.unregister(key);
   }
 
   reset(): void {

@@ -4,6 +4,7 @@ import type {
   ConsentState,
   NeutralFetchOptions,
   NeutralFetchResponse,
+  RegisterOptions,
 } from './adapter';
 import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 import { AnalyticsProviderImpl, type AnalyticsProvider } from './analytics-provider';
@@ -20,6 +21,8 @@ class RecordingAdapter implements AnalyticsAdapter {
   identified: Array<{ distinctId: string; traits?: NeutralTraits; traitsOnce?: NeutralTraits }> = [];
   grouped: Array<{ type: string; key: string; traits?: NeutralTraits }> = [];
   aliased: Array<{ previousId: string; distinctId: string }> = [];
+  registered: Array<{ props: NeutralProperties; options?: RegisterOptions }> = [];
+  unregistered: string[] = [];
   flushed = 0;
   didShutdown = false;
   store = new Map<string, unknown>();
@@ -34,6 +37,12 @@ class RecordingAdapter implements AnalyticsAdapter {
   }
   identify(distinctId: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {
     this.identified.push({ distinctId, traits, traitsOnce });
+  }
+  register(props: NeutralProperties, options?: RegisterOptions): void {
+    this.registered.push({ props, options });
+  }
+  unregister(key: string): void {
+    this.unregistered.push(key);
   }
   getDistinctId(): string {
     this.distinctIdReads += 1;
@@ -201,6 +210,48 @@ test('setTraits routes to the identify set-once-path when once is true', () => {
   const [call] = adapter.identified;
   expect(call.traits).toBeUndefined();
   expect(call.traitsOnce).toEqual({ plan: 'pro' });
+});
+
+test('register delegates the props bag to adapter.register with no options by default', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.register({ plan: 'pro' });
+
+  expect(adapter.registered).toEqual([{ props: { plan: 'pro' }, options: undefined }]);
+});
+
+test('register threads the collapsed once flag through to adapter.register', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.register({ plan: 'pro' }, { once: true });
+
+  expect(adapter.registered).toEqual([{ props: { plan: 'pro' }, options: { once: true } }]);
+});
+
+test('unregister delegates the single key to adapter.unregister', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.unregister('plan');
+
+  expect(adapter.unregistered).toEqual(['plan']);
+});
+
+test('under opt-out register/unregister route to the no-op — the live adapter records nothing', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  analytics.register({ plan: 'pro' });
+  analytics.register({ firstSeen: 1 }, { once: true });
+  analytics.unregister('plan');
+
+  expect(adapter.registered).toHaveLength(0);
+  expect(adapter.unregistered).toHaveLength(0);
+  // No persistence write reaches the live adapter while opted out.
+  expect(adapter.persistedWrites).toHaveLength(0);
 });
 
 test('flush delegates to adapter.flush and resolves', async () => {
@@ -516,7 +567,7 @@ test('the impl class is not exported from the package entrypoint', () => {
   expect('AnalyticsProviderImpl' in pkg).toBe(false);
 });
 
-test('AnalyticsProvider exposes exactly the thirteen §1 members (verbs + consent trio + optional capability ports)', () => {
+test('AnalyticsProvider exposes exactly the fifteen §1 members (verbs + super-prop pair + consent trio + optional capability ports)', () => {
   expectTypeOf<keyof AnalyticsProvider>().toEqualTypeOf<
     | 'track'
     | 'identify'
@@ -524,6 +575,8 @@ test('AnalyticsProvider exposes exactly the thirteen §1 members (verbs + consen
     | 'group'
     | 'reset'
     | 'setTraits'
+    | 'register'
+    | 'unregister'
     | 'optIn'
     | 'optOut'
     | 'hasOptedOut'
@@ -582,6 +635,13 @@ test('AnalyticsProvider method signatures are pinned (compile-time)', () => {
   expectTypeOf<AnalyticsProvider['setTraits']>().toEqualTypeOf<
     (traits: Partial<NeutralTraits>, once?: boolean) => void
   >();
+  // Collapsed once-flag super-prop shape: register(props, { once? }) + unregister(key).
+  expectTypeOf<AnalyticsProvider['register']>().toEqualTypeOf<
+    (props: NeutralProperties, options?: { once?: boolean }) => void
+  >();
+  expectTypeOf<AnalyticsProvider['register']>().toBeCallableWith({ plan: 'pro' });
+  expectTypeOf<AnalyticsProvider['register']>().toBeCallableWith({ plan: 'pro' }, { once: true });
+  expectTypeOf<AnalyticsProvider['unregister']>().toEqualTypeOf<(key: string) => void>();
   expectTypeOf<AnalyticsProvider['page']>().toEqualTypeOf<
     (name?: string, props?: NeutralProperties) => void
   >();

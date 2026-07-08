@@ -26,6 +26,8 @@ class RecordingAdapter implements AnalyticsAdapter {
   identify(distinctId: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {
     this.identified.push({ distinctId, traits, traitsOnce });
   }
+  register(): void {}
+  unregister(): void {}
   getDistinctId(): string {
     return 'anonymous';
   }

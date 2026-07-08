@@ -23,6 +23,8 @@ class RecordingAdapter implements AnalyticsAdapter {
   identify(distinctId: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {
     this.identified.push({ distinctId, traits, traitsOnce });
   }
+  register(): void {}
+  unregister(): void {}
   getDistinctId(): string {
     return 'anonymous';
   }
@@ -176,6 +178,11 @@ test('SPI signatures are pinned to the neutral types (compile-time)', () => {
   expectTypeOf<AnalyticsAdapter['capture']>().parameters.toEqualTypeOf<[NeutralEvent]>();
   expectTypeOf<AnalyticsAdapter['capture']>().returns.toEqualTypeOf<void>();
   expectTypeOf<AnalyticsAdapter['identify']>().returns.toEqualTypeOf<void>();
+  expectTypeOf<AnalyticsAdapter['register']>().toBeCallableWith({ plan: 'pro' });
+  expectTypeOf<AnalyticsAdapter['register']>().toBeCallableWith({ plan: 'pro' }, { once: true });
+  expectTypeOf<AnalyticsAdapter['register']>().returns.toEqualTypeOf<void>();
+  expectTypeOf<AnalyticsAdapter['unregister']>().parameters.toEqualTypeOf<[string]>();
+  expectTypeOf<AnalyticsAdapter['unregister']>().returns.toEqualTypeOf<void>();
   expectTypeOf<AnalyticsAdapter['group']>().returns.toEqualTypeOf<void>();
   expectTypeOf<AnalyticsAdapter['alias']>().returns.toEqualTypeOf<void>();
   expectTypeOf<AnalyticsAdapter['flush']>().returns.toEqualTypeOf<Promise<void>>();

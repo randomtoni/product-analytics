@@ -18,6 +18,16 @@ test('capture/identify/group/alias are silent no-ops that do not throw', () => {
   }).not.toThrow();
 });
 
+test('register and unregister are silent no-ops that do not throw', () => {
+  const adapter: AnalyticsAdapter = new NoopAdapter();
+
+  expect(() => {
+    adapter.register({ plan: 'pro' });
+    adapter.register({ plan: 'pro' }, { once: true });
+    adapter.unregister('plan');
+  }).not.toThrow();
+});
+
 test('flush and shutdown resolve to undefined', async () => {
   const adapter: AnalyticsAdapter = new NoopAdapter();
 

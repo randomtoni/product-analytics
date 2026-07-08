@@ -4,6 +4,7 @@ import type {
   ConsentState,
   NeutralFetchOptions,
   NeutralFetchResponse,
+  RegisterOptions,
 } from './adapter';
 import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 import { createAnalytics } from './create-analytics';
@@ -15,12 +16,20 @@ class SpyAdapter implements AnalyticsAdapter {
   identified: Array<{ distinctId: string; traits?: NeutralTraits; traitsOnce?: NeutralTraits }> = [];
   grouped: Array<{ type: string; key: string; traits?: NeutralTraits }> = [];
   aliased: Array<{ previousId: string; distinctId: string }> = [];
+  registered: Array<{ props: NeutralProperties; options?: RegisterOptions }> = [];
+  unregistered: string[] = [];
 
   capture(event: NeutralEvent): void {
     this.captured.push(event);
   }
   identify(distinctId: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {
     this.identified.push({ distinctId, traits, traitsOnce });
+  }
+  register(props: NeutralProperties, options?: RegisterOptions): void {
+    this.registered.push({ props, options });
+  }
+  unregister(key: string): void {
+    this.unregistered.push(key);
   }
   getDistinctId(): string {
     return 'anonymous';

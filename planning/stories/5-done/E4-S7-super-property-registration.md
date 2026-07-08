@@ -50,7 +50,20 @@ Super-properties ride on every event, which makes them the one consumer-supplied
 - **Public-surface type-pin must be bumped (refiner 2026-07-08):** `register` and `unregister` are NEW public `AnalyticsProvider` members, so the exact-match `keyof AnalyticsProvider` type-pin in `analytics-provider.test.ts` (currently the 13-member union at ~line 310) must grow to 15 (`… | 'register' | 'unregister'`), and the signature-pin block (~line 360) should gain `register`/`unregister` callability pins. Missing this fails `typecheck`/`test`. (`setTraits(traits, once?)` and `identify(id, traits, traitsOnce)` are unchanged — this story adds only the two super-prop methods.)
 - **SPI growth touches ALL in-repo adapter implementors (refiner 2026-07-08):** adding required `register` / `unregister` verbs breaks every `AnalyticsAdapter` implementor until updated — `NoopAdapter` plus the five seam test doubles (`RecordingAdapter` ×3 in `analytics-provider.test.ts` / `adapter.test.ts` / `create-analytics.test.ts`, `SpyAdapter` ×2 in `allowlist.test.ts` / `allowlist-guard.test.ts`). Update them in this story to keep the 93 shipped tests typechecking/green.
 - reference: `posthog-js/packages/browser` `register` / `register_once`; de-brand.
+- > Reviewer suggestion (2026-07-08, later-slice perf): `mergeSuperProperties` snapshots the whole store via `store.entries()` + filters reserved keys on every capture (per-event O(keys) allocation). Fine now; as the store grows (S8/E6) consider a cached filtered super-prop view invalidated on register/unregister.
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate): `unregister` gates on `{ [key]: undefined }` — correct only because `allowed()` inspects `Object.keys` and never values. Document that coupling (or add a tiny guard) so a future value-inspecting `allowed()` can't silently break this call site.
 
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files changed (seam):** `adapter.ts` (+`RegisterOptions` + SPI `register`/`unregister`), `analytics-provider.ts` (facade interface+impl `register`/`unregister` running `allowed()`), `noop-adapter.ts` (no-op), `index.ts` (export `RegisterOptions`) + 5 test doubles
+- **Files changed (browser):** `browser-adapter.ts` (`register`/`unregister`→S2 store; `mergeSuperProperties()` trusted merge minus reserved keys), `persistence-keys.ts` (+`RESERVED_EVENT_KEYS`), `persistence-store.ts` (+`entries()` defensive snapshot)
+- **New public API:** `AnalyticsProvider.register(props, options?:{once?:boolean})` + `unregister(key)`; SPI `register`/`unregister`; `RegisterOptions`. NO separate `registerOnce` verb.
+- **Tests added:** seam +13 (type-pin 13→15, register/unregister delegation + gate + opt-out-inert + off-list-throws-while-opted-out) → 126; browser +10 (persist+merge-no-double-gate, once/overwrite/unregister, per-call-wins, reserved-keys-never-merged) → 101
+- **Commit:** `E4-S7-super-property-registration — Super-property register / unregister (collapsed once-flag), allowlist-gated at registration` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 suggestions (per-event merge perf; unregister sentinel coupling)
+- **Cross-story seams exposed:** `mergeSuperProperties()` is the trusted-downstream hook (merges consumer super-props into event `properties` minus `RESERVED_EVENT_KEYS`), runs AFTER `stampSessionId()` in `runCapturePipeline`. **S8:** `session_id` already in `RESERVED_EVENT_KEYS` so a stamped session id won't leak via the merge. Super-prop WRITES route through consent-swappable `adapter` (inert under opt-out) but the gate fires loud regardless. `keyof AnalyticsProvider` pin is now 15 — any later facade method bumps it again.
 ## Shipped
 
 <!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/

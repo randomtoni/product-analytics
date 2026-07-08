@@ -31,24 +31,27 @@ test('capture runs without throwing and returns void', () => {
   expect(adapter.capture(makeEvent())).toBeUndefined();
 });
 
-test('the capture pipeline is a pass-through today — S8 sessionId hook not yet stamping', () => {
+test('the capture pipeline leaves sessionId untouched with no super-props registered — S8 hook not yet stamping', () => {
   const adapter = new BrowserAdapter({ key: freshKey() });
   const event = makeEvent();
 
   const result = adapter.runCapturePipeline(event);
 
   expect(result.sessionId).toBeUndefined();
-  expect(result).toEqual(event);
+  // No consumer super-props registered ⇒ properties bag is unchanged (identity keys
+  // in the store are reserved and never merged in).
+  expect(result.properties).toBeUndefined();
 });
 
-test('the capture pipeline preserves an already-set sessionId (S7 super-prop hook not yet merging)', () => {
+test('the capture pipeline preserves an already-set sessionId while merging super-props', () => {
   const adapter = new BrowserAdapter({ key: freshKey() });
+  adapter.register({ plan: 'pro' });
   const event = makeEvent({ sessionId: 'session-1', properties: { a: 1 } });
 
   const result = adapter.runCapturePipeline(event);
 
   expect(result.sessionId).toBe('session-1');
-  expect(result.properties).toEqual({ a: 1 });
+  expect(result.properties).toEqual({ plan: 'pro', a: 1 });
 });
 
 test('a fresh store reads back nothing for a never-written key', () => {
@@ -261,4 +264,82 @@ test('the device-id generator is injectable — swaps the device-id scheme only'
   expect(adapter.getPersistedProperty(DEVICE_ID_KEY)).toBe('injected-device-scheme');
   // The distinct id is untouched by the device-id scheme swap.
   expect(adapter.getDistinctId()).toMatch(UUID_V7);
+});
+
+describe('super-property registration (S7)', () => {
+  test('register persists a super-prop and merges it into a subsequently captured event — trusted, no re-gate', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    adapter.register({ plan: 'pro' });
+
+    // Persisted (S2 storage).
+    expect(adapter.getPersistedProperty('plan')).toBe('pro');
+    // Merged downstream into the event property bag.
+    const result = adapter.runCapturePipeline(makeEvent({ properties: { a: 1 } }));
+    expect(result.properties).toEqual({ plan: 'pro', a: 1 });
+  });
+
+  test('register overwrites an existing super-prop', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    adapter.register({ plan: 'free' });
+    adapter.register({ plan: 'pro' });
+
+    expect(adapter.getPersistedProperty('plan')).toBe('pro');
+  });
+
+  test('register(props, { once: true }) keeps the first value (first-touch-immutable)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    adapter.register({ plan: 'free' }, { once: true });
+    adapter.register({ plan: 'pro' }, { once: true });
+
+    expect(adapter.getPersistedProperty('plan')).toBe('free');
+  });
+
+  test('unregister removes a super-prop — it no longer persists or merges', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.register({ plan: 'pro' });
+
+    adapter.unregister('plan');
+
+    expect(adapter.getPersistedProperty('plan')).toBeUndefined();
+    const result = adapter.runCapturePipeline(makeEvent());
+    expect(result.properties).toBeUndefined();
+  });
+
+  test('a per-call event property WINS over a registered super-prop of the same key (super-props are defaults)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.register({ plan: 'free' });
+
+    const result = adapter.runCapturePipeline(makeEvent({ properties: { plan: 'pro' } }));
+
+    expect(result.properties).toEqual({ plan: 'pro' });
+  });
+
+  test('identity / library-computed keys are NEVER merged into events — the reserved-key exemption holds', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    // The adapter has already seeded distinct_id / device_id / identity_state into the
+    // same store at construction; register a consumer super-prop alongside them.
+    adapter.register({ plan: 'pro' });
+
+    const result = adapter.runCapturePipeline(makeEvent());
+
+    // Only the consumer super-prop rides on the event — the reserved identity keys do not.
+    expect(result.properties).toEqual({ plan: 'pro' });
+    expect(result.properties).not.toHaveProperty(DISTINCT_ID_KEY);
+    expect(result.properties).not.toHaveProperty(DEVICE_ID_KEY);
+    expect(result.properties).not.toHaveProperty(IDENTITY_STATE_KEY);
+  });
+
+  test('multiple registered super-props all merge into the event', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    adapter.register({ plan: 'pro' });
+    adapter.register({ theme: 'dark' }, { once: true });
+
+    const result = adapter.runCapturePipeline(makeEvent({ properties: { a: 1 } }));
+
+    expect(result.properties).toEqual({ plan: 'pro', theme: 'dark', a: 1 });
+  });
 });

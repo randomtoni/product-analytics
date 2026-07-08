@@ -2,8 +2,10 @@ import type {
   AnalyticsAdapter,
   ConsentState,
   NeutralEvent,
+  NeutralProperties,
   NeutralFetchOptions,
   NeutralFetchResponse,
+  RegisterOptions,
 } from 'analytics-kit';
 import {
   buildPropsBackend,
@@ -13,7 +15,7 @@ import {
   type PersistenceMode,
   type StorageBackend,
 } from './storage-backends';
-import { consentStoreName, storeName } from './persistence-keys';
+import { consentStoreName, storeName, RESERVED_EVENT_KEYS } from './persistence-keys';
 import { ConsentStore } from './consent';
 import { PersistenceStore } from './persistence-store';
 import { IdentityStore, type IdGenerator } from './identity-store';
@@ -87,8 +89,31 @@ export class BrowserAdapter implements AnalyticsAdapter {
   }
 
   private mergeSuperProperties(event: NeutralEvent): NeutralEvent {
-    // S7 (super-properties) replaces this pass-through with the registered-super-prop merge.
-    return event;
+    // Merge registered super-props into the event, trusted (they passed the E3
+    // gate at registration — no re-gate). Super-props are defaults: a per-call
+    // property of the same key wins. Library-computed / identity keys share the
+    // store, so exclude them — they are stamped elsewhere, not consumer super-props.
+    const superProps: NeutralProperties = {};
+    for (const [key, value] of Object.entries(this.store.entries())) {
+      if (RESERVED_EVENT_KEYS.has(key)) continue;
+      superProps[key] = value;
+    }
+    if (Object.keys(superProps).length === 0) {
+      return event;
+    }
+    return { ...event, properties: { ...superProps, ...event.properties } };
+  }
+
+  register(props: NeutralProperties, options?: RegisterOptions): void {
+    if (options?.once) {
+      this.store.registerOnce(props);
+    } else {
+      this.store.register(props);
+    }
+  }
+
+  unregister(key: string): void {
+    this.store.unregister(key);
   }
 
   identify(): void {

@@ -6,6 +6,7 @@ export type {
   ConsentState,
   NeutralFetchOptions,
   NeutralFetchResponse,
+  RegisterOptions,
 } from './adapter';
 export type { AnalyticsProvider } from './analytics-provider';
 export type { FeatureFlagPort, SessionReplayPort } from './ports';

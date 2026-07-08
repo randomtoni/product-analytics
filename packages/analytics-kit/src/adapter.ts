@@ -1,4 +1,4 @@
-import type { NeutralEvent, NeutralTraits } from './neutral-event';
+import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 
 export type ConsentState = 'granted' | 'denied' | 'pending';
 
@@ -14,9 +14,19 @@ export interface NeutralFetchResponse {
   json(): Promise<unknown>;
 }
 
+export interface RegisterOptions {
+  once?: boolean;
+}
+
 export interface AnalyticsAdapter {
   capture(event: NeutralEvent): void;
   identify(distinctId: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void;
+  // Super-property registration: `register` overwrites; `register(props, { once })`
+  // keeps the first value. `unregister` removes a single key. The stored super-props
+  // are merged into every captured event downstream, trusted — the facade gated them
+  // at registration, so the merge never re-gates.
+  register(props: NeutralProperties, options?: RegisterOptions): void;
+  unregister(key: string): void;
   // A cheap synchronous in-memory read: the implementor loads persistence once at
   // init and caches the current distinct id — it does NOT hit storage per call.
   getDistinctId(): string;

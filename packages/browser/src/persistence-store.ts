@@ -40,6 +40,12 @@ export class PersistenceStore {
     return this.props[key] as T | undefined;
   }
 
+  // A shallow snapshot of every stored property. The caller owns the copy, so a
+  // downstream mutation (e.g. merging into an event) can't corrupt the store.
+  entries(): StorageEntry {
+    return { ...this.props };
+  }
+
   // Overwrites: a key already present is replaced with the new value.
   register(props: StorageEntry): boolean {
     let changed = false;
