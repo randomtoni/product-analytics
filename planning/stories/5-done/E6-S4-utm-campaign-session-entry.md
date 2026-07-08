@@ -47,3 +47,18 @@ Campaign attribution (UTM params, click-ids) and the set-once "initial" / sessio
 - Library-computed ⇒ trusted; only consumer-supplied values are allowlist-gated. — architect (2026-07-07): epic §E6.4.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08): `getQueryParam` reimplements a manual query-param parser (faithful to posthog + well-tested) where `new URL(url).searchParams.get(param)` (already used for `hostOf`/`pathnameOf` in the same file) would be shorter — simplify unless matching posthog's exact duplicate/valueless-param edge behavior is deliberate.
+- > Reviewer suggestion (2026-07-08, efficiency nit): `writeInitialProps()` re-parses the URL + re-derives the full `initial_*` bag on EVERY capture though `registerOnce` no-ops after first touch — a cheap sentinel-key guard would skip the per-event derivation. Behavior correct as written.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (browser):** `attribution-enrichment.ts` (PURE state-free derivations: `parseCampaignParams` per-event, `buildEntryInfo`/`derivePersonProps` shared, `deriveSessionEntryProps` per-session, `deriveInitialProps` set-once; de-branded `CAMPAIGN_PARAMS`; `EntryInfo {referrer,url}` = posthog `{r,u}`) + test
+- **Files changed:** `browser-adapter.ts` (three lifespans wired into `runCapturePipeline` via `enrichAttribution`/`maintainSessionEntry`/`writeInitialProps`/`sessionEntryProps`; **refactored S1's `detectSessionRotation` → pure `classifySessionTransition`→`'adopted'|'rotated'|'same'` + `commitSessionTransition` (commit-last) so ONE verdict serves both the pageview-clear (rotated-only) and entry-recapture (adopted-or-rotated)**), `persistence-keys.ts` (+`SESSION_ENTRY_PROPS_KEY` in `RESERVED_EVENT_KEYS` so the raw snapshot never leaks)
+- **New public API:** none — all attribution adapter-internal, neutral keys (no `$`), library-computed ⇒ trusted (NOT gated). Seam UNCHANGED.
+- **Three lifespans:** per-event UTM/click-id (fresh when present); per-session `session_entry_*` (url+referrer only, once per session, reset on rotation); set-once `initial_*` (via existing `store.registerOnce`, never overwritten)
+- **Tests added:** browser +27 (attribution-enrichment 15 pure + adapter 12: three-lifespan-divergence, rotation-recapture, snapshot-no-leak, set-once-not-overwritten, trusted-not-gated-under-restrictive-allowlist end-to-end) → 494; seam 139
+- **Commit:** `E6-S4-utm-campaign-session-entry — UTM/campaign parse + set-once attribution` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 efficiency-nit suggestions; S1 pageview tests no-regression (494 green)
+- **Cross-story seams exposed:** **S5** toggles the three independently — one-line gates: `utm`=gate the `parseCampaignParams()` spread; `session-entry`=gate the `sessionEntryProps()` spread (+`maintainSessionEntry`); `initial`=gate the `writeInitialProps()` call. **S6** country is consumer-supplied ⇒ E3-gated → route through facade `register`, NOT this trusted module; the `RESERVED_EVENT_KEYS`/`register` split is ready. `classifySessionTransition` verdict is the shared rotation substrate for any future per-session record.

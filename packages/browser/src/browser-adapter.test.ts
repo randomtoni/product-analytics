@@ -3140,3 +3140,249 @@ describe('per-event context enrichment (E6-S3)', () => {
     }
   });
 });
+
+describe('UTM/campaign + session-entry + initial attribution (E6-S4)', () => {
+  const INGEST = 'https://analytics.example.com';
+  const IDLE_MS = 30 * 60 * 1000;
+
+  const liveAdapters: BrowserAdapter[] = [];
+  function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
+    const adapter = new BrowserAdapter(options);
+    liveAdapters.push(adapter);
+    return adapter;
+  }
+
+  // Navigate jsdom to a URL (query string included) so the per-event campaign parse and
+  // the entry snapshot read a real href. Restored to '/' after each test.
+  function goTo(href: string): void {
+    window.history.pushState({}, '', href);
+  }
+
+  const beaconCleanups: (() => void)[] = [];
+  function spyBeacon(): { url: string; body: string | Uint8Array; contentType: string }[] {
+    beaconMock.calls.length = 0;
+    beaconMock.returns = true;
+    const nav = navigator as unknown as { sendBeacon?: (url: string) => boolean };
+    const had = 'sendBeacon' in nav;
+    const prior = nav.sendBeacon;
+    nav.sendBeacon = () => true;
+    beaconCleanups.push(() => {
+      if (had) nav.sendBeacon = prior;
+      else delete nav.sendBeacon;
+    });
+    return beaconMock.calls;
+  }
+
+  function wireEventsInBeacons(
+    beacons: { body: string | Uint8Array }[]
+  ): Record<string, unknown>[] {
+    const events: Record<string, unknown>[] = [];
+    for (const beacon of beacons) {
+      const text = typeof beacon.body === 'string' ? beacon.body : '';
+      if (!text) continue;
+      const parsed = JSON.parse(text) as { data?: Record<string, unknown>[] };
+      for (const evt of parsed.data ?? []) events.push(evt);
+    }
+    return events;
+  }
+
+  afterEach(() => {
+    for (const adapter of liveAdapters.splice(0)) {
+      (adapter as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    }
+    for (const cleanup of beaconCleanups.splice(0)) cleanup();
+    beaconMock.calls.length = 0;
+    window.history.pushState({}, '', '/');
+    vi.restoreAllMocks();
+  });
+
+  // --- LIFESPAN 1: UTM/campaign parse (per-event, fresh when present) ---
+
+  test('a URL carrying utm_*/click-id params stamps the neutral keys on the event — none $-prefixed', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+    goTo('/landing?utm_source=news&utm_medium=email&utm_campaign=spring&gclid=g123&fbclid=f456');
+
+    const props = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+    expect(props.utm_source).toBe('news');
+    expect(props.utm_medium).toBe('email');
+    expect(props.utm_campaign).toBe('spring');
+    expect(props.gclid).toBe('g123');
+    expect(props.fbclid).toBe('f456');
+    for (const key of Object.keys(props)) {
+      expect(key.startsWith('$')).toBe(false);
+    }
+  });
+
+  test('absent campaign params emit NO utm_/click-id keys', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+    goTo('/plain?ref=friend');
+
+    const props = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+    expect(props).not.toHaveProperty('utm_source');
+    expect(props).not.toHaveProperty('utm_medium');
+    expect(props).not.toHaveProperty('gclid');
+  });
+
+  test('campaign params are FRESH per event — a navigation between captures is reflected (per-event lifespan)', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+
+    goTo('/a?utm_source=first');
+    const first = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+    goTo('/b?utm_source=second');
+    const second = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+    expect(first.utm_source).toBe('first');
+    expect(second.utm_source).toBe('second');
+  });
+
+  test('a per-call consumer prop of the same key WINS over the parsed campaign param (attribution is a default)', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+    goTo('/?utm_source=news');
+
+    const props = adapter
+      .runCapturePipeline(makeEvent({ properties: { utm_source: 'consumer' } }))
+      .properties as Record<string, unknown>;
+
+    expect(props.utm_source).toBe('consumer');
+  });
+
+  // --- LIFESPAN 2: session-entry props (per-session, reset on rotation) ---
+
+  test('session-entry url + referrer are captured once at session start and re-emitted on every event that session', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/');
+    goTo('/entry?utm_source=news');
+
+    const first = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+    // The consumer navigates deeper; the session-entry props must stay pinned to the ENTRY.
+    goTo('/deeper?utm_source=changed');
+    const second = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+    for (const props of [first, second]) {
+      expect(props.session_entry_url).toBe('http://localhost:3000/entry?utm_source=news');
+      expect(props.session_entry_referrer).toBe('https://ref.example.com/');
+      expect(props.session_entry_referring_domain).toBe('ref.example.com');
+      expect(props.session_entry_utm_source).toBe('news');
+    }
+    // The PER-EVENT campaign param on the second event reflects the new URL, while the
+    // per-SESSION entry param stays pinned to entry — the two lifespans are distinct.
+    expect(second.utm_source).toBe('changed');
+    expect(second.session_entry_utm_source).toBe('news');
+  });
+
+  test('a session rotation (idle expiry) RE-CAPTURES fresh entry props for the new session', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    goTo('/first-entry?utm_source=alpha');
+    const s1 = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base) }));
+    const firstProps = s1.properties as Record<string, unknown>;
+    expect(firstProps.session_entry_url).toBe('http://localhost:3000/first-entry?utm_source=alpha');
+
+    // Navigate, then fire an event past the idle window → session rotates → entry re-captured.
+    goTo('/second-entry?utm_source=beta');
+    const s2 = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base + IDLE_MS + 1) }));
+    expect(s2.sessionId).not.toBe(s1.sessionId);
+    const secondProps = s2.properties as Record<string, unknown>;
+    expect(secondProps.session_entry_url).toBe('http://localhost:3000/second-entry?utm_source=beta');
+    expect(secondProps.session_entry_utm_source).toBe('beta');
+  });
+
+  test('the raw session-entry snapshot NEVER leaks onto events as a super-prop (only the derived session_entry_* keys ride)', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+    goTo('/entry?utm_source=news');
+
+    const props = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+    // The raw {sessionId, info} blob under the internal key is excluded from the merge.
+    expect(props).not.toHaveProperty('session_entry_props');
+    expect(props.session_entry_url).toBe('http://localhost:3000/entry?utm_source=news');
+  });
+
+  test('session_entry_* keys stay neutral — none $-prefixed (bar A)', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+    goTo('/entry?utm_source=news');
+
+    const props = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+    for (const key of Object.keys(props)) {
+      expect(key.startsWith('$')).toBe(false);
+    }
+    expect(props).toHaveProperty('session_entry_url');
+  });
+
+  // --- LIFESPAN 3: initial/set-once person props (set-once-per-identity) ---
+
+  test('initial_* attribution props are written set-once on first touch', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+    vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/');
+    goTo('/first?utm_source=news&utm_campaign=spring');
+
+    const props = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+    expect(props.initial_referrer).toBe('https://ref.example.com/');
+    expect(props.initial_referring_domain).toBe('ref.example.com');
+    expect(props.initial_url).toBe('http://localhost:3000/first?utm_source=news&utm_campaign=spring');
+    expect(props.initial_utm_source).toBe('news');
+    expect(props.initial_utm_campaign).toBe('spring');
+    for (const key of Object.keys(props)) {
+      expect(key.startsWith('$')).toBe(false);
+    }
+  });
+
+  test('initial_* is NOT overwritten by a later capture with different params (set-once, not fresh)', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+    goTo('/first?utm_source=news&utm_campaign=spring');
+
+    const first = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+    expect(first.initial_utm_source).toBe('news');
+
+    // A later capture from a DIFFERENT url with different params must NOT overwrite initial_*.
+    goTo('/later?utm_source=other&utm_campaign=summer');
+    const second = adapter.runCapturePipeline(makeEvent()).properties as Record<string, unknown>;
+
+    // The initial props are pinned to first touch; the per-event campaign params are fresh.
+    expect(second.initial_utm_source).toBe('news');
+    expect(second.initial_utm_campaign).toBe('spring');
+    expect(second.initial_url).toBe('http://localhost:3000/first?utm_source=news&utm_campaign=spring');
+    expect(second.utm_source).toBe('other');
+  });
+
+  test('initial_* persists in the store under its own set-once keys, readable via getPersistedProperty', () => {
+    const adapter = makeAdapter({ key: freshKey() });
+    goTo('/first?utm_source=news');
+
+    adapter.runCapturePipeline(makeEvent());
+
+    expect(adapter.getPersistedProperty('initial_utm_source')).toBe('news');
+    expect(adapter.getPersistedProperty('initial_referring_domain')).toBe('direct');
+  });
+
+  // --- bar A + E3: library-computed ⇒ trusted, NOT allowlist-gated ---
+
+  test('utm/session-entry/initial keys are NOT allowlist-gated — they survive a restrictive facade allowlist (bar A + E3)', () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const analytics = createAnalytics(
+      { allowlist: ['ref'], onViolation: 'drop-and-error-log', consentDefault: 'granted' },
+      adapter
+    );
+    goTo('/campaign?utm_source=news&gclid=g1');
+    const beacons = spyBeacon();
+
+    analytics.track('signed_up', { ref: 'nav' });
+    adapter.unload();
+
+    const events = wireEventsInBeacons(beacons).filter((e) => e.event === 'signed_up');
+    expect(events).toHaveLength(1);
+    const props = events[0].properties as Record<string, unknown>;
+    // The consumer prop passed the allowlist; the library-computed attribution rode
+    // through ungated alongside it — utm (per-event), session-entry (per-session), initial.
+    expect(props.ref).toBe('nav');
+    expect(props.utm_source).toBe('news');
+    expect(props.gclid).toBe('g1');
+    expect(props.session_entry_url).toBe('http://localhost:3000/campaign?utm_source=news&gclid=g1');
+    expect(props.initial_utm_source).toBe('news');
+  });
+});

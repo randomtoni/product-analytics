@@ -4,6 +4,15 @@ export const SESSION_ID_KEY = 'session_id';
 export const ANONYMOUS_DISTINCT_ID_KEY = 'anonymous_distinct_id';
 export const IDENTITY_STATE_KEY = 'identity_state';
 
+// The persisted per-session entry snapshot: the raw `{ sessionId, referrer, url }` that
+// the neutral `session_entry_*` props are DERIVED from, keyed by the session it was
+// captured under so its lifespan equals the session id's (reset on rotation). Persisted
+// (survives a reload within the same session) but NEVER event-visible as a raw super-prop
+// — the derived `session_entry_*` keys are what ride events. De-branded from posthog's
+// CLIENT_SESSION_PROPS (persisted + `exposure: 'hidden'`); listed in RESERVED_EVENT_KEYS
+// below so the super-prop merge excludes it.
+export const SESSION_ENTRY_PROPS_KEY = 'session_entry_props';
+
 // The explicit neutral identity state persisted under IDENTITY_STATE_KEY. Modeled
 // as a value (not the id-equality trick), and de-branded — no `$`-prefixed name.
 export type IdentityState = 'anonymous' | 'identified';
@@ -54,6 +63,10 @@ export const RESERVED_EVENT_KEYS: ReadonlySet<string> = new Set([
   SESSION_ID_KEY,
   ANONYMOUS_DISTINCT_ID_KEY,
   IDENTITY_STATE_KEY,
+  // The raw session-entry snapshot: persisted (survives reload) but NOT a consumer
+  // super-prop — the derived `session_entry_*` keys are event-visible, this blob is not.
+  // First of the "will diverge" enrichment keys the comment above anticipated.
+  SESSION_ENTRY_PROPS_KEY,
 ]);
 
 const STORE_NAME_PREFIX = 'analytics_kit';

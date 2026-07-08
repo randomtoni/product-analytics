@@ -27,6 +27,7 @@ import {
   ANONYMOUS_IDENTITY_STATE,
   MERGE_EVENT,
   RESERVED_EVENT_KEYS,
+  SESSION_ENTRY_PROPS_KEY,
   SET_TRAITS_KEY,
   SET_TRAITS_ONCE_KEY,
 } from './persistence-keys';
@@ -47,6 +48,13 @@ import { gzipCompress, gzipSyncFallback, isGzipSupported, isGzipData } from './g
 import { appendCompressedQueryParams, GZIP_CONTENT_TYPE, JSON_CONTENT_TYPE } from './transport-wire';
 import { beaconSend, hasFetch, postViaXhr, KEEPALIVE_THRESHOLD_BYTES } from './transport';
 import { buildContext } from './context-enrichment';
+import {
+  buildEntryInfo,
+  deriveInitialProps,
+  deriveSessionEntryProps,
+  parseCampaignParams,
+  type EntryInfo,
+} from './attribution-enrichment';
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
@@ -92,6 +100,25 @@ interface CurrentPageview {
   pageViewId: string;
   pathname: string;
 }
+
+// The persisted per-session entry snapshot (E6-S4): the raw {referrer, url} the
+// `session_entry_*` props derive from, tagged with the session id it was captured under
+// so its lifespan equals that session's. Reset (re-captured) when the session rotates or
+// on first adoption. Persisted under SESSION_ENTRY_PROPS_KEY (survives a reload within
+// the session) and excluded from the super-prop merge via RESERVED_EVENT_KEYS — the raw
+// snapshot never rides events, only the derived `session_entry_*` keys do.
+interface StoredSessionEntry {
+  sessionId: string;
+  info: EntryInfo;
+}
+
+// The verdict of comparing a freshly-stamped session id against the last one seen. Drives
+// two independent per-session records off ONE comparison: 'adopted' is the first
+// undefined→id transition, 'rotated' is a change to a different id (idle/max expiry or
+// reset), 'same' is a continuing session. The pageview record clears on 'rotated' only;
+// the session-entry snapshot re-captures on 'adopted' OR 'rotated' (there is no prior
+// entry to keep on the first session).
+type SessionTransition = 'adopted' | 'rotated' | 'same';
 
 export interface BrowserAdapterOptions {
   key: string;
@@ -187,9 +214,10 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // the first page event and after a session rotation clears it.
   private currentPageview: CurrentPageview | undefined;
   // The last session id observed on a captured event. Adapter-side rotation detector:
-  // a CHANGED id (not the first undefined→id adoption) means the session rotated, so
-  // the pageview record is cleared. Shared substrate — E6-S4 reuses the same
-  // comparison to reset its per-session entry props. Adapter-internal.
+  // classifySessionTransition() compares the freshly-stamped id against this and returns
+  // an adopted/rotated/same verdict; commitSessionTransition() writes it exactly once per
+  // pipeline pass. ONE comparison serves both the pageview-record clear (E6-S1) and the
+  // per-session entry-prop recapture (E6-S4). Adapter-internal.
   private lastSeenSessionId: string | undefined;
   // Whether unload() mints a pageleave. Resolved once at construction: on unless the
   // consumer explicitly disables it (posthog's if_capture_pageview default, de-branded —
@@ -414,8 +442,14 @@ export class BrowserAdapter implements AnalyticsAdapter {
   /** @internal Public only so pass-through tests can pin the enrichment pipeline; not stable adapter API. */
   runCapturePipeline(event: NeutralEvent): NeutralEvent {
     const stamped = this.stampSessionId(event);
-    this.trackPageview(stamped);
-    return this.enrichContext(this.mergeSuperProperties(stamped));
+    // ONE session-transition verdict drives both per-session records; commit the id last
+    // (below) so a second reader can't compare against an already-overwritten value.
+    const transition = this.classifySessionTransition(stamped.sessionId);
+    this.trackPageview(stamped, transition);
+    this.maintainSessionEntry(stamped.sessionId, transition);
+    this.writeInitialProps();
+    this.commitSessionTransition(stamped.sessionId);
+    return this.enrichAttribution(this.enrichContext(this.mergeSuperProperties(stamped)));
   }
 
   // Merge the fresh-per-event auto-context (page / device / referrer / timezone / lib)
@@ -431,12 +465,15 @@ export class BrowserAdapter implements AnalyticsAdapter {
     return { ...event, properties: { ...context, ...event.properties } };
   }
 
-  // Maintain the current-pageview record off the session-stamped event. Rotation is
-  // detected first (a changed session id clears the record); then a `page` event mints
-  // a fresh record. Ordering matters: rotate-then-set, so a `page` that arrives on the
-  // first event of a new session starts the new lineage rather than being wiped.
-  private trackPageview(event: NeutralEvent): void {
-    this.detectSessionRotation(event.sessionId);
+  // Maintain the current-pageview record off the session-stamped event. A ROTATED
+  // transition clears the record first; then a `page` event mints a fresh record.
+  // Ordering matters: rotate-then-set, so a `page` that arrives on the first event of a
+  // new session starts the new lineage rather than being wiped. Adoption does NOT clear
+  // (the pageview record is minted lazily by the page event itself, not at session start).
+  private trackPageview(event: NeutralEvent, transition: SessionTransition): void {
+    if (transition === 'rotated') {
+      this.currentPageview = undefined;
+    }
     // Recognize a pageview by the neutral marker the facade page() path stamps — NOT
     // by the event name, which is the router path/name for a named page('/x'). Keying
     // off the name would miss every real router-driven pageview.
@@ -450,19 +487,82 @@ export class BrowserAdapter implements AnalyticsAdapter {
     };
   }
 
-  // Adapter-side session-rotation detector (no onSessionId observer on the pure
-  // SessionIdManager). Compare the freshly-stamped id against the last one seen: a
-  // CHANGE is a rotation (idle/max-length expiry or reset) → clear the pageview
-  // record; the first undefined→id transition is adoption, not a rotation.
-  // E6-S4 reuses this comparison for its per-session entry-prop reset.
-  private detectSessionRotation(sessionId: string | undefined): void {
-    if (
-      this.lastSeenSessionId !== undefined &&
-      sessionId !== this.lastSeenSessionId
-    ) {
-      this.currentPageview = undefined;
+  // Adapter-side session-transition verdict (no onSessionId observer on the pure
+  // SessionIdManager). Compare the freshly-stamped id against the last one seen WITHOUT
+  // committing it — the commit is a separate single write so a second reader in the same
+  // pass sees the same prior value. The first undefined→id transition is adoption; a
+  // change to a different id is a rotation (idle/max-length expiry or reset); an unchanged
+  // id is a continuing session.
+  private classifySessionTransition(sessionId: string | undefined): SessionTransition {
+    if (this.lastSeenSessionId === undefined) {
+      return sessionId === undefined ? 'same' : 'adopted';
     }
+    return sessionId !== this.lastSeenSessionId ? 'rotated' : 'same';
+  }
+
+  // Commit the observed session id exactly once per pipeline pass, after every reader of
+  // the transition verdict has run.
+  private commitSessionTransition(sessionId: string | undefined): void {
     this.lastSeenSessionId = sessionId;
+  }
+
+  // Per-SESSION entry props (E6-S4). Re-capture the raw {referrer, url} snapshot on
+  // 'adopted' (first session — nothing to keep) OR 'rotated' (a new session — the prior
+  // entry belonged to the old one); a 'same' transition keeps the stored snapshot. The
+  // snapshot is persisted keyed by the session id it was captured under, so its lifespan
+  // equals the session's and it survives a mid-session reload. Reset via the SAME
+  // transition verdict that drives the pageview clear — one rotation-detection mechanism.
+  private maintainSessionEntry(
+    sessionId: string | undefined,
+    transition: SessionTransition
+  ): void {
+    if (sessionId === undefined) {
+      return;
+    }
+    if (transition === 'adopted' || transition === 'rotated') {
+      const entry: StoredSessionEntry = { sessionId, info: buildEntryInfo() };
+      this.store.register({ [SESSION_ENTRY_PROPS_KEY]: entry });
+    }
+  }
+
+  // Set-once-per-IDENTITY initial attribution props (E6-S4). Route the derived `initial_*`
+  // keys through the EXISTING set-once persistence (registerOnce): written on first touch
+  // and never overwritten by a later capture carrying different params. Idempotent — after
+  // the first write every key is already present, so subsequent calls are no-ops.
+  private writeInitialProps(): void {
+    const initial = deriveInitialProps(buildEntryInfo());
+    if (Object.keys(initial).length > 0) {
+      this.store.registerOnce(initial);
+    }
+  }
+
+  // Merge the attribution enrichment (E6-S4) into the event as defaults, AFTER context:
+  // fresh per-event campaign params from the live URL + the re-emitted per-session
+  // `session_entry_*` keys from the stored snapshot. Every key is library-computed ⇒
+  // trusted (derived from URL/referrer, never consumer props) — no allowlist re-gate. A
+  // per-call consumer prop of the same key still WINS (context/attribution spread first,
+  // incoming bag last). The `initial_*` set-once props ride via the super-prop merge, not
+  // here (they live in the store, written by writeInitialProps).
+  private enrichAttribution(event: NeutralEvent): NeutralEvent {
+    const attribution: NeutralProperties = {
+      ...parseCampaignParams(),
+      ...this.sessionEntryProps(),
+    };
+    if (Object.keys(attribution).length === 0) {
+      return event;
+    }
+    return { ...event, properties: { ...attribution, ...event.properties } };
+  }
+
+  // Derive the `session_entry_*` keys from the stored snapshot, but ONLY when it matches
+  // the current session id — a stale snapshot (its session rotated) emits nothing until
+  // maintainSessionEntry re-captures. Empty before any session id exists.
+  private sessionEntryProps(): NeutralProperties {
+    const stored = this.store.getProperty<StoredSessionEntry>(SESSION_ENTRY_PROPS_KEY);
+    if (stored === undefined || stored.sessionId !== this.lastSeenSessionId) {
+      return {};
+    }
+    return deriveSessionEntryProps(stored.info);
   }
 
   /** @internal The adapter's wire-mapping seam: lay a pipeline-processed NeutralEvent
