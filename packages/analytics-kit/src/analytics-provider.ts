@@ -1,4 +1,5 @@
 import type { AnalyticsAdapter, ConsentState } from './adapter';
+import { enforceAllowlist } from './allowlist';
 import type {
   EnrichmentProfile,
   NeutralEvent,
@@ -28,12 +29,6 @@ interface ContextProfile {
 export type ViolationPolicy = 'throw' | 'drop-and-error-log';
 
 export type ConsentDefault = 'granted' | 'denied';
-
-type ConsoleLike = { error(...args: unknown[]): void };
-
-function emitViolation(message: string): void {
-  (globalThis as { console?: ConsoleLike }).console?.error?.(message);
-}
 
 export interface AnalyticsProvider<TX extends TaxonomyShape = DefaultTaxonomyShape> {
   track<K extends keyof TX['events'] & string>(
@@ -269,21 +264,7 @@ export class AnalyticsProviderImpl implements RootAnalytics {
   }
 
   private allowed(...bags: Array<NeutralProperties | undefined>): boolean {
-    const allowlist = this.allowlist;
-    if (allowlist === undefined) return true;
-    for (const bag of bags) {
-      if (bag === undefined) continue;
-      for (const key of Object.keys(bag)) {
-        if (allowlist.has(key)) continue;
-        const message = `analytics-kit: property "${key}" is not on the payload allowlist`;
-        if (this.onViolation === 'throw') {
-          throw new Error(message);
-        }
-        emitViolation(message);
-        return false;
-      }
-    }
-    return true;
+    return enforceAllowlist(this.allowlist, this.onViolation, ...bags);
   }
 
   // Identity is orthogonal to consent: read the live adapter, not the

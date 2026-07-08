@@ -50,3 +50,16 @@ Node must enforce the SAME E3 payload allowlist as the browser (bar A: one priva
 - api_impact additive: a new export, no removed/renamed API. The private `allowed()` becoming a delegate is internal.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, stylistic): the private `allowed()` delegate is now a pure pass-through — could inline `enforceAllowlist(this.allowlist, this.onViolation, ...)` at the 8 call sites, but the private method (capturing the two fields) is arguably clearer. No change required.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files changed (seam):** `allowlist.ts` (+exported side-effect-free `enforceAllowlist(allowlist, onViolation, ...bags): boolean` — the whole-bag guard, byte-identical loop; moved `emitViolation`/`ConsoleLike` here), `analytics-provider.ts` (`allowed()` → thin delegate `return enforceAllowlist(this.allowlist, this.onViolation, ...bags)`; `ViolationPolicy` stays defined/exported here, type-only back-imported), `index.ts` (+`enforceAllowlist` value export, +`PropsParam` type export — both additive)
+- **New public API:** `enforceAllowlist` (standalone guard, callable without instantiating the impl — the shared privacy path for node) + `PropsParam` (re-export). Pin stays 15 (no facade verb). `deriveAllowlistFromTaxonomy` untouched.
+- **Behavior-preserving:** variadic multi-bag (browser `identify` 2-bag rides unchanged), `undefined`-bag skip, `boolean` contract (`true`/`false`/throw), BOTH `ViolationPolicy` branches verbatim (same Error message + `console.error`), undefined-allowlist⇒all-allowed, KEYS-only (no value/event-name coupling — keeps it target-agnostic).
+- **Tests added:** seam +14 (allowlist +12: standalone-callable, both branches verbatim, multi-bag catch + short-circuit, undefined-allowlist, undefined-bag-skip, empty-set-activates, keys-only; index +2: enforceAllowlist + PropsParam exported) → 166; browser 584 (facade gate unchanged — no regression)
+- **Commit:** `E7-S1-hoist-allowlist-guard — Hoist the allowlist guard into an exported neutral function` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 stylistic/hygiene suggestions
+- **Cross-story seams exposed (S2):** node imports `import { enforceAllowlist } from 'analytics-kit'` + `import type { PropsParam, ViolationPolicy, NeutralProperties }`. Node calls `enforceAllowlist(allowlist, onViolation, props)` single-bag with the same `if (!enforceAllowlist(...)) return;` early-return; builds its own `ReadonlySet<string>` allowlist (via `deriveAllowlistFromTaxonomy` or consumer `string[]`) + own `ViolationPolicy` default. Stateless + target-agnostic — no impl instantiation. **Bar A is now literally ONE code path** browser + node share.

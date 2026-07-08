@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import type {
   AnalyticsAdapter,
   ConsentState,
@@ -9,7 +9,100 @@ import type {
 import type { NeutralEvent, NeutralProperties, NeutralTraits } from './neutral-event';
 import { createAnalytics } from './create-analytics';
 import { defineTaxonomy } from './taxonomy';
-import { deriveAllowlistFromTaxonomy } from './allowlist';
+import { deriveAllowlistFromTaxonomy, enforceAllowlist } from './allowlist';
+
+function spyConsoleError() {
+  const c = (globalThis as { console: { error: (...args: unknown[]) => void } }).console;
+  return vi.spyOn(c, 'error').mockImplementation(() => {});
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+test('enforceAllowlist is exported from the seam and callable standalone — no AnalyticsProviderImpl needed', () => {
+  expect(enforceAllowlist).toBeTypeOf('function');
+  expect(enforceAllowlist(new Set(['plan']), 'throw', { plan: 'pro' })).toBe(true);
+});
+
+test('enforceAllowlist: undefined allowlist ⇒ every key allowed, returns true (guard inactive)', () => {
+  expect(enforceAllowlist(undefined, 'throw', { anyKey: 1, another: 2 })).toBe(true);
+});
+
+test('enforceAllowlist: throw policy raises the same Error message naming the off-list key', () => {
+  expect(() => enforceAllowlist(new Set(['plan']), 'throw', { ssn: '123' })).toThrow(
+    'analytics-kit: property "ssn" is not on the payload allowlist'
+  );
+});
+
+test('enforceAllowlist: drop-and-error-log emits console.error and returns false (the drop signal), no throw', () => {
+  const errorSpy = spyConsoleError();
+
+  const result = enforceAllowlist(new Set(['plan']), 'drop-and-error-log', { ssn: '123' });
+
+  expect(result).toBe(false);
+  expect(errorSpy).toHaveBeenCalledTimes(1);
+  expect(errorSpy).toHaveBeenCalledWith(
+    'analytics-kit: property "ssn" is not on the payload allowlist'
+  );
+});
+
+test('enforceAllowlist: all-on-list keys ⇒ returns true, no console.error', () => {
+  const errorSpy = spyConsoleError();
+
+  const result = enforceAllowlist(new Set(['plan', 'seats']), 'drop-and-error-log', {
+    plan: 'pro',
+    seats: 3,
+  });
+
+  expect(result).toBe(true);
+  expect(errorSpy).not.toHaveBeenCalled();
+});
+
+test('enforceAllowlist: multi-bag varargs — an off-list key in the SECOND bag is caught (identify traits + traitsOnce)', () => {
+  expect(() =>
+    enforceAllowlist(new Set(['plan']), 'throw', { plan: 'pro' }, { firstSeen: 1 })
+  ).toThrow(/firstSeen/);
+});
+
+test('enforceAllowlist: multi-bag short-circuits on the FIRST off-list key across bags', () => {
+  const errorSpy = spyConsoleError();
+
+  const result = enforceAllowlist(
+    new Set(['plan']),
+    'drop-and-error-log',
+    { plan: 'pro', ssn: '123' },
+    { plan: 'free' }
+  );
+
+  expect(result).toBe(false);
+  // one violation only — the loop stops at the first off-list key
+  expect(errorSpy).toHaveBeenCalledTimes(1);
+  expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('ssn'));
+});
+
+test('enforceAllowlist: an undefined bag is skipped (not an off-list violation)', () => {
+  expect(enforceAllowlist(new Set(['plan']), 'throw', undefined, { plan: 'pro' })).toBe(true);
+  expect(enforceAllowlist(new Set(['plan']), 'throw', { plan: 'pro' }, undefined)).toBe(true);
+});
+
+test('enforceAllowlist: no bags at all ⇒ trivially allowed, returns true', () => {
+  expect(enforceAllowlist(new Set(['plan']), 'throw')).toBe(true);
+});
+
+test('enforceAllowlist: an explicit empty allowlist activates the guard — every key fails', () => {
+  expect(() => enforceAllowlist(new Set(), 'throw', { anyKey: 1 })).toThrow(/anyKey/);
+});
+
+test('enforceAllowlist inspects KEYS only — never values (value differences do not change the verdict)', () => {
+  const allowlist = new Set(['plan']);
+  // Same key, wildly different values — all pass, because only the key is checked.
+  expect(enforceAllowlist(allowlist, 'throw', { plan: 'pro' })).toBe(true);
+  expect(enforceAllowlist(allowlist, 'throw', { plan: undefined })).toBe(true);
+  expect(enforceAllowlist(allowlist, 'throw', { plan: { nested: 'secret' } })).toBe(true);
+  // And an off-list key fails regardless of its (harmless-looking) value.
+  expect(() => enforceAllowlist(allowlist, 'throw', { ssn: null })).toThrow(/ssn/);
+});
 
 class SpyAdapter implements AnalyticsAdapter {
   captured: NeutralEvent[] = [];
