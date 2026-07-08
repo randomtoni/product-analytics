@@ -62,5 +62,16 @@ The `AnalyticsAdapter` SPI is the minimal surface any backend satisfies — it *
   - Export both neutral fetch types from the seam's public surface alongside `AnalyticsAdapter` (the `NoopAdapter` in S4 and every real adapter implement against them).
 - **`getCustomUserAgent(): string | undefined`** de-brands PostHog's `string | void` (`posthog-core-stateless.ts:250`) — `undefined` is the idiomatic neutral form and typechecks under `strict`; keep it, don't lift `void`.
 - **Reference-backend sanity check (REFERENCE-BACKEND.md, 2026-07-07):** the SPI stays expressed in capability terms (capture/identify/query), never wire terms — this is what lets the self-hosted reference adapter slot in without SPI churn. Confirm no wire term leaks onto the interface before closing this story.
+- > Reviewer suggestion (2026-07-07, forward watch-item — not an E2 defect): `NeutralFetchResponse` exposes only `{ status, text(), json() }` and `NeutralFetchOptions.body` is `string`-only — correct/deliberate for E2 (compression + abort are adapter-internal `[WIRE]`). At E5/E7, if shared transport must read a response header (rate-limit / flag-config ETag) or send a compressed/binary body, extend these DOM-free (e.g. a neutral `headers.get(name): string | null`, or keep compression entirely inside the concrete `fetch`). Conscious watch-item; no change now.
 
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-07.
+
+- **Files added:** `packages/analytics-kit/src/adapter.ts` (SPI + neutral fetch types), `packages/analytics-kit/src/adapter.test.ts` (conformance + `expectTypeOf` type-pins)
+- **Files changed:** `packages/analytics-kit/src/index.ts` (re-export `AnalyticsAdapter`, `NeutralFetchOptions`, `NeutralFetchResponse`)
+- **New public API:** `AnalyticsAdapter` (12-member SPI), `NeutralFetchOptions`, `NeutralFetchResponse`
+- **Tests added:** 8 in `adapter.test.ts` (structural conformance via `RecordingAdapter implements AnalyticsAdapter`; capture-takes-NeutralEvent; optional-traits; flush/shutdown void; fetch neutral response; persisted-property round-trip; identity primitives; compile-time type-pins). 9 total in package.
+- **Commit:** `E2-S2-analytics-adapter-spi — AnalyticsAdapter SPI (the minimal neutral backend contract)` on `core-cycle`
+- **Reviewer notes:** 0 critical, 1 forward watch-item → see Technical notes
+- **Cross-story seams exposed:** the frozen 12-member SPI S3's facade delegates to and S4's `NoopAdapter` must implement 1:1 — verbs `capture(NeutralEvent):void` / `identify` / `group` / `alias`(SPI-only, not facade) / `flush`/`shutdown():Promise<void>`; primitives `fetch(url,NeutralFetchOptions):Promise<NeutralFetchResponse>` / `getPersistedProperty<T>`/`setPersistedProperty<T>`(null=clear) / `getLibraryId`/`getLibraryVersion`/`getCustomUserAgent():string|undefined`. `RecordingAdapter` in the test is the reference in-memory impl S4 can mirror. `NeutralFetchResponse.json()` → `Promise<unknown>` (callers narrow).
