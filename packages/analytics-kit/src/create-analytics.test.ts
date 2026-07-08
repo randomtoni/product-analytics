@@ -149,10 +149,12 @@ test('the internal facade class is never exposed through the public barrel', () 
   expect('AnalyticsProviderImpl' in pkg).toBe(false);
 });
 
-test('AnalyticsConfig carries an optional key plus the optional taxonomy brand (E3)', () => {
+test('AnalyticsConfig carries key, taxonomy brand, and the allowlist guard fields (E3)', () => {
   expectTypeOf<AnalyticsConfig>().toEqualTypeOf<{
     key?: string;
     taxonomy?: Taxonomy<TaxonomyDecl>;
+    allowlist?: string[];
+    onViolation?: 'throw' | 'drop-and-error-log';
   }>();
   const empty: AnalyticsConfig = {};
   expect(empty).toEqual({});

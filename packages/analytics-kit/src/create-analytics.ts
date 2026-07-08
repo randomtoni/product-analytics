@@ -6,6 +6,8 @@ import type { ShapeOf, Taxonomy, TaxonomyDecl } from './taxonomy';
 export interface AnalyticsConfig {
   key?: string;
   taxonomy?: Taxonomy<TaxonomyDecl>;
+  allowlist?: string[];
+  onViolation?: 'throw' | 'drop-and-error-log';
 }
 
 export function createAnalytics<const T extends TaxonomyDecl>(
@@ -17,11 +19,9 @@ export function createAnalytics(
   adapter?: AnalyticsAdapter
 ): AnalyticsProvider;
 export function createAnalytics(
-  // Unused in the seam by design: the target entry (browser/node) reads config.key to pick its
-  // adapter, and E3+ facade concerns (allowlist) will consume config here.
   config: AnalyticsConfig,
   adapter?: AnalyticsAdapter
 ): AnalyticsProvider {
   const resolvedAdapter = adapter ?? new NoopAdapter();
-  return new AnalyticsProviderImpl(resolvedAdapter);
+  return new AnalyticsProviderImpl(resolvedAdapter, config.allowlist, config.onViolation);
 }
