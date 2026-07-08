@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-07 — E1, E2 closed (core cycle: E3 remains)
+Last updated: 2026-07-08 — E1, E2, E3 all closed; **core cycle exit criteria met** (awaiting user promotion to the `identify` area)
 
 ## Status
 
@@ -24,7 +24,7 @@ The **adoption** cycle (`E10`, `E11`) closes: the example consumer needs the tar
 
 - **[E1-CORE-workspace-scaffold](epics/done/E1-CORE-workspace-scaffold.md)** *(done)* — pnpm + turbo workspace with all four gates (typecheck / lint / test / build) green on empty packages.
 - **[E2-CORE-provider-seam](epics/done/E2-CORE-provider-seam.md)** *(done)* — the `AnalyticsProvider` contract + config-selected factory + no-op adapter (silent when unkeyed).
-- **[E3-CORE-taxonomy-allowlist](epics/E3-CORE-taxonomy-allowlist.md)** *(active)* — typed-taxonomy mechanism (`defineTaxonomy<T>()`) + payload-allowlist enforcement hook.
+- **[E3-CORE-taxonomy-allowlist](epics/done/E3-CORE-taxonomy-allowlist.md)** *(done)* — typed-taxonomy mechanism (`defineTaxonomy<T>()`) + payload-allowlist enforcement hook.
 
 Dependency graph: `E1 → E2 → E3`. E2 and E3 gate every downstream area.
 

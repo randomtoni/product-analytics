@@ -1,6 +1,6 @@
 ---
 id: E3-CORE-taxonomy-allowlist
-status: active
+status: done
 area: core
 touches: [privacy]
 api_impact: additive
@@ -24,11 +24,11 @@ The typed-taxonomy mechanism and the payload allowlist are the two "mechanism fr
 
 ## Stories
 
-Dependency shape: a linear chain — **S1 → S2 → S3** (S3 also uses S1's runtime taxonomy object directly).
+Dependency shape: a linear chain — **S1 → S2 → S3**. **All three shipped.**
 
-- **[E3-S1](../stories/2-ready-for-dev/E3-S1-define-taxonomy-typed-facade.md)** *(additive, no deps)* — `defineTaxonomy(decl)` runtime object + `const` type brand; make `AnalyticsProvider<TX>` generic (loose default) with typed `track`/`group`/`page`/traits signatures; reserve the `page` slot + rename the neutral page fallback to a non-colliding `RESERVED_PAGE_EVENT`.
-- **[E3-S2](../stories/2-ready-for-dev/E3-S2-allowlist-guard.md)** *(additive, depends on E3-S1)* — the payload-allowlist guard at the facade call-boundary: synchronous, pre-enrichment, gating `track`/`page`/`identify`/`group`/`setTraits` prop/trait keys; `allowlist?`/`onViolation?` config (throw by default); opt-in when unconfigured.
-- **[E3-S3](../stories/2-ready-for-dev/E3-S3-allowlist-source-derivation.md)** *(additive, depends on E3-S1 + E3-S2)* — `deriveAllowlistFromTaxonomy` convenience (separable from + composable with explicit `allowlist`) and the "library computes ⇒ trusted; consumer supplies ⇒ gated" seam that E6's injected country source conforms to.
+- **[E3-S1](../stories/5-done/E3-S1-define-taxonomy-typed-facade.md)** *(done — `6f58cd6`)* — `defineTaxonomy(decl)` runtime object + `const` type brand; `AnalyticsProvider<TX>` generic (loose default) with typed `track`/`group`/`page`/traits signatures; reserved `page` slot + `RESERVED_PAGE_EVENT`. Bar B (untyped `createAnalytics({}).track('x')`) preserved.
+- **[E3-S2](../stories/5-done/E3-S2-allowlist-guard.md)** *(done — `f20745c`)* — the payload-allowlist guard at the facade call-boundary: synchronous, pre-enrichment, gating `track`/`page`/`identify`(both bags)/`group`/`setTraits` prop/trait keys; `allowlist?`/`onViolation?` config (throw by default); opt-in (`allowlist !== undefined` activates, `[]` = allow-nothing). Gates top-level keys (nested-key gating is a future extension).
+- **[E3-S3](../stories/5-done/E3-S3-allowlist-source-derivation.md)** *(done — `d0f2aae`)* — `deriveAllowlistFromTaxonomy` (pure helper, consumer-side spread into the single `allowlist`; name-exclusion by construction) + the "library computes ⇒ trusted; consumer supplies ⇒ gated" seam E6's injected country source conforms to.
 
 ## Out of scope
 
