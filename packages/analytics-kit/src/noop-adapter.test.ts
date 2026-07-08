@@ -67,6 +67,12 @@ test('client-identity getters return neutral placeholders (no vendor token)', ()
   expect(adapter.getCustomUserAgent()).toBeUndefined();
 });
 
+test('getDistinctId returns the neutral anonymous placeholder (moved down from the facade)', () => {
+  const adapter: AnalyticsAdapter = new NoopAdapter();
+
+  expect(adapter.getDistinctId()).toBe('anonymous');
+});
+
 test('NoopAdapter carries no `disabled` flag — the no-op is the null-object, not a boolean', () => {
   const adapter = new NoopAdapter();
 

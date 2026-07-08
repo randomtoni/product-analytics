@@ -4,6 +4,7 @@ import { createAnalytics, cryptoRandomId, resolveAdapter } from './create-analyt
 import { BrowserAdapter } from './browser-adapter';
 
 const V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 test('keyed config resolves the browser adapter', () => {
   expect(resolveAdapter({ key: 'proj-key' })).toBeInstanceOf(BrowserAdapter);
@@ -32,17 +33,31 @@ test('the browser supplies a crypto-backed generator (a v4, distinct from the id
 
 test('the persistence config selects the mode: memory mode persists nothing across a reload', () => {
   const key = 'mode-key-memory';
-  resolveAdapter({ key, persistence: 'memory' }).setPersistedProperty('device_id', 'ephemeral');
+  // A non-identity key: identity keys are re-minted at construction, so this
+  // probes a custom prop that nothing re-seeds — proving memory mode is ephemeral.
+  resolveAdapter({ key, persistence: 'memory' }).setPersistedProperty('custom_prop', 'ephemeral');
 
   const reloaded = resolveAdapter({ key, persistence: 'memory' });
 
-  expect(reloaded.getPersistedProperty('device_id')).toBeUndefined();
+  expect(reloaded.getPersistedProperty('custom_prop')).toBeUndefined();
 });
 
 test('a keyed client with no consent policy is opted-out by default (fail-safe)', () => {
   const analytics = createAnalytics({ key: 'no-consent-policy-key' });
 
   expect(analytics.hasOptedOut()).toBe(true);
+});
+
+test('an opted-out-by-default keyed adapter still resolves a truthful minted distinct id', () => {
+  const analytics = createAnalytics({ key: 'opted-out-truthful-key' });
+  // Fail-safe opt-out is the default with no consent policy...
+  expect(analytics.hasOptedOut()).toBe(true);
+
+  // ...yet the live adapter (identity is orthogonal to consent) still mints a real
+  // UUIDv7 distinct id — the facade reads liveAdapter.getDistinctId(), not the no-op.
+  const adapter = resolveAdapter({ key: 'opted-out-truthful-key' });
+  expect(adapter.getDistinctId()).toMatch(V7);
+  expect(adapter.getDistinctId()).not.toBe('anonymous');
 });
 
 test("consentDefault 'granted' + pending: capture runs, yet cookies stay suppressed until an explicit grant", () => {

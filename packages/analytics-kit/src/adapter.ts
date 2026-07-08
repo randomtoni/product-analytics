@@ -17,6 +17,9 @@ export interface NeutralFetchResponse {
 export interface AnalyticsAdapter {
   capture(event: NeutralEvent): void;
   identify(distinctId: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void;
+  // A cheap synchronous in-memory read: the implementor loads persistence once at
+  // init and caches the current distinct id — it does NOT hit storage per call.
+  getDistinctId(): string;
   group(type: string, key: string, traits?: NeutralTraits): void;
   alias(previousId: string, distinctId: string): void;
   flush(): Promise<void>;

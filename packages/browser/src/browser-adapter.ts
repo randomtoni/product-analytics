@@ -16,6 +16,7 @@ import {
 import { consentStoreName, storeName } from './persistence-keys';
 import { ConsentStore } from './consent';
 import { PersistenceStore } from './persistence-store';
+import { IdentityStore, type IdGenerator } from './identity-store';
 
 const LIBRARY_ID = 'analytics-kit-browser';
 const LIBRARY_VERSION = '0.0.0';
@@ -27,12 +28,16 @@ const SAVE_DEBOUNCE_MS = 250;
 export interface BrowserAdapterOptions {
   key: string;
   persistence?: PersistenceMode;
+  // Swap the id scheme (device id) without touching identity semantics; defaults
+  // to the crypto UUIDv7 generator.
+  deviceIdGenerator?: IdGenerator;
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
   private readonly memoryBackend: StorageBackend;
   private readonly consent: ConsentStore;
   private readonly store: PersistenceStore;
+  private readonly identity: IdentityStore;
 
   constructor(options: BrowserAdapterOptions) {
     const mode = options.persistence ?? DEFAULT_PERSISTENCE_MODE;
@@ -57,6 +62,13 @@ export class BrowserAdapter implements AnalyticsAdapter {
       name: storeName(options.key),
       saveDebounceMs: SAVE_DEBOUNCE_MS,
     });
+
+    // Mint/load the anonymous distinct id + separate device id and cache the
+    // distinct id in memory, so getDistinctId() never hits storage per event.
+    this.identity = new IdentityStore({
+      store: this.store,
+      deviceIdGenerator: options.deviceIdGenerator,
+    });
   }
 
   capture(event: NeutralEvent): void {
@@ -80,7 +92,11 @@ export class BrowserAdapter implements AnalyticsAdapter {
   }
 
   identify(): void {
-    // Identity resolver + anon→identified merge land in S5 / S6.
+    // The anon→identified merge + traits land in S6; S5 ships only the resolver.
+  }
+
+  getDistinctId(): string {
+    return this.identity.getDistinctId();
   }
 
   group(): void {}

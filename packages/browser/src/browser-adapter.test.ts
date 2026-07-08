@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import type { AnalyticsAdapter, NeutralEvent } from 'analytics-kit';
 import { BrowserAdapter } from './browser-adapter';
+import { DEVICE_ID_KEY, DISTINCT_ID_KEY, IDENTITY_STATE_KEY } from './persistence-keys';
+
+const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function makeEvent(overrides: Partial<NeutralEvent> = {}): NeutralEvent {
   return {
@@ -48,9 +51,11 @@ test('the capture pipeline preserves an already-set sessionId (S7 super-prop hoo
   expect(result.properties).toEqual({ a: 1 });
 });
 
-test('a fresh store reads back nothing before anything is written', () => {
+test('a fresh store reads back nothing for a never-written key', () => {
   const adapter: AnalyticsAdapter = new BrowserAdapter({ key: freshKey() });
-  expect(adapter.getPersistedProperty('distinct_id')).toBeUndefined();
+  // Identity bootstrap now seeds distinct_id / device_id / identity_state at
+  // construction, so this probes a key nothing has written.
+  expect(adapter.getPersistedProperty('never_written')).toBeUndefined();
 });
 
 test('exposes a neutral, non-vendor library id and version', () => {
@@ -115,12 +120,14 @@ test('durable modes survive a reload (a fresh store instance re-reads the value)
 
 test('memory mode persists nothing across a fresh store instance', () => {
   const key = freshKey();
-  new BrowserAdapter({ key, persistence: 'memory' }).setPersistedProperty('device_id', 'dev-vanishes');
+  // A non-identity key: identity keys are re-minted at construction, so probe one
+  // nothing re-seeds to prove the memory backing is truly ephemeral across reload.
+  new BrowserAdapter({ key, persistence: 'memory' }).setPersistedProperty('custom_prop', 'vanishes');
   window.dispatchEvent(new Event('beforeunload'));
 
   const reloaded = new BrowserAdapter({ key, persistence: 'memory' });
 
-  expect(reloaded.getPersistedProperty('device_id')).toBeUndefined();
+  expect(reloaded.getPersistedProperty('custom_prop')).toBeUndefined();
 });
 
 test('a fresh adapter defaults to pending, and the consent SPI pair round-trips', () => {
@@ -202,4 +209,56 @@ test('a DNT signal at construction gates the property store to memory — zero c
   } finally {
     Object.defineProperty(window.navigator, 'doNotTrack', { value: undefined, configurable: true });
   }
+});
+
+test('getDistinctId returns a minted UUIDv7 anonymous distinct id at first load', () => {
+  const adapter = new BrowserAdapter({ key: freshKey() });
+
+  expect(adapter.getDistinctId()).toMatch(UUID_V7);
+});
+
+test('the anonymous distinct id survives a reload (a fresh adapter re-reads the same id)', () => {
+  const key = freshKey();
+  // Persistence is consent-gated: grant durably, then the writer mints into the
+  // durable store, and the unload flush lands the debounced write.
+  new BrowserAdapter({ key }).setConsentState('granted');
+  const writer = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+  const mintedId = writer.getDistinctId();
+  window.dispatchEvent(new Event('beforeunload'));
+
+  const reloaded = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+
+  expect(reloaded.getDistinctId()).toBe(mintedId);
+});
+
+test('the device id is persisted under a SEPARATE key from the distinct id', () => {
+  const adapter = new BrowserAdapter({ key: freshKey() });
+
+  const distinctId = adapter.getDistinctId();
+  const deviceId = adapter.getPersistedProperty<string>(DEVICE_ID_KEY);
+  const storedDistinctId = adapter.getPersistedProperty<string>(DISTINCT_ID_KEY);
+
+  expect(deviceId).toMatch(UUID_V7);
+  expect(storedDistinctId).toBe(distinctId);
+  expect(deviceId).not.toBe(distinctId);
+});
+
+test('identity state is persisted as an explicit neutral anonymous value — no $-key, no id-equality trick', () => {
+  const adapter = new BrowserAdapter({ key: freshKey() });
+
+  expect(adapter.getPersistedProperty(IDENTITY_STATE_KEY)).toBe('anonymous');
+  expect(IDENTITY_STATE_KEY).not.toContain('$');
+  // The neutral surface never exposes an identity-state getter this epic.
+  expect('getIdentityState' in adapter).toBe(false);
+});
+
+test('the device-id generator is injectable — swaps the device-id scheme only', () => {
+  const adapter = new BrowserAdapter({
+    key: freshKey(),
+    deviceIdGenerator: () => 'injected-device-scheme',
+  });
+
+  expect(adapter.getPersistedProperty(DEVICE_ID_KEY)).toBe('injected-device-scheme');
+  // The distinct id is untouched by the device-id scheme swap.
+  expect(adapter.getDistinctId()).toMatch(UUID_V7);
 });

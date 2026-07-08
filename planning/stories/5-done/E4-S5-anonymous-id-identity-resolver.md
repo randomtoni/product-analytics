@@ -52,7 +52,21 @@ Every browser event needs a stable actor before `identify()` is ever called. Thi
 - **SPI grows a required verb (— architect 2026-07-08):** additive to the CONSUMER API; SPI-expanding — `NoopAdapter` returns `'anonymous'`, a future node target returns its own neutral placeholder.
 - **SPI growth touches ALL in-repo adapter implementors (refiner 2026-07-08):** adding required `getDistinctId(): string` breaks every existing `AnalyticsAdapter` implementor until updated. Beyond `NoopAdapter` (returns the moved-down `'anonymous'` constant), update the five seam test doubles — `RecordingAdapter` in `analytics-provider.test.ts` / `adapter.test.ts` / `create-analytics.test.ts` and `SpyAdapter` in `allowlist.test.ts` / `allowlist-guard.test.ts` (they can just return `'anonymous'`) — or the package stops typechecking and the 93 shipped tests break.
 - reference: `posthog-js/packages/core` identity + `packages/browser` persistence; de-brand.
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate): `identity-store.ts` class-doc comment describes PostHog's seed-equal (distinct id == device id) behavior, but the code mints them as two INDEPENDENT ids (deliberately dropped the id-equality trick). Stale/misleading — reword or remove so a future reader can't "restore" the equality on the comment's authority.
+- > Reviewer suggestion (2026-07-08, improvement-pass candidate / S6-S9): `IdentityStore.getDeviceId()` does an unchecked `as string` cast + a per-call storage read; currently uncalled (forward-use for S6/S9). Defer to the slice that consumes it or guarantee presence rather than cast.
+- > Reviewer suggestion (2026-07-08): `deviceIdGenerator` is on `BrowserAdapterOptions` but not plumbed through `AnalyticsConfig`/`resolveAdapter` — injectable at the adapter seam (satisfies the AC) but not via consumer `createAnalytics({key})`. Defensible scope line (config-surface decision, later slice); flagged as a conscious boundary.
 
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files changed (seam):** `adapter.ts` (+`getDistinctId()` SPI), `noop-adapter.ts` (satisfy + owns `'anonymous'` constant), `analytics-provider.ts` (`currentDistinctId()`→`liveAdapter.getDistinctId()`, constant removed) + 5 test doubles
+- **Files added (browser):** `identity-store.ts` (mint anon v7 id + separate device id, explicit `anonymous|identified` state, in-memory distinctId cache, injectable device-id generator); **changed:** `browser-adapter.ts` (construct IdentityStore + `getDistinctId` delegate + `deviceIdGenerator?`), `persistence-keys.ts` (+`IdentityState` type/constants)
+- **New public API:** SPI `getDistinctId(): string` (`NoopAdapter`→`'anonymous'`). Identity state, device id, IdentityStore all adapter-internal (no public getter).
+- **Tests added:** seam +2 facade delegation (opted-out truthful) → 113; browser +14 (identity-store 9, adapter 5) → 94
+- **Commit:** `E4-S5-anonymous-id-identity-resolver — Anonymous id + device id + adapter-internal identity state + getDistinctId resolver` on `core-cycle`
+- **Reviewer notes:** 0 critical, 3 suggestions → see Technical notes (ported PostHog's explicit `$user_state` MODEL, not the id-equality trick — went further with fully independent ids)
+- **Cross-story seams exposed:** `IdentityStore` (adapter-internal) persists explicit `anonymous|identified` under `IDENTITY_STATE_KEY` + caches `distinctId` in memory. **S6 merge:** guard reads `getIdentityState()` (merge only when new id differs AND state `anonymous`); flips to `IDENTIFIED_IDENTITY_STATE`; persist prior anon id under the reserved (unwritten) `ANONYMOUS_DISTINCT_ID_KEY`; update the cached `distinctId` field in lockstep with `DISTINCT_ID_KEY`. **S9 reset:** regenerate distinct id + clear state, KEEP `DEVICE_ID_KEY` unless `resetDevice` (re-mint via `deviceIdGenerator`); update the cache. **S8 session:** untouched — stamps `sessionId` in `stampSessionId()` pass-through hook.
 ## Shipped
 
 <!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/

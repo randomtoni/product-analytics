@@ -6,8 +6,6 @@ import { RESERVED_PAGE_EVENT } from './taxonomy';
 import type { DefaultTaxonomyShape, PropsParam, TaxonomyShape } from './taxonomy';
 import { generateUuid as defaultGenerateUuid } from './uuid';
 
-const ANONYMOUS_DISTINCT_ID = 'anonymous';
-
 export type ViolationPolicy = 'throw' | 'drop-and-error-log';
 
 export type ConsentDefault = 'granted' | 'denied';
@@ -162,8 +160,10 @@ export class AnalyticsProviderImpl implements AnalyticsProvider {
     return true;
   }
 
+  // Identity is orthogonal to consent: read the live adapter, not the
+  // consent-swapped one, so the distinct id stays truthful while opted out.
   private currentDistinctId(): string {
-    return ANONYMOUS_DISTINCT_ID;
+    return this.liveAdapter.getDistinctId();
   }
 
   private buildEvent(event: string, props?: NeutralProperties): NeutralEvent {

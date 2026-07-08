@@ -23,6 +23,9 @@ class SpyAdapter implements AnalyticsAdapter {
   identify(distinctId: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {
     this.identified.push({ distinctId, traits, traitsOnce });
   }
+  getDistinctId(): string {
+    return 'anonymous';
+  }
   group(type: string, key: string, traits?: NeutralTraits): void {
     this.grouped.push({ type, key, traits });
   }

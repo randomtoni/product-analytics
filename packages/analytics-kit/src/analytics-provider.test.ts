@@ -26,12 +26,18 @@ class RecordingAdapter implements AnalyticsAdapter {
   persistedWrites: Array<{ key: string; value: unknown }> = [];
   consentWrites: ConsentState[] = [];
   consentState: ConsentState = 'granted';
+  distinctId = 'anonymous';
+  distinctIdReads = 0;
 
   capture(event: NeutralEvent): void {
     this.captured.push(event);
   }
   identify(distinctId: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {
     this.identified.push({ distinctId, traits, traitsOnce });
+  }
+  getDistinctId(): string {
+    this.distinctIdReads += 1;
+    return this.distinctId;
   }
   group(type: string, key: string, traits?: NeutralTraits): void {
     this.grouped.push({ type, key, traits });
@@ -273,6 +279,33 @@ test('shutdown routes to the live adapter even while opted-out (E2-S5 shutdown-l
   await expect(analytics.shutdown()).resolves.toBeUndefined();
 
   expect(adapter.didShutdown).toBe(true);
+});
+
+test('the facade stamps the distinct id resolved from the live adapter (getDistinctId delegation)', () => {
+  const adapter = new RecordingAdapter();
+  adapter.distinctId = 'live-actor-42';
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.track('x');
+
+  expect(adapter.captured[0].distinctId).toBe('live-actor-42');
+});
+
+test('while opted-out the resolver still reads the live adapter (truthful id, not the no-op anonymous)', () => {
+  const adapter = new RecordingAdapter();
+  adapter.distinctId = 'live-actor-42';
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  const before = adapter.distinctIdReads;
+  // setTraits routes through currentDistinctId(); capture is inert under opt-out,
+  // but the resolver must still consult the LIVE adapter — never the no-op.
+  analytics.setTraits({ plan: 'pro' });
+
+  expect(adapter.distinctIdReads).toBeGreaterThan(before);
+  // Inert: nothing recorded on the live adapter (routed through the no-op),
+  // yet the live adapter's resolver — not the no-op's 'anonymous' — was consulted.
+  expect(adapter.identified).toHaveLength(0);
 });
 
 test('generateUuid is injectable via the facade constructor and stamps dedupeId', () => {
