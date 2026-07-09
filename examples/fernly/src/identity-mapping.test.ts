@@ -70,7 +70,7 @@ describe('Fernly identity mapping onto the neutral primitives', () => {
     });
   });
 
-  it('carries a role as an event prop when captured on an event, not a library concept', () => {
+  it('carries consumer-defined props on a captured event, not a library concept', () => {
     const { analytics, recorder } = createFernlyAnalytics({ key: 'k' });
 
     analytics.track('review_requested', { documentId: 'doc-1', reviewerId: 'reviewer-42' });

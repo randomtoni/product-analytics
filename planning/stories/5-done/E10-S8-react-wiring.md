@@ -64,3 +64,10 @@ Exercises E9: the app slice is wired with `@analytics-kit/react` — `AnalyticsC
 - **Commit:** `E10-S8-react-wiring — React binding: provider + useAnalytics + router-driven usePageView` on `core-cycle`
 - **Reviewer notes:** ship-ready — 0 critical, 1 suggestion (dead import + no-lint-script gap — improvement-pass)
 - **E10 feature-complete:** all 8 slices wired against the ONE S2 `fernlyTaxonomy`, all bar-B (`examples/**`-only, zero `packages/**`): S1 scaffold+recording-adapter, S2 taxonomy+identity, S3 merge/reset (E4), S4 contexts (E6), S5 allowlist (E3), S6 node (E7), S7 query (E8), S8 react (E9).
+
+## Follow-up
+
+> E10 post-close improvement pass, 2026-07-09 (commit follows). Reviewer-verified, no regression (fernly typecheck 9/9 · test 79 · lint 5/5).
+
+- **`@example/fernly` now lint-gated + green** — added `"lint": "eslint ."` to `examples/fernly/package.json` (byte-identical to the `packages/*` shape). `turbo run lint` previously SILENTLY SKIPPED the example (no lint script → not enrolled) — which is how the S8 dead import escaped the gate. Now 5/5 and the reviewer PROVED enforcement (reintroducing the dead import → eslint fails). "All four gates green" is now honest for `examples/**` ahead of E11's audit. (Addresses the S8 no-lint-script suggestion.)
+- **S8 dead import fixed** — `fernly-app.test.tsx` `import { fernlyTaxonomy, type FernlyTaxonomy }` → `import { type FernlyTaxonomy }` (value was dead; only the type is used). The app file's live `fernlyTaxonomy` value import left untouched. (Addresses the S8 dead-import suggestion.)

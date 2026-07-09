@@ -3,7 +3,7 @@ import { render, screen, act, fireEvent, cleanup } from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest';
 import type { RootAnalytics, ShapeOf } from 'analytics-kit';
 import { createFernlyAnalytics } from '../harness';
-import { fernlyTaxonomy, type FernlyTaxonomy } from '../taxonomy';
+import { type FernlyTaxonomy } from '../taxonomy';
 import { FernlyAppViaClient, FernlyAppViaConfig, ReviewWorkspace, fernlyConfig } from './fernly-app';
 
 type FernlyShape = ShapeOf<FernlyTaxonomy['decl']>;

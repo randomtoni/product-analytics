@@ -61,3 +61,10 @@ Bar B's core claim is that a consumer declares its OWN events and actor model th
 - **Commit:** `E10-S2-fernly-taxonomy-identity-mapping — Fernly taxonomy + identity mapping onto the neutral primitives` on `core-cycle`
 - **Reviewer notes:** ship-ready — 0 critical, 2 cosmetic suggestions
 - **Cross-story seams exposed:** S3–S8 import `{ fernlyTaxonomy }`(value) + `{ FernlyTaxonomy }`(type) from `@example/fernly`/`taxonomy.ts` — single source, don't redeclare. Typed harness `createFernlyAnalytics()` → `RootAnalytics<ShapeOf<FernlyTaxonomy['decl']>>`. **S3** drives the identity state machine (`recorder.merges`); **S6/S7** use this taxonomy + `config.fetch` mock (not the harness adapter); **S8** feeds the typed harness into `AnalyticsClientProvider`.
+
+## Follow-up
+
+> E10 post-close improvement pass, 2026-07-09 (commit follows). Reviewer-verified, behavior-preserving.
+
+- **Test-title accuracy** — `identity-mapping.test.ts` retitled "carries a role as an event prop…" → "carries consumer-defined props on a captured event, not a library concept" (the test uses `review_requested` with `documentId`/`reviewerId`, neither a `role`, so the old title overclaimed). No assertion changed. (Addresses the S2 cosmetic test-title suggestion.)
+- Skipped-with-reason: S2 `plan`-in-both-places intent comment (zero-comment default; downstream S6/S7/S8 shipped without the guarded-against de-duplication). Superseded elsewhere: S1 injectable `generateId`/raw-reset-options (S3 made its assertions deterministic without them); S6 `ShapeOf` indirect-derivation (S7 reviewer praised the same drift-proof idiom) + `FetchLike` cast (inherent to the public seam type); S5 comment-only notes.
