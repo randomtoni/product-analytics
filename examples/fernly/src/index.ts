@@ -9,3 +9,5 @@ export type {
 } from './recording-adapter';
 export { createFernlyAnalytics } from './harness';
 export type { FernlyHarness } from './harness';
+export { fernlyTaxonomy } from './taxonomy';
+export type { FernlyTaxonomy } from './taxonomy';
