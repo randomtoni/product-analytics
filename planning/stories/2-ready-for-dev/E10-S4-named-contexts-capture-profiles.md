@@ -18,7 +18,7 @@ Exercises E6's per-context capture profiles at the seam: the consumer defines na
 
 ### In
 
-- Config the harness with `contexts: { marketing: {...}, app: {...} }` and a `defaultContext`: `marketing` (autocapture on, per-event page enrichment on), `app` (autocapture off, manual/router-driven pageview posture). Config-only.
+- Config the harness with `contexts: { marketing: {...}, app: {...} }` and a `defaultContext`: `marketing` (autocapture on, per-event page enrichment on), `app` (autocapture off, manual/router-driven pageview posture). Config-only. **Each context MUST carry a distinct `enrichment` block** (e.g. `marketing: { enrichment: { page: true, utm: true } }` vs `app: { enrichment: { page: false, utm: false } }`) — the per-event stream difference is driven ENTIRELY by the `enrichment` block, NOT by `autocapture`: `resolveEnrichmentProfile` reads only `contexts[name].enrichment` (verified `AnalyticsProviderImpl`, `packages/analytics-kit/src/analytics-provider.ts` ~lines 127–141), and `autocapture` is a construction-time toggle resolved once from `defaultContext` at init, never varied per event. Contexts whose `enrichment` is absent both resolve to `undefined` and the stream would show NO difference — so give each a real, differing `enrichment`.
 - Use `analytics.context('marketing')` and `analytics.context('app')` scoped views to `track`/`page` from each context, and assert on the recorded stream that BOTH contexts stamp the **same distinct id** (shared identity/session/transport) while carrying their respective per-event enrichment profile.
 - A runnable vitest test: capture from each context, assert one shared distinct id across both, and assert the resolved enrichment profile differs per context (the `enrichmentProfile` rides the minted event).
 
@@ -34,6 +34,7 @@ Exercises E6's per-context capture profiles at the seam: the consumer defines na
 - [ ] `context('marketing')` and `context('app')` scoped views both stamp the SAME distinct id — asserted on the recorded stream (shared identity/session/transport).
 - [ ] The per-context enrichment profile differs between the two contexts and rides the minted event — asserted on the stream (`NeutralEvent.enrichmentProfile`).
 - [ ] `turbo run typecheck` + `turbo run test` pass for `examples/fernly`.
+- [ ] **Bar-B diff invariant (enforced):** this story's changeset touches only `examples/**` — nothing under `packages/**`, verifiable by diff. If a required capability appears missing, it is a **bar-B failure** — file it as a bug against the owning epic (E2–E9) per the epic Notes; do NOT patch `packages/*` in E10.
 
 ## Technical notes
 

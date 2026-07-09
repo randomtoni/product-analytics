@@ -41,6 +41,7 @@ Exercises E8: Fernly's snapshot definitions call EVERY query primitive — `funn
 - [ ] Each returns a well-formed neutral `QueryResult` (`rows`/`columns`/`generatedAt`) — asserted against a mocked response.
 - [ ] A Fernly-side snapshot record wraps each result — snapshot storage lives in the example, not the library.
 - [ ] `turbo run typecheck` + `turbo run test` pass for `examples/fernly`.
+- [ ] **Bar-B diff invariant (enforced):** this story's changeset touches only `examples/**` — nothing under `packages/**`, verifiable by diff. If a required capability appears missing, it is a **bar-B failure** — file it as a bug against the owning epic (E2–E9) per the epic Notes; do NOT patch `packages/*` in E10.
 
 ## Technical notes
 
@@ -49,5 +50,6 @@ Exercises E8: Fernly's snapshot definitions call EVERY query primitive — `funn
 - **Method specs (taxonomy-typed).** `packages/node/src/query/query-client.ts` — `FunnelSpec.steps: Array<keyof TX['events'] & string>`, `RetentionSpec.cohortEvent/returnEvent`, `TrendSpec.event` + `aggregation: 'total'|'unique'|'dau'`, `UniqueCountSpec.event`, `rawQuery(expr: string)`. `Duration = { value, unit }`, `Granularity = 'day'|'week'|'month'`. All → `Promise<QueryResult>`.
 - **`QueryResult` shape** (`packages/analytics-kit/src/query-result.ts`, exported from `analytics-kit`): `{ rows, columns, generatedAt, fromCache? }` — this IS the snapshot shape a persistence job stores.
 - **Mock transport, not a real endpoint.** — architect (2026-07-08): to run against a mock with no backend, set `personalKey` + `queryEndpoint` + `projectId` and inject `config.fetch` returning canned wire responses so `HttpQueryAdapter` normalizes them into `QueryResult`. Never hit a real HogQL endpoint. (Or use the unkeyed `QueryNoop` and assert the empty-shape contract if a slice only needs the shape.)
+- **All three keys are required to reach the real adapter (pin this).** VERIFIED `packages/node/src/query/create-query-client.ts`: `createQueryClient` returns `QueryNoop` when `personalKey` is unset OR `queryEndpoint` is unset (it warns and no-ops); a missing `projectId` warns but still builds the adapter. Since the AC wants each method asserted against a MOCKED response (proving the neutral→wire→`QueryResult` normalization, not just the empty shape), the config MUST set `personalKey` + `queryEndpoint` + `projectId` so the real `HttpQueryAdapter` is constructed and the injected `fetch` is actually consulted. A config that trips the no-op fallback would make the assertions prove only the empty-shape contract.
 
 ## Shipped

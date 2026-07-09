@@ -19,7 +19,7 @@ Exercises E4 at the neutral seam: a config-supplied `cookieDomain` stitches a ma
 ### In
 
 - Config the harness with `cookieDomain: '.fernly.example'` + `crossSubdomainCookie: true` (config-only — proving the surface ACCEPTS them with zero library change).
-- Stage a **simulated marketing→app journey** on the shared recording adapter: a `marketing` view (`fernly.example`) captures anonymous events, then an `app` view (`app.fernly.example`) `identify`s the reviewer. Assert on the recorded neutral stream that the distinct id is **preserved** across the handoff (the anonymous id links to the identified id — the merge).
+- Stage a **simulated marketing→app journey** on the shared recording adapter: a `marketing` phase (`fernly.example`) captures anonymous events, then an `app` phase (`app.fernly.example`) `identify`s the reviewer. Assert on the recorded neutral stream that the distinct id is **preserved** across the handoff (the anonymous id links to the identified id — the merge). NOTE: these "phases" are staged sequences of calls on the ONE root harness (`createFernlyAnalytics`), NOT `context()` scoped views — named `context()` profiles are S4's concern. The cross-subdomain merge is modeled purely by the recording adapter's identity state machine, so a plain call sequence on the root is the whole staging.
 - A `reset()` assertion: after `reset()`, identity is cleared and a fresh anonymous id is minted (the retained link dropped) — asserted on the stream.
 - A runnable vitest test covering: (1) anon events before identify carry the anon id; (2) after identify, the id is preserved / merged; (3) `reset()` re-anonymizes.
 
@@ -35,6 +35,7 @@ Exercises E4 at the neutral seam: a config-supplied `cookieDomain` stitches a ma
 - [ ] The staged marketing→app handoff preserves the distinct id across subdomains — asserted on the recorded neutral stream (anon id links to the identified id).
 - [ ] `reset()` clears identity and re-anonymizes — asserted on the stream.
 - [ ] `turbo run typecheck` + `turbo run test` pass for `examples/fernly`.
+- [ ] **Bar-B diff invariant (enforced):** this story's changeset touches only `examples/**` — nothing under `packages/**`, verifiable by diff. If a required capability appears missing, it is a **bar-B failure** — file it as a bug against the owning epic (E2–E9) per the epic Notes; do NOT patch `packages/*` in E10.
 
 ## Technical notes
 

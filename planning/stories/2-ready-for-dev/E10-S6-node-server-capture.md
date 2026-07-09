@@ -21,7 +21,7 @@ Exercises E7: a node-side handler captures a server-truth event (`plan_upgraded`
 - A node-side Fernly handler (`examples/fernly/src/server/`) using `@analytics-kit/node` `createAnalytics(config)` → `NodeAnalytics<TX>`, typed off the SAME Fernly taxonomy from S2.
 - `capture(distinctId, 'plan_upgraded', props, { dedupeId })` keyed on the same distinct id a client-side slice would use, with a caller-supplied `dedupeId` for idempotent retries. Optionally `setTraits(distinctId, traits)` / `setGroupTraits('workspace', key, traits)` for server-side property updates.
 - **`shutdown()` awaited in a signal handler**: demonstrate a SIGTERM/SIGINT handler that `await client.shutdown()` so the drain window is used (the epic's E7 watch-item). Runnable as a test that calls the handler and asserts the drain completed.
-- A runnable vitest test proving: node capture of `plan_upgraded` on the given distinct id reaches delivery with the supplied `dedupeId`; a duplicate `dedupeId` models idempotency; `shutdown()` drains and resolves.
+- A runnable vitest test proving: node capture of `plan_upgraded` on the given distinct id reaches delivery carrying the supplied `dedupeId` as the wire `uuid` (assert on the injected-`fetch` batch body); a duplicate `dedupeId` yields the same wire `uuid` twice (the backend-dedupe idempotency model — the client does NOT drop it); `shutdown()` drains and resolves.
 
 ### Out
 
@@ -36,6 +36,7 @@ Exercises E7: a node-side handler captures a server-truth event (`plan_upgraded`
 - [ ] A signal handler `await`s `client.shutdown()`; the drain window is used and `shutdown()` resolves (not rejects).
 - [ ] The node client is shown as a SIBLING of the browser client — NOT a unified client (distinct `capture(distinctId,…)` signature vs the facade's `track`).
 - [ ] `turbo run typecheck` + `turbo run test` pass for `examples/fernly`.
+- [ ] **Bar-B diff invariant (enforced):** this story's changeset touches only `examples/**` — nothing under `packages/**`, verifiable by diff. If a required capability appears missing, it is a **bar-B failure** — file it as a bug against the owning epic (E2–E9) per the epic Notes; do NOT patch `packages/*` in E10.
 
 ## Technical notes
 
@@ -43,6 +44,7 @@ Exercises E7: a node-side handler captures a server-truth event (`plan_upgraded`
 - **Await `shutdown()` in the signal handler (E7 watch-item, locked).** — from E7-S6 (2026-07-08): `shutdown()` resolves-not-rejects on timeout (a rejecting shutdown in a SIGTERM handler is an unhandled-rejection footgun), with a `console.error` as the only drop signal. The example's handler must `await client.shutdown()` so the drain window is actually used. `packages/node/src/node-analytics.ts` — `shutdown()` sets `stopped` first, loop-drains, races a configurable timeout.
 - **Node config + factory.** `@analytics-kit/node` `createAnalytics(config: NodeAnalyticsConfig)` — SINGLE arg; `key` is the INGEST write key (distinct from query's `personalKey`). Unkeyed ⇒ `NodeNoop` whole-stack no-op (bar B). `NodeAnalyticsConfig`: `key`/`taxonomy`/`allowlist`/`onViolation`/`ingestHost`/`ingestPath`/`fetch`/flush knobs (`packages/node/src/config.ts`). `CaptureOptions = { dedupeId? }` → wire `uuid` idempotency.
 - **Mock transport, not mock adapter (node has no injectable adapter).** — architect (2026-07-08): node's factory builds its own transport; its public injection seam is `config.fetch: FetchLike`. To run against a mock with no real backend, set `key` + `ingestHost` and inject a `fetch` that captures the delivered batch — assert the neutral→wire delivery there. Never hit a real endpoint. (Alternatively assert on `flush()`/`shutdown()` resolution + type-level capture typing if delivery inspection is out of scope for a slice.)
+- **Delivery assertion shape (pin this).** Node BATCHES — the injected `fetch` only fires after a flush trigger (`await client.flush()`, or hitting `flushAt`, or the drain inside `await client.shutdown()`). So the test must `capture(...)` then flush, then read the POSTed body. The `dedupeId` lands on the WIRE as **`uuid`** (top-level idempotency key), NOT as `dedupeId` — VERIFIED `packages/node/src/wire-mapper.ts` (`uuid: event.dedupeId`) and `packages/node/src/send-batch.ts` (POSTs to `ingestHost + ingestPath` with a JSON body via `config.fetch`). Assert `batch.events[i].uuid === <the supplied dedupeId>`, not a `dedupeId` field. A duplicate `dedupeId` yields the same wire `uuid` — that IS the idempotency model (the backend dedupes on it; the client does not drop it).
 - **Same taxonomy, every surface.** Import the S2 `defineTaxonomy` object; `plan_upgraded` and its props type-check identically through node `capture` as through browser `track`.
 
 ## Shipped
