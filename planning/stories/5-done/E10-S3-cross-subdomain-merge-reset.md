@@ -46,3 +46,17 @@ Exercises E4 at the neutral seam: a config-supplied `cookieDomain` stitches a ma
 - **Division of labor (record it):** E4-S4/S6 own the real cookie + `IdentityStore` merge; E10-S3 owns the neutral-seam merge contract as a bar-B proof. Different tests, different layers, no overlap.
 
 ## Shipped
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-09. Exercises E4's identity merge at the neutral seam (bar-B proof).
+
+- **Files added (examples ONLY — bar B):** `cross-subdomain-merge-reset.test.ts` (5 tests) — **NO source change needed**: the harness already accepts `cookieDomain`/`crossSubdomainCookie` (live-wired via E4-S4, not dead types) + the S1 `RecordingAdapter` already models the merge. That zero-change adoption IS the bar-B claim (surface accepts the config + merge contract holds, zero library/harness change).
+- **New public API:** none — example-only. ZERO `packages/**` edits (bar B, strongest form).
+- **The merge proof at the NEUTRAL seam:** simulated marketing→app journey on the ONE shared adapter (same cookie); anon events → `identify` → distinct id PRESERVED — asserted on `recorder.merges` (`{anonymousId, identifiedId:'reviewer-42'}`) + the per-event `distinctId` transition `[anon, anon, 'reviewer-42']`, NOT a cookie `domain=` attr (E4-S4/S6's turf). Facade delegates `identify`/`getDistinctId`/`reset` straight through → the recording adapter rides the identical path any adapter (incl. a future self-hosted one) does — proves the SPI contract, not a PostHog cookie mechanic.
+- **`reset()` re-anonymizes genuinely:** fresh anon id (`not.toBe` both prior anon AND identified), retained link dropped; the sharpest test — a subsequent `identify` merges from the NEW anon id (full-`merges`-array assertion catches a stale-anon-id bug a loose length check would miss).
+- **Tests added:** fernly +5 (config-only acceptance, marketing→app id-preserving merge, pre-identify anon-id, reset re-anonymize, reset-drops-link regression) → 42; turbo typecheck+test green; bar-B holds
+- **Commit:** `E10-S3-cross-subdomain-merge-reset — Cross-subdomain cookie config + simulated marketing→app merge + reset` on `core-cycle`
+- **Reviewer notes:** ship-ready — 0 critical, 0 suggestions
+- **Division of labor:** E4-S4/S6 own the real cookie + `IdentityStore` merge; E10-S3 owns the neutral-seam merge contract as a bar-B proof (different tests, different layers, no overlap).
+- **Cross-story seams exposed (S4):** S4 owns named `context()` scoped profiles (`config.contexts` + `analytics.context(name)`) — a DIFFERENT mechanism from S3's staged phases (plain sequential calls on the ONE root harness = shared cookie, NOT `context()`). S4 asserts its scoped views share the SAME identity/session S3 proved threads through the root (cross-context stitching survives).
