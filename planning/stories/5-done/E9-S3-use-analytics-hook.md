@@ -51,3 +51,19 @@ The consumer-facing read path: a hook that returns the same neutral client the r
 - **Frozen-15 discipline** — the returned `RootAnalytics` already carries exactly the 15-pinned facade + `context()`; the hook must not wrap/add verbs. Pin: `analytics-kit`'s `analytics-provider.test.ts` freezes `keyof AnalyticsProvider` at 15.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08): the runtime `keyof` keyset test rides on `createRecordingClient()` enumerating exactly the 15+`context` keys — a test-double fidelity dependency; the type-level `keyof ReturnType === keyof RootAnalytics` pin is the load-bearing guarantee. A one-line note would help a future reader.
+- > Reviewer suggestion (2026-07-08, cosmetic): the no-provider error message duplicates the idea across two sentences — a single sentence would read marginally cleaner.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08. The consumer-facing read path.
+
+- **Files added (react):** `use-analytics.ts` (`useAnalytics<TX extends TaxonomyShape = DefaultTaxonomyShape>(): RootAnalytics<TX>` — one-line `useContext(AnalyticsClientContext)` read; hard-throws naming `AnalyticsClientProvider` ONLY on the `NOT_IN_PROVIDER` sentinel; single `as RootAnalytics<TX>` cast after the sentinel branch) + test
+- **Files changed:** `index.ts` (+`useAnalytics` export; S2's provider/context exports untouched)
+- **New public API:** `@analytics-kit/react` `useAnalytics<TX>()`. Bar A: returns the NEUTRAL facade (not a vendor client) — zero React-code change on adapter swap. Frozen-15: adds NO verb. Zero vendor refs.
+- **The two cruxes (reviewer-verified non-vacuous):** (1) clean non-nullable `RootAnalytics<TX>` return — `context()` SURVIVES, NOT the base `AnalyticsProvider`, NOT `| undefined` (`expectTypeOf` pins proven real by flipping to `AnalyticsProvider`→TS2344). (2) taxonomy-through-hook param is a `TaxonomyShape` (mirrors `RootAnalytics`'s own param), NOT `createAnalytics`'s `<const T extends TaxonomyDecl>` inference — consumer supplies the derived shape (`useAnalytics<ShapeOf<typeof decl.decl>>()`); bare→`DefaultTaxonomyShape`. Both `@ts-expect-error` (undeclared event + wrong prop) proven to fire.
+- **De-brand:** posthog's `usePostHog` returns a silent global on no-provider; ours HARD-THROWS (neutral seam has no global — footgun-free). Taxonomy types imported from `analytics-kit` (seam, not re-exported by browser).
+- **Tests added:** react +10 (same-instance renderHook, inside-real-client-render-1, outside-throws-naming-provider + plain-Error, bar-A neutral-facade, bar-B unkeyed-no-op-silent, frozen-15 runtime keyset + type-level `keyof`, clean-`RootAnalytics<TX>` expectTypeOf + `context()`-survives, taxonomy-flows + `@ts-expect-error` isolated in never-invoked fn) → 27; all 4 gates exit 0 (typecheck explicit)
+- **Commit:** `E9-S3-use-analytics-hook — useAnalytics() hook` on `core-cycle`
+- **Reviewer notes:** ship — 0 critical, 2 minor suggestions (keyset test-double fidelity; error-message cosmetic)
+- **Cross-story seams exposed (S4):** `usePageView()` builds on `useAnalytics()` to get the client + fire manual `page()` on a consumer-threaded route change (no history listener). The no-provider throw is CENTRALIZED in `useAnalytics()` — S4 inherits the loud failure free, need not re-check the sentinel. S4 calls `useAnalytics()` bare (`DefaultTaxonomyShape`) unless it threads `TX` for the taxonomy-typed `page(name?, props?)`.

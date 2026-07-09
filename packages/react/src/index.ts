@@ -9,3 +9,4 @@ export {
   NOT_IN_PROVIDER,
   type AnalyticsClientContextValue,
 } from './analytics-client-context';
+export { useAnalytics } from './use-analytics';
