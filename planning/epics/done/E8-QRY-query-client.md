@@ -1,6 +1,6 @@
 ---
 id: E8-QRY-query-client
-status: active
+status: done
 area: query
 touches: [node, adapters]
 api_impact: additive
@@ -30,13 +30,13 @@ Durable KPI snapshotting needs a neutral read surface: a snapshot job asks for a
 
 ## Stories
 
-Five stories in `stories/2-ready-for-dev/`. Dependency graph: **S1 → S2 → S3 → S4**, plus **S1 → S5** (the warehouse stub runs parallel to the HTTP-adapter track once the seam exists). All ship in `@analytics-kit/node`; `QueryResult`/`QueryColumn` land in the `analytics-kit` seam package.
+All five shipped to `stories/5-done/`. Built order: **S1 → S2 → S3 → S4**, plus **S1 → S5** (parallel). Query client lives in `@analytics-kit/node` (server-only, personal-key auth); `QueryResult`/`QueryColumn` are in the `analytics-kit` seam package. **Bar A proven** — two adapters (`HttpQueryAdapter` + `WarehouseQueryAdapter` stub) satisfy `AnalyticsQueryClient<TX>` with the seam byte-for-byte unchanged.
 
-- **[E8-S1](../stories/2-ready-for-dev/E8-S1-query-client-seam.md)** *(additive, no deps)* — neutral `AnalyticsQueryClient<TX>` interface (five members: funnel/retention/trend/uniqueCount + `rawQuery`), taxonomy-typed spec types, and the single flat neutral `QueryResult` (rows + columns + generatedAt + fromCache?) in the seam package; own `keyof` pin. Establishes the query substrate — no adapter.
-- **[E8-S2](../stories/2-ready-for-dev/E8-S2-query-config-noop.md)** *(additive, depends on S1)* — `QueryClientConfig` (server-only `personalKey` + `queryEndpoint` + `projectId`, distinct from the ingest key/host), an overloaded `createQueryClient` factory, and a `QueryNoop` null-object client returning empty `QueryResult` when unkeyed (bar B).
-- **[E8-S3](../stories/2-ready-for-dev/E8-S3-http-query-adapter-sync.md)** *(additive, depends on S2)* — role-named `HttpQueryAdapter`: map each primitive + `rawQuery` → kind-discriminated wire body, POST with Bearer personal-key auth, normalize the sync `{results, columns, types, is_cached}` envelope → neutral `QueryResult`. Wires the S2 keyed branch.
-- **[E8-S4](../stories/2-ready-for-dev/E8-S4-http-query-adapter-async.md)** *(additive, depends on S3)* — bounded refresh/poll of the async `{query_status: {id, complete}}` envelope for long-running queries, returning the identical neutral `QueryResult`; async stays adapter-internal.
-- **[E8-S5](../stories/2-ready-for-dev/E8-S5-warehouse-adapter-stub.md)** *(additive, depends on S1)* — role-named `WarehouseQueryAdapter` typed stub satisfying `AnalyticsQueryClient<TX>` unchanged (the release's bar-A proof), with the intended per-method SQL-over-typed-view mapping documented for a future fill-in.
+- **[E8-S1](../stories/5-done/E8-S1-query-client-seam.md)** *(done — `38d94c1`)* — neutral `AnalyticsQueryClient<TX>` (funnel/retention/trend/uniqueCount + `rawQuery(expr: string)`, all `Promise<QueryResult>`), taxonomy-typed spec types, flat neutral `QueryResult` (rows/columns/generatedAt/fromCache?) in the seam; own `keyof` pin. No vendor/HogQL/`kind` on the surface.
+- **[E8-S2](../stories/5-done/E8-S2-query-config-noop.md)** *(done — `ba19998`)* — `QueryClientConfig` (server-only `personalKey`/`queryEndpoint`/`projectId` — DISTINCT from ingest, type-level boundary), overloaded `createQueryClient`, `QueryNoop` null-object (unkeyed→empty result, bar B).
+- **[E8-S3](../stories/5-done/E8-S3-http-query-adapter-sync.md)** *(done — `ed5a39c`)* — role-named `HttpQueryAdapter`: primitive→`[WIRE]` kind body (sent directly, not `InsightVizNode`-wrapped), Bearer-auth POST, sync `{results,columns,types,is_cached}`→`QueryResult` (all wire vocab adapter-internal). Wires the S2 keyed branch.
+- **[E8-S4](../stories/5-done/E8-S4-http-query-adapter-async.md)** *(done — `6e666e4`)* — bounded exponential-with-cap GET-poll of the async `{query_status}` envelope, reusing S3's `normalizeResult`, neutral give-up; async entirely adapter-internal, sync≡async to the caller. *(1 retry — typecheck-gate fix.)*
+- **[E8-S5](../stories/5-done/E8-S5-warehouse-adapter-stub.md)** *(done — `17a4c97`)* — role-named `WarehouseQueryAdapter` typed stub satisfying `AnalyticsQueryClient<TX>` unchanged (**the bar-A proof**), with the per-method Postgres-SQL-over-typed-view mapping documented for a future fill-in. Constructable + exported, not the default.
 
 ## Out of scope
 

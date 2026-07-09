@@ -1,10 +1,10 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-08 — E7 (node) shipped; NOW = E8–E11
+Last updated: 2026-07-08 — E8 (query) shipped; NOW = E9–E11
 
 ## Status
 
-Pre-1.0. The vendor-neutral **`core`** seam is v1 (E1–E3 shipped); the **browser target** (E4 identity, E5 transport, E6 capture/enrichment) and the **node server target** (E7) are capability-complete for R1. NOW holds the remaining epics — **E8–E11** (query, react, example, adoption) — all committed for the current build push. Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
+Pre-1.0. The vendor-neutral **`core`** seam is v1 (E1–E3 shipped); the **browser target** (E4 identity, E5 transport, E6 capture/enrichment), the **node server target** (E7 capture), and the **query client** (E8 — read side, KPI primitives + HTTP adapter + warehouse-stub bar-A proof) are capability-complete for R1. NOW holds the remaining epics — **E9–E11** (react binding, example consumer, adoption audit) — all committed for the current build push. Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
 
 ## Sequencing
 
@@ -26,7 +26,7 @@ Every remaining epic is committed. `/implement-epics all` builds them in the dep
 - **[E5-CAP-transport](epics/done/E5-CAP-transport.md)** *(done)* — batching (time + size trigger) + gzip compression (native `CompressionStream` + fflate fallback), retry with exponential backoff+jitter (network/5xx-only), offline queue that survives reloads (the one BRIEF §4 gap PostHog doesn't fill), fetch→XHR→sendBeacon + keepalive/unload drain, config-supplied ingest host/path, `dedupeId`→wire `uuid`, client rate-limiter + neutralized back-pressure, bot/crawler filtering.
 - **[E6-CAP-capture-enrichment](epics/done/E6-CAP-capture-enrichment.md)** *(done)* — `track` / `page` / adapter-internal pageleave, fresh-per-event page + UTM/attribution + device/browser/referrer context (each opt-out-able via one structured `enrichment` object), pluggable country source (E3-gated value) + GeoIP disable, DOM autocapture opt-in (default OFF, phone-home removed, sensitive scrub), and per-context capture profiles (`context()` → narrower `ScopedAnalytics`, shared identity/session/transport). No new facade verb — pin held at fifteen.
 - **[E7-NODE-server-capture](epics/done/E7-NODE-server-capture.md)** *(done)* — standalone `@analytics-kit/node` client: server-side `capture` (required `distinctId`) + `setTraits`/`setGroupTraits`, caller-suppliable `dedupeId`→wire `uuid` idempotency, in-memory batch queue (drop-oldest) + gzip (`node:zlib`) `{api_key,batch,sent_at}` delivery + 413-halving, shared `enforceAllowlist` privacy path (bar A, one code path), unkeyed whole-stack no-op (bar B), `flush()`/`shutdown()` lifecycle. Frozen-15 pin held.
-- **[E8-QRY-query-client](epics/E8-QRY-query-client.md)** *(active, ← core)* — `AnalyticsQueryClient` (funnel / retention / trend / uniqueCount + `rawQuery` escape hatch), HTTP query adapter, warehouse stub.
+- **[E8-QRY-query-client](epics/done/E8-QRY-query-client.md)** *(done)* — neutral `AnalyticsQueryClient` (funnel / retention / trend / uniqueCount + `rawQuery(expr: string)` escape hatch, all taxonomy-typed → flat neutral `QueryResult`) in `@analytics-kit/node`; `HttpQueryAdapter` (sync + bounded async poll, Bearer personal-key auth, all wire vocab adapter-internal); `WarehouseQueryAdapter` typed stub = the bar-A proof (two adapters, one interface, seam unchanged); server-only `QueryClientConfig` distinct from ingest; unkeyed `QueryNoop` (bar B). Frozen-15 pin held.
 - **[E9-RCT-react-binding](epics/E9-RCT-react-binding.md)** *(planned, ← E6)* — optional React/Next binding: provider + hooks.
 - **[E10-CORE-example-consumer](epics/E10-CORE-example-consumer.md)** *(planned, ← E6,E7,E8,E9)* — generic example consumer (invented product) under `examples/`, proving new-app adoption is config-only (bar B).
 - **[E11-CORE-adoption-audit](epics/E11-CORE-adoption-audit.md)** *(planned, ← E10)* — README interface→implementation matrix, adopt-in-a-new-app guide, and a bar A / bar B sweep including a vendor/product-name scan.
