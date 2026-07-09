@@ -1,6 +1,6 @@
 ---
 id: E9-RCT-react-binding
-status: active
+status: done
 area: react
 touches: [browser]
 api_impact: additive
@@ -24,12 +24,14 @@ Optional `@analytics-kit/react` binding so React/Next consumers get the client f
 
 ## Stories
 
-Drafted to `stories/2-ready-for-dev/`. Dependency chain (topo order): **S1 → S2 → S3 → S4** — a strict line (scaffold gates the provider, which gates the hook, which gates the router helper).
+All four shipped to `stories/5-done/`. Built topo order: **S1 → S2 → S3 → S4** (a strict line). **Named by role** — the React component is `AnalyticsClientProvider` (the seam's pinned `AnalyticsProvider` interface name is unrenameable, so the component disambiguates with `Client`). Frozen-15 held — the binding EXPOSES the facade, adds no verb.
 
-- **[E9-S1](../stories/2-ready-for-dev/E9-S1-react-package-scaffold.md)** *(additive, no deps)* — `@analytics-kit/react` scaffold: `react` + `@analytics-kit/browser` as **peer deps** (single shared client, consumer-controlled versions), `jsx: react-jsx` + `DOM` lib in tsconfig, jsdom + `@testing-library/react` harness, four gates green on a smoke test.
-- **[E9-S2](../stories/2-ready-for-dev/E9-S2-analytics-client-provider.md)** *(additive, depends on S1)* — SSR-safe **`AnalyticsClientProvider`** + `AnalyticsClientContext`: discriminated-union props (`client` XOR `config`), effect-only init (never render/useMemo), StrictMode double-invoke guard, client-wins-with-warning, no auto-pageview, unkeyed no-op rides through.
-- **[E9-S3](../stories/2-ready-for-dev/E9-S3-use-analytics-hook.md)** *(additive, depends on S2)* — **`useAnalytics<TX>()`** hook returning the neutral `RootAnalytics<TX>` (taxonomy flows through; `context()` preserved), with a loud/typed throw when used outside a provider.
-- **[E9-S4](../stories/2-ready-for-dev/E9-S4-use-pageview-router-hook.md)** *(additive, depends on S3)* — optional router-agnostic **`usePageView()`** helper: fires manual `page()` on a consumer-threaded route change (Next app/pages router, React Router), opt-in, no history listener; no framework-specific router adapter this release (deferred — see ## Expansion path).
+**Construction posture — lock relaxed (orchestrator 2026-07-08):** the epic's original "effect-only init (never render/useMemo)" lock existed to keep DOM access out of render for SSR. A fresh architect consult verified `createAnalytics(config)` is **DOM-free at construction** (every DOM access is `typeof`-guarded, E6), so that rationale was void. The provider therefore constructs **synchronously via a `useState` lazy initializer** (`useState(() => createAnalytics(config))`) — client in context from render 1, SSR-safe, matching posthog-js's synchronous `useMemo` posture — giving `useAnalytics()` a **clean non-nullable `RootAnalytics<TX>`** return (no init-window `| undefined`). Success-criteria line above (S2 "server render never initializes a client") is superseded: server render DOES construct (DOM-free), which is what makes the clean contract work.
+
+- **[E9-S1](../stories/5-done/E9-S1-react-package-scaffold.md)** *(done — `1d12b24`)* — `@analytics-kit/react` scaffold: `react` + `@analytics-kit/browser` **peer deps** (browser = inward runtime construction; single shared client), seam `analytics-kit` REGULAR dep (taxonomy types not re-exported by browser — the two-deps-two-reasons split), `jsx:react-jsx` + `DOM` lib, jsdom + `@testing-library/react` harness. React 19.
+- **[E9-S2](../stories/5-done/E9-S2-analytics-client-provider.md)** *(done — `2d3cc13`)* — SSR-safe **`AnalyticsClientProvider`** + sentinel-defaulted `AnalyticsClientContext`: discriminated-union props (`client` XOR `config`), **SYNCHRONOUS create-once** (`useState` lazy init), config-branch-owns→unmount-`shutdown()`, client-wins+dev-warn, no auto-pageview, unkeyed no-op rides through. (StrictMode: React 19 double-invokes the pure lazy init — tests assert the COMMITTED-client-stable invariant, not raw call-count.)
+- **[E9-S3](../stories/5-done/E9-S3-use-analytics-hook.md)** *(done — `4956fd5`)* — **`useAnalytics<TX extends TaxonomyShape>(): RootAnalytics<TX>`** (clean non-nullable, `context()` preserved, taxonomy through the return — param is a `TaxonomyShape` not a `TaxonomyDecl`), hard-throws naming the provider on the no-provider sentinel.
+- **[E9-S4](../stories/5-done/E9-S4-use-pageview-router-hook.md)** *(done — `d25df53`)* — optional router-agnostic **`usePageView<TX>()`**: fires manual `page()` in a `useEffect` keyed on the consumer-threaded route (Next app/pages, React Router), `captureOnMount?`, opt-in, NO history listener; net-new neutral (posthog-js react has no pageview hook). Framework router adapter deferred (## Expansion path).
 
 ## Out of scope
 
