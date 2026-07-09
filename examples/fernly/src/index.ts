@@ -22,3 +22,17 @@ export type {
   FernlyServerConfig,
   PlanUpgrade,
 } from './server/plan-upgrade-handler';
+export {
+  createFernlyQueryClient,
+  activationFunnelSnapshot,
+  reviewerRetentionSnapshot,
+  commentEngagementSnapshot,
+  activeReviewersSnapshot,
+  plansMixSnapshot,
+  allFernlySnapshots,
+} from './kpi/snapshots';
+export type {
+  FernlyQueryClient,
+  FernlyQueryConfig,
+  SnapshotRecord,
+} from './kpi/snapshots';
