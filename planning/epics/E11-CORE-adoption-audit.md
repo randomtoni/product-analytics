@@ -1,11 +1,11 @@
 ---
 id: E11-CORE-adoption-audit
-status: planned
+status: active
 area: core
 touches: [observability]
 api_impact: additive
 blocked_by: [E10-CORE-example-consumer]
-updated: 2026-07-07
+updated: 2026-07-09
 ---
 
 # E11-CORE-adoption-audit — Docs matrix + acceptance-bar audit
@@ -24,13 +24,15 @@ Both acceptance bars — (A) provider-swap = one adapter, zero consumer change; 
 
 ## Stories
 
-Tentative slice (story files not yet written):
+Five stories in `stories/2-ready-for-dev/`. **S5 (the vendor-name scan) ships first** — its confinement rule (describe-by-role, never by vendor) constrains what the docs stories may write, so S1/S2 depend on it. S3/S4 are independent acceptance sweeps grounded in already-shipped surfaces (E8 / E10).
 
-- **E11-S1** — README interface→implementation matrix (every method → ported impl → future warehouse/SQL or self-hosted).
-- **E11-S2** — the "adopt in a new app" config-only guide section.
-- **E11-S3** — bar-A audit: paper design of a hypothetical second adapter + the null/second-mock swap against E10 with zero consumer edits.
-- **E11-S4** — bar-B verification writeup driven off the E10 example (zero `packages/` edits).
-- **E11-S5** — the automated vendor/product-name scan, wired as a CI-able (exit-nonzero) check.
+- **[E11-S5](../stories/2-ready-for-dev/E11-S5-vendor-name-scan.md)** *(additive, no deps)* — GATED CHECK: CI-able exit-nonzero vendor/product-name scan over the library SURFACE (scan-by-dimension against built `.d.ts`, not raw grep). `$`-wire literals gated by a `_WIRE_`-confinement rule (not a whitelist); port-citation comments + `[WIRE]` literals correctly pass. `packages/**`-anchored, `examples/**`/`planning/**`/`fernly` exempt.
+- **[E11-S1](../stories/2-ready-for-dev/E11-S1-interface-implementation-matrix.md)** *(additive, depends on S5)* — PROSE docs (README): interface→implementation matrix — every frozen-15 client verb + 3 node verbs + 5 query methods → shipped ported impl (by role/wire shape) → future warehouse/SQL or self-hosted cell. Lives inside the S5 scan.
+- **[E11-S2](../stories/2-ready-for-dev/E11-S2-adopt-in-new-app-guide.md)** *(additive, depends on S5)* — PROSE docs (README): "adopt in a new app" config-only guide walking every config/generics lever (taxonomy, identity mapping, cookie domain, contexts/profiles, allowlist, KPI defs, framework wiring), seeded by E10 Fernly. Lives inside the S5 scan.
+- **[E11-S3](../stories/2-ready-for-dev/E11-S3-bar-a-adapter-swap-audit.md)** *(additive, no deps)* — GATED swap + PROSE design: bar A (provider-swap = one adapter, zero consumer change) — the concrete `NoopAdapter`↔`RecordingAdapter` swap through the E10 Fernly harness (zero consumer edits) + on-paper second-adapter design over the `AnalyticsAdapter` SPI, citing the E8 `WarehouseQueryAdapter` proof.
+- **[E11-S4](../stories/2-ready-for-dev/E11-S4-bar-b-and-capability-completeness.md)** *(additive, no deps)* — GATED checks + PROSE table: bar B (new-app adoption = config only — E10 Fernly, zero `packages/**`) + capability-completeness (prose coverage table vs posthog-js scoped to the BRIEF contract, incl. by-design-omitted flags/replay rows; gated frozen-15 + query export/type-presence assertion over `dist`).
+
+Dependency graph (topo-sortable): **S5 → {S1, S2}**; **S3** and **S4** independent (no deps). A valid order: S5 → S1 → S2 → S3 → S4 (S3/S4 may run any time).
 
 ## Out of scope
 
