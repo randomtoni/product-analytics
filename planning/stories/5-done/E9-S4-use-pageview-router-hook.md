@@ -52,3 +52,19 @@ Pageviews are manual/router-driven in this library (no auto history-listener —
 - **Expansion path** (epic): a future App-Router/Pages-Router convenience wrapper can wrap this hook, reading the router internally — additive, still delegating to `page()`. Out of R1.
 
 ## Shipped
+- > Reviewer note (2026-07-08): `captureOnMount` is read inside the effect but not in deps — intentional + correct (it's a mount-time decision, only consulted on the first run); a runtime toggle wouldn't memoize. Non-issue.
+- > Reviewer suggestion (2026-07-08, optional): a one-line JSDoc pointing consumers at the route sources (`usePathname()`/`router.asPath`/`useLocation().pathname`) — the router-agnostic contract lives only in the story, not the code. E10's example will make the pattern visible.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08. Closes E9 — the optional router pageview helper.
+
+- **Files added (react):** `use-page-view.ts` (`usePageView<TX extends TaxonomyShape = DefaultTaxonomyShape>(routeKey: string | undefined, options?: {name?; props?: TX['page']; captureOnMount?})` — delegates to `useAnalytics<TX>()`, fires `page(name, props)` in `useEffect(..., [routeKey])`; `mounted` ref makes `captureOnMount:false` skip ONLY the first run; NO history listener, NO `window.location`) + test
+- **Files changed:** `index.ts` (+`usePageView` + `UsePageViewOptions` export; S1–S3 exports untouched)
+- **New public API:** `@analytics-kit/react` `usePageView<TX>()` + `UsePageViewOptions`. NET-NEW neutral (posthog-js react has no pageview hook — its SPA pageview is browser-SDK history-patching, deliberately NOT replicated). Bar A: calls only neutral `page()`, zero component change on adapter swap. Frozen-15: no verb. Zero vendor refs.
+- **The crux (no auto-history):** installs NO global `history`/`popstate`/`pushState` listener, reads NO `window.location` — fires PURELY from the consumer-threaded `routeKey` (Next `usePathname()`/pages `router.asPath`/React Router `useLocation().pathname`). Proven: raw `pushState`×2 + dispatched `popstate` with unchanged `routeKey` → NO additional `page()`.
+- **Effect correctness:** 1 on mount + 1 per `routeKey` change, unchanged→no-refire, `undefined→value`→refire — proven under BOTH client-branch AND real config-branch providers (S2 synchronous → real client render 1, no init-window guard, `[routeKey]` deps only, no `analytics`-in-deps).
+- **Tests added:** react +15 (mount-once + change-refire + unchanged-no-refire ×both branches, no-history-listener, captureOnMount:false-suppresses-initial + default-fires, name/props-verbatim, undefined→value, bar-A only-page()-touched, SSR-safe no-fire-from-import, taxonomy `@ts-expect-error` wrong-type + undeclared-prop reviewer-verified-firing) → 42; all 4 gates exit 0 (typecheck explicit)
+- **Commit:** `E9-S4-use-pageview-router-hook — optional usePageView() router helper` on `core-cycle`
+- **Reviewer notes:** ship — 0 critical, 2 optional (captureOnMount memoization non-issue; route-source JSDoc)
+- **E10 note:** demonstrate the consumer threading `usePathname()` (Next app router) into `usePageView` — the documented-but-uncommented route-source contract; use provider config-branch for zero-boilerplate adoption + client-branch for DI/tests. No library change for E10 (new-app-adoption bar).

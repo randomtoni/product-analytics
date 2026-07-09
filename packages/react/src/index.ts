@@ -10,3 +10,4 @@ export {
   type AnalyticsClientContextValue,
 } from './analytics-client-context';
 export { useAnalytics } from './use-analytics';
+export { usePageView, type UsePageViewOptions } from './use-page-view';
