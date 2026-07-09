@@ -18,6 +18,15 @@
     "test": {
       "dependsOn": ["^build"]
     },
-    "lint": {}
+    "lint": {},
+    "//#neutrality-scan": {
+      "dependsOn": [
+        "analytics-kit#build",
+        "@analytics-kit/browser#build",
+        "@analytics-kit/node#build",
+        "@analytics-kit/react#build"
+      ],
+      "cache": false
+    }
   }
 }

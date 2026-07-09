@@ -10,7 +10,8 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "build": "turbo run build"
+    "build": "turbo run build",
+    "neutrality-scan": "vitest run --config vitest.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
