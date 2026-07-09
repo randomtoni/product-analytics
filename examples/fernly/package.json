@@ -1,0 +1,26 @@
+{
+  "name": "@example/fernly",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "analytics-kit": "workspace:*",
+    "@analytics-kit/browser": "workspace:*",
+    "@analytics-kit/node": "workspace:*",
+    "@analytics-kit/react": "workspace:*"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "jsdom": "^26.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

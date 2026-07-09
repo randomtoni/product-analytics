@@ -1,0 +1,37 @@
+{
+  "name": "@analytics-kit/react",
+  "version": "0.0.0",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "build": "tsup"
+  },
+  "dependencies": {
+    "analytics-kit": "workspace:*"
+  },
+  "peerDependencies": {
+    "@analytics-kit/browser": "workspace:*",
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@analytics-kit/browser": "workspace:*",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "jsdom": "^26.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

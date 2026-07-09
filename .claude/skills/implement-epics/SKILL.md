@@ -153,7 +153,7 @@ Parse the review's "Issues" section. Each issue is tagged `critical` or `suggest
 **2f-vi. Handle review outcome.**
 - **No critical issues** (suggestions only, or none):
   1. Append the captured `> Reviewer suggestion (YYYY-MM-DD): <text>` lines to the story's "Technical notes" section — one line per suggestion. Don't lose them; they feed the improvement pass.
-  2. Append a `## Shipped` section to the story file (see "Shipped section format" below). The skill writes this **once**, on move to done.
+  2. Fill the story's `## Shipped` section (see "Shipped section format" below) — the story template ships the heading empty with a placeholder comment; replace the placeholder under the EXISTING heading, don't append a duplicate. If the heading is missing (pre-template story), append it. The skill writes this **once**, on move to done.
   3. `git mv` the story `4-review/` → `5-done/`.
   4. Commit the code changes + the story-file folder move + Shipped-section append together, using the story title (verbatim from frontmatter) as the message (`git add -A && git commit -m "<story title>"`).
 - **Critical issues present**: `git mv` the story `4-review/` → `3-in-progress/`. Re-dispatch the builder with the reviewer's feedback inline. **Cap the loop at 2 retries (3 attempts total).** On hitting the cap, stop and escalate to the user — do NOT silently keep looping.

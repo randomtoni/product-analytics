@@ -1,0 +1,449 @@
+// Pure, DOM-free user-agent parsing. Every function here is a pure function of the
+// UA string (plus an optional vendor string / hints bag) — it reads NO `navigator`,
+// `window`, `document`, or `screen`. The enrichment module does the environment reads
+// and passes the strings in, so this module is fully testable with a literal UA in a
+// non-DOM context. De-branded from the reference detectBrowser/detectBrowserVersion/
+// detectOS/detectDevice — vendor naming stripped, neutral role-named exports.
+
+const FACEBOOK = 'Facebook';
+const MOBILE = 'Mobile';
+const IOS = 'iOS';
+const ANDROID = 'Android';
+const TABLET = 'Tablet';
+const ANDROID_TABLET = ANDROID + ' ' + TABLET;
+const IPAD = 'iPad';
+const APPLE = 'Apple';
+const APPLE_WATCH = APPLE + ' Watch';
+const SAFARI = 'Safari';
+const BLACKBERRY = 'BlackBerry';
+const SAMSUNG = 'Samsung';
+const SAMSUNG_BROWSER = SAMSUNG + 'Browser';
+const SAMSUNG_INTERNET = SAMSUNG + ' Internet';
+const CHROME = 'Chrome';
+const CHROME_OS = CHROME + ' OS';
+const CHROME_IOS = CHROME + ' ' + IOS;
+const INTERNET_EXPLORER = 'Internet Explorer';
+const INTERNET_EXPLORER_MOBILE = INTERNET_EXPLORER + ' ' + MOBILE;
+const OPERA = 'Opera';
+const OPERA_MINI = OPERA + ' Mini';
+const EDGE = 'Edge';
+const MICROSOFT_EDGE = 'Microsoft ' + EDGE;
+const FIREFOX = 'Firefox';
+const FIREFOX_IOS = FIREFOX + ' ' + IOS;
+const NINTENDO = 'Nintendo';
+const PLAYSTATION = 'PlayStation';
+const XBOX = 'Xbox';
+const ANDROID_MOBILE = ANDROID + ' ' + MOBILE;
+const MOBILE_SAFARI = MOBILE + ' ' + SAFARI;
+const WINDOWS = 'Windows';
+const WINDOWS_PHONE = WINDOWS + ' Phone';
+const NOKIA = 'Nokia';
+const OUYA = 'Ouya';
+const GENERIC = 'Generic';
+const GENERIC_MOBILE = GENERIC + ' ' + MOBILE.toLowerCase();
+const GENERIC_TABLET = GENERIC + ' ' + TABLET.toLowerCase();
+const KONQUEROR = 'Konqueror';
+const OCULUS_BROWSER = 'Oculus Browser';
+const VIVALDI = 'Vivaldi';
+const YANDEX = 'Yandex';
+const WHALE = 'Whale';
+const DUCKDUCKGO = 'DuckDuckGo';
+const PALE_MOON = 'Pale Moon';
+const WATERFOX = 'Waterfox';
+const BRAVE = 'Brave';
+const GOOGLE_SEARCH_APP = 'Google Search App';
+
+const BROWSER_VERSION_REGEX_SUFFIX = '(\\d+(\\.\\d+)?)';
+const DEFAULT_BROWSER_VERSION_REGEX = new RegExp('Version/' + BROWSER_VERSION_REGEX_SUFFIX);
+
+// Out-of-band signals not present in the UA string. Desktop / Android Brave is
+// Chromium-based with no UA marker but exposes `navigator.brave`; the enrichment
+// module reads that and passes it in as a hint (iOS Brave is caught by its UA marker).
+export interface UserAgentHints {
+  brave?: boolean;
+}
+
+// Opt-in UA-detection tweaks. Attribution-changing, so kept off unless requested.
+export interface UserAgentOptions {
+  detectGoogleSearchApp?: boolean;
+}
+
+// The pure UA-parse result. `browserVersion` is a float (e.g. 42.1) or null when the
+// UA carries no parseable version — carried through un-stringified.
+export interface ParsedUserAgent {
+  browser: string;
+  browserVersion: number | null;
+  os: string;
+  osVersion: string;
+}
+
+function browserFromHints(hints: UserAgentHints | undefined): string | null {
+  if (hints?.brave) {
+    return BRAVE;
+  }
+  return null;
+}
+
+const XBOX_REGEX = new RegExp(XBOX, 'i');
+const PLAYSTATION_REGEX = new RegExp(PLAYSTATION + ' \\w+', 'i');
+const NINTENDO_REGEX = new RegExp(NINTENDO + ' \\w+', 'i');
+const BLACKBERRY_REGEX = new RegExp(BLACKBERRY + '|PlayBook|BB10', 'i');
+
+const windowsVersionMap: Record<string, string> = {
+  'NT3.51': 'NT 3.11',
+  'NT4.0': 'NT 4.0',
+  '5.0': '2000',
+  '5.1': 'XP',
+  '5.2': 'XP',
+  '6.0': 'Vista',
+  '6.1': '7',
+  '6.2': '8',
+  '6.3': '8.1',
+  '6.4': '10',
+  '10.0': '10',
+};
+
+// Safari detection is loose here because likelier browsers (e.g. Firefox on iOS) are
+// ruled out before this check runs.
+function isSafari(userAgent: string): boolean {
+  return userAgent.includes(SAFARI) && !userAgent.includes(CHROME) && !userAgent.includes(ANDROID);
+}
+
+function safariCheck(ua: string, vendor?: string): boolean {
+  return (!!vendor && vendor.includes(APPLE)) || isSafari(ua);
+}
+
+// The browser identifier for a UA string. Check order is load-bearing: many UAs embed
+// keywords used by later checks, so a fork that also carries `Chrome/` must be tested
+// before the generic Chrome branch.
+export function detectBrowser(
+  userAgent: string,
+  vendor: string | undefined,
+  hints?: UserAgentHints,
+  options?: UserAgentOptions
+): string {
+  vendor = vendor || '';
+
+  const fromHints = browserFromHints(hints);
+  if (fromHints) {
+    return fromHints;
+  }
+
+  if (options?.detectGoogleSearchApp && userAgent.includes('GSA/')) {
+    return GOOGLE_SEARCH_APP;
+  }
+
+  if (userAgent.includes(' OPR/') && userAgent.includes('Mini')) {
+    return OPERA_MINI;
+  } else if (userAgent.includes(' OPR/')) {
+    return OPERA;
+  } else if (BLACKBERRY_REGEX.test(userAgent)) {
+    return BLACKBERRY;
+  } else if (userAgent.includes('IE' + MOBILE) || userAgent.includes('WPDesktop')) {
+    return INTERNET_EXPLORER_MOBILE;
+  } else if (userAgent.includes('OculusBrowser')) {
+    return OCULUS_BROWSER;
+  } else if (userAgent.includes(SAMSUNG_BROWSER)) {
+    return SAMSUNG_INTERNET;
+  } else if (userAgent.includes(EDGE) || userAgent.includes('Edg/')) {
+    return MICROSOFT_EDGE;
+  } else if (userAgent.includes(VIVALDI + '/')) {
+    return VIVALDI;
+  } else if (userAgent.includes('YaBrowser/')) {
+    return YANDEX;
+  } else if (userAgent.includes(WHALE + '/')) {
+    return WHALE;
+  } else if (userAgent.includes(DUCKDUCKGO + '/') || userAgent.includes('Ddg/')) {
+    return DUCKDUCKGO;
+  } else if (userAgent.includes('FBIOS')) {
+    return FACEBOOK + ' ' + MOBILE;
+  } else if (userAgent.includes('UCWEB') || userAgent.includes('UCBrowser')) {
+    return 'UC Browser';
+  } else if (userAgent.includes('CriOS')) {
+    return CHROME_IOS;
+  } else if (userAgent.includes('CrMo')) {
+    return CHROME;
+  } else if (userAgent.includes(CHROME)) {
+    return CHROME;
+  } else if (userAgent.includes(ANDROID) && userAgent.includes(SAFARI)) {
+    return ANDROID_MOBILE;
+  } else if (userAgent.includes('FxiOS')) {
+    return FIREFOX_IOS;
+  } else if (userAgent.toLowerCase().includes(KONQUEROR.toLowerCase())) {
+    return KONQUEROR;
+  } else if (userAgent.includes(BRAVE + '/')) {
+    return BRAVE;
+  } else if (safariCheck(userAgent, vendor)) {
+    return userAgent.includes(MOBILE) ? MOBILE_SAFARI : SAFARI;
+  } else if (userAgent.includes('PaleMoon/')) {
+    return PALE_MOON;
+  } else if (userAgent.includes(WATERFOX + '/')) {
+    return WATERFOX;
+  } else if (userAgent.includes(FIREFOX)) {
+    return FIREFOX;
+  } else if (userAgent.includes('MSIE') || userAgent.includes('Trident/')) {
+    return INTERNET_EXPLORER;
+  } else if (userAgent.includes('Gecko')) {
+    return FIREFOX;
+  }
+
+  return '';
+}
+
+const versionRegexes: Record<string, RegExp[]> = {
+  [INTERNET_EXPLORER_MOBILE]: [new RegExp('rv:' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [MICROSOFT_EDGE]: [new RegExp(EDGE + '?\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [CHROME]: [new RegExp('(' + CHROME + '|CrMo)\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [CHROME_IOS]: [new RegExp('CriOS\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  'UC Browser': [new RegExp('(UCBrowser|UCWEB)\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [SAFARI]: [DEFAULT_BROWSER_VERSION_REGEX],
+  [MOBILE_SAFARI]: [DEFAULT_BROWSER_VERSION_REGEX],
+  [OPERA]: [new RegExp('(' + OPERA + '|OPR)\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [FIREFOX]: [new RegExp(FIREFOX + '\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [FIREFOX_IOS]: [new RegExp('FxiOS\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [KONQUEROR]: [new RegExp('Konqueror[:/]?' + BROWSER_VERSION_REGEX_SUFFIX, 'i')],
+  [BLACKBERRY]: [new RegExp(BLACKBERRY + ' ' + BROWSER_VERSION_REGEX_SUFFIX), DEFAULT_BROWSER_VERSION_REGEX],
+  [ANDROID_MOBILE]: [new RegExp('android\\s' + BROWSER_VERSION_REGEX_SUFFIX, 'i')],
+  [SAMSUNG_INTERNET]: [new RegExp(SAMSUNG_BROWSER + '\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [OCULUS_BROWSER]: [new RegExp('OculusBrowser\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [VIVALDI]: [new RegExp(VIVALDI + '\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [YANDEX]: [new RegExp('YaBrowser\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [WHALE]: [new RegExp(WHALE + '\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [BRAVE]: [new RegExp(BRAVE + '\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [DUCKDUCKGO]: [new RegExp('(DuckDuckGo|Ddg)\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [PALE_MOON]: [new RegExp('PaleMoon\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [WATERFOX]: [new RegExp(WATERFOX + '\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [GOOGLE_SEARCH_APP]: [new RegExp('GSA\\/' + BROWSER_VERSION_REGEX_SUFFIX)],
+  [INTERNET_EXPLORER]: [new RegExp('(rv:|MSIE )' + BROWSER_VERSION_REGEX_SUFFIX)],
+  Mozilla: [new RegExp('rv:' + BROWSER_VERSION_REGEX_SUFFIX)],
+};
+
+// The parsed major.minor browser version as a float (e.g. 42.1), or null when the UA
+// carries no marker for the detected browser (e.g. desktop Brave detected via a hint).
+export function detectBrowserVersion(
+  userAgent: string,
+  vendor: string | undefined,
+  hints?: UserAgentHints,
+  options?: UserAgentOptions
+): number | null {
+  const browser = detectBrowser(userAgent, vendor, hints, options);
+  const regexes: RegExp[] | undefined = versionRegexes[browser];
+  if (regexes === undefined) {
+    return null;
+  }
+
+  for (const regex of regexes) {
+    const matches = userAgent.match(regex);
+    if (matches) {
+      return parseFloat(matches[matches.length - 2]);
+    }
+  }
+  return null;
+}
+
+const osMatchers: [
+  RegExp,
+  [string, string] | ((match: RegExpMatchArray | null, userAgent: string) => [string, string]),
+][] = [
+  [
+    new RegExp(XBOX + '; ' + XBOX + ' (.*?)[);]', 'i'),
+    (match): [string, string] => [XBOX, (match && match[1]) || ''],
+  ],
+  [new RegExp(NINTENDO, 'i'), [NINTENDO, '']],
+  [new RegExp(PLAYSTATION, 'i'), [PLAYSTATION, '']],
+  [BLACKBERRY_REGEX, [BLACKBERRY, '']],
+  [
+    new RegExp(WINDOWS, 'i'),
+    (_, userAgent): [string, string] => {
+      if (/Phone/.test(userAgent) || /WPDesktop/.test(userAgent)) {
+        return [WINDOWS_PHONE, ''];
+      }
+      if (new RegExp(MOBILE).test(userAgent) && !/IEMobile\b/.test(userAgent)) {
+        return [WINDOWS + ' ' + MOBILE, ''];
+      }
+      const match = /Windows NT ([0-9.]+)/i.exec(userAgent);
+      if (match && match[1]) {
+        const version = match[1];
+        let osVersion = windowsVersionMap[version] || '';
+        if (/arm/i.test(userAgent)) {
+          osVersion = 'RT';
+        }
+        return [WINDOWS, osVersion];
+      }
+      return [WINDOWS, ''];
+    },
+  ],
+  [
+    /((iPhone|iPad|iPod).*?OS (\d+)_(\d+)_?(\d+)?|iPhone)/,
+    (match): [string, string] => {
+      if (match && match[3]) {
+        const versionParts = [match[3], match[4], match[5] || '0'];
+        return [IOS, versionParts.join('.')];
+      }
+      return [IOS, ''];
+    },
+  ],
+  [
+    /(watch.*\/(\d+\.\d+\.\d+)|watch os,(\d+\.\d+),)/i,
+    (match): [string, string] => {
+      let version = '';
+      if (match && match.length >= 3) {
+        version = match[2] === undefined ? match[3] : match[2];
+      }
+      return ['watchOS', version];
+    },
+  ],
+  [
+    new RegExp('(' + ANDROID + ' (\\d+)\\.(\\d+)\\.?(\\d+)?|' + ANDROID + ')', 'i'),
+    (match): [string, string] => {
+      if (match && match[2]) {
+        const versionParts = [match[2], match[3], match[4] || '0'];
+        return [ANDROID, versionParts.join('.')];
+      }
+      return [ANDROID, ''];
+    },
+  ],
+  [
+    /Mac OS X (\d+)[_.](\d+)[_.]?(\d+)?/i,
+    (match): [string, string] => {
+      const result: [string, string] = ['Mac OS X', ''];
+      if (match && match[1]) {
+        const versionParts = [match[1], match[2], match[3] || '0'];
+        result[1] = versionParts.join('.');
+      }
+      return result;
+    },
+  ],
+  [/Mac/i, ['Mac OS X', '']],
+  [/CrOS/, [CHROME_OS, '']],
+  [/Linux|debian/i, ['Linux', '']],
+];
+
+// The [os, osVersion] pair for a UA string, or ['', ''] when unrecognized.
+export function detectOS(userAgent: string): [string, string] {
+  for (const [regex, resultOrFn] of osMatchers) {
+    const match = regex.exec(userAgent);
+    const result = match && (typeof resultOrFn === 'function' ? resultOrFn(match, userAgent) : resultOrFn);
+    if (result) {
+      return result;
+    }
+  }
+  return ['', ''];
+}
+
+// The specific device identifier for a UA string (e.g. iPad, iPhone, Android Tablet),
+// or '' for a desktop / unrecognized client. Pure — the enrichment module layers screen
+// signals on top of this to derive the coarse device_type.
+export function detectDevice(userAgent: string): string {
+  if (NINTENDO_REGEX.test(userAgent)) {
+    return NINTENDO;
+  } else if (PLAYSTATION_REGEX.test(userAgent)) {
+    return PLAYSTATION;
+  } else if (XBOX_REGEX.test(userAgent)) {
+    return XBOX;
+  } else if (new RegExp(OUYA, 'i').test(userAgent)) {
+    return OUYA;
+  } else if (new RegExp('(' + WINDOWS_PHONE + '|WPDesktop)', 'i').test(userAgent)) {
+    return WINDOWS_PHONE;
+  } else if (/iPad/.test(userAgent)) {
+    return IPAD;
+  } else if (/iPod/.test(userAgent)) {
+    return 'iPod Touch';
+  } else if (/iPhone/.test(userAgent)) {
+    return 'iPhone';
+  } else if (/(watch)(?: ?os[,/]|\d,\d\/)[\d.]+/i.test(userAgent)) {
+    return APPLE_WATCH;
+  } else if (BLACKBERRY_REGEX.test(userAgent)) {
+    return BLACKBERRY;
+  } else if (/(kobo)\s(ereader|touch)/i.test(userAgent)) {
+    return 'Kobo';
+  } else if (new RegExp(NOKIA, 'i').test(userAgent)) {
+    return NOKIA;
+  } else if (
+    /(kf[a-z]{2}wi|aeo[c-r]{2})( bui|\))/i.test(userAgent) ||
+    /(kf[a-z]+)( bui|\)).+silk\//i.test(userAgent)
+  ) {
+    return 'Kindle Fire';
+  } else if (/(Android|ZTE)/i.test(userAgent)) {
+    if (
+      !new RegExp(MOBILE).test(userAgent) ||
+      /(9138B|TB782B|Nexus [97]|pixel c|HUAWEISHT|BTV|noble nook|smart ultra 6)/i.test(userAgent)
+    ) {
+      if (
+        (/pixel[\daxl ]{1,6}/i.test(userAgent) && !/pixel c/i.test(userAgent)) ||
+        /(huaweimed-al00|tah-|APA|SM-G92|i980|zte|U304AA)/i.test(userAgent) ||
+        (/lmy47v/i.test(userAgent) && !/QTAQZ3/i.test(userAgent))
+      ) {
+        return ANDROID;
+      }
+      return ANDROID_TABLET;
+    } else {
+      return ANDROID;
+    }
+  } else if (new RegExp('(pda|' + MOBILE + ')', 'i').test(userAgent)) {
+    return GENERIC_MOBILE;
+  } else if (new RegExp(TABLET, 'i').test(userAgent) && !new RegExp(TABLET + ' pc', 'i').test(userAgent)) {
+    return GENERIC_TABLET;
+  } else {
+    return '';
+  }
+}
+
+// Screen/touch signals the enrichment module reads and passes in to disambiguate the
+// coarse device type for a UA that lies (e.g. Chrome-on-Android in desktop-site mode).
+export interface DeviceTypeSignals {
+  userAgentDataPlatform?: string;
+  maxTouchPoints?: number;
+  screenWidth?: number;
+  screenHeight?: number;
+  devicePixelRatio?: number;
+}
+
+// The coarse device type — Desktop / Mobile / Tablet / Console / Wearable — from the UA
+// device, falling back to screen signals for the Android-desktop-spoof case. Not pure
+// on the environment (takes signals in), but the signals are supplied by the caller, so
+// this function still touches no DOM.
+export function detectDeviceType(userAgent: string, signals?: DeviceTypeSignals): string {
+  const device = detectDevice(userAgent);
+  if (
+    device === IPAD ||
+    device === ANDROID_TABLET ||
+    device === 'Kobo' ||
+    device === 'Kindle Fire' ||
+    device === GENERIC_TABLET
+  ) {
+    return TABLET;
+  } else if (device === NINTENDO || device === XBOX || device === PLAYSTATION || device === OUYA) {
+    return 'Console';
+  } else if (device === APPLE_WATCH) {
+    return 'Wearable';
+  } else if (device) {
+    return MOBILE;
+  }
+
+  if (signals?.userAgentDataPlatform === 'Android' && (signals?.maxTouchPoints ?? 0) > 0) {
+    const shortSide = Math.min(signals?.screenWidth ?? 0, signals?.screenHeight ?? 0);
+    const shortSideDp = shortSide / (signals?.devicePixelRatio ?? 1);
+    return shortSideDp >= 600 ? TABLET : MOBILE;
+  }
+
+  return 'Desktop';
+}
+
+// The pure UA parse the enrichment module consumes for the browser/os context keys.
+// device_type is NOT here — it needs screen signals, so it stays in the enrichment
+// module (via detectDeviceType). Same input → same output, no DOM reads.
+export function parseUserAgent(
+  userAgent: string,
+  vendor?: string,
+  hints?: UserAgentHints,
+  options?: UserAgentOptions
+): ParsedUserAgent {
+  const [os, osVersion] = detectOS(userAgent);
+  return {
+    browser: detectBrowser(userAgent, vendor, hints, options),
+    browserVersion: detectBrowserVersion(userAgent, vendor, hints, options),
+    os,
+    osVersion,
+  };
+}
