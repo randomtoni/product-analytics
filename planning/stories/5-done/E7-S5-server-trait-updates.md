@@ -65,3 +65,11 @@ Completes the node capture surface with the two property-update verbs from BRIEF
 - **Commit:** `E7-S5-server-trait-updates — Server-side person & group trait updates` on `core-cycle`
 - **Reviewer notes:** 0 critical, collision-verdict-acceptable + 3 suggestions (deferred cross-adapter discriminant seam story; collision doc-test; mapGroupProperties in-guard)
 - **Cross-story seams exposed (S6):** the no-op posture now covers THREE enqueue paths (`capture`/`setTraits`/`setGroupTraits`, all → `this.queue.enqueue`) — S6 wiring the no-op at the queue/send boundary covers all three in one change; else each new verb needs the same per-verb guard. Real `flush()`/`shutdown()` drain bodies (still empty skeletons) drain trait/group events identically (same queue, no separate transport).
+
+## Follow-up
+
+> E7 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Collision doc-test** — pins the known untyped-hatch behavior: `capture(id, 'set_traits', {...})` routes through the trait branch (recorded so it's not later mistaken for a regression).
+- **`mapGroupProperties` `in`-guard** — its three key reads now `in`-guarded, symmetric with `mapTraitProperties`; behavior-preserving (sole minting path always sets them), robust to future callers. (Addresses both S5 reviewer suggestions.)
+- Skipped-with-reason: the cross-adapter structural internal-event DISCRIMINANT (replacing name-based `MERGE_EVENT`/`AUTOCAPTURE_EVENT`/`set_traits` recognition) is a FUTURE ROADMAP story spanning both browser + node — a seam change out of this pass's scope.

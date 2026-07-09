@@ -1,8 +1,6 @@
-import type { Taxonomy, TaxonomyDecl } from 'analytics-kit';
+import type { Taxonomy, TaxonomyDecl, ViolationPolicy } from 'analytics-kit';
 
-// The seam's off-list policy, mirrored locally: `enforceAllowlist` accepts this union
-// structurally, but the seam entrypoint does not re-export the `ViolationPolicy` name.
-export type ViolationPolicy = 'throw' | 'drop-and-error-log';
+export type { ViolationPolicy };
 
 // The transport primitive: a consumer-injectable fetch implementation so the consumer
 // can supply a first-party proxy or a runtime-specific fetch. Consumed by E7-S4's

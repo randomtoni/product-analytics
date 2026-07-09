@@ -67,3 +67,9 @@ Server capture buffers events and flushes on a size or interval trigger — a se
 - **Commit:** `E7-S3-server-batch-queue — Server batch queue + locked defaults` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions (interval-armed-then-size test; S4 retry-hook on the swallowed-rejection path)
 - **Cross-story seams exposed:** **S4** slots `sendBatch` into the injected `send` closure (ctor 2nd arg `SendBatch = (batch: NeutralEvent[]) => Promise<void>`) — zero queue reshaping; owns the wire envelope/gzip/endpoint-POST/`dedupeId→uuid`/413-halving BELOW the seam; retry/backoff hooks the swallowed-rejection path. (Architect carry: the reference's 413-halving permanently mutates maxBatchSize — S4 decides separate-runtime-field vs in-flight-only; keeping maxBatchSize independent here makes either clean.) **S6** `flush()`→`queue.flushNow()` (drain+await in-flight), `shutdown()`→`queue.drain()` (take-all, clears both timers so no dangling `setTimeout` pins the event loop).
+
+## Follow-up
+
+> E7 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Interval-armed-then-size test** — added: arms the interval (buffer < flushAt), half-elapses to prove it's armed, crosses flushAt (deferred size-flush), asserts exactly ONE delivery of all records, then advances the FULL interval window to prove `clearTimers()` cancelled the armed interval (no redundant empty send). (Addresses the S3 reviewer suggestion.)

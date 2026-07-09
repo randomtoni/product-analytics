@@ -129,6 +129,26 @@ describe('earlier-of size vs interval', () => {
     vi.advanceTimersByTime(1000);
     expect(send).toHaveBeenCalledTimes(1);
   });
+
+  test('an armed interval then a size-crossing burst delivers ONCE, with no redundant empty send', () => {
+    const { send, batches } = spySend();
+    const queue = new BatchQueue<number>({ send, flushAt: 3, flushInterval: 1000, maxBatchSize: 100 });
+
+    queue.enqueue(1); // below flushAt → arms the interval timer
+    vi.advanceTimersByTime(500); // interval half-elapsed, still armed
+    expect(send).not.toHaveBeenCalled();
+
+    queue.enqueue(2);
+    queue.enqueue(3); // 3rd crosses flushAt → size trigger, must cancel the armed interval
+    vi.advanceTimersByTime(0);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(batches[0]).toEqual([1, 2, 3]);
+
+    // Advance past the window the interval WOULD have fired in: the size drain cleared it,
+    // so no second (empty) delivery lands against the already-drained buffer.
+    vi.advanceTimersByTime(1000);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('overflow: drop-oldest at maxQueueSize', () => {

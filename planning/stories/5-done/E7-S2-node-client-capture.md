@@ -86,3 +86,9 @@ The first server-side target: a standalone `@analytics-kit/node` client with the
 - **Commit:** `E7-S2-node-client-capture — Node client skeleton + neutral server capture` on `core-cycle`
 - **Reviewer notes:** 0 critical, 2 suggestions (ViolationPolicy seam re-export; EventBuffer.drain interface)
 - **Cross-story seams exposed:** **S3** replaces `InMemoryEventBuffer` with the real queue (batching knobs already on config, unconsumed; client hands one `NeutralEvent` per `capture` via `buffer.add`). **S4** consumes `NeutralEvent[]` via `drain()` → node wire-mapper (`dedupeId`→top-level `uuid`) → gzip `{api_key, batch, sent_at}` → POST config `ingestHost`+`ingestPath` via injected `config.fetch` (`FetchLike`); 413-halving+retry live here. **S5** adds `setTraits`/`setGroupTraits` (taxonomy-typed, gated via same `enforceAllowlist`, routed through buffer) — will GROW the `keyof NodeAnalytics` pin (deliberately separate from seam-15). **S6** unkeyed→no-op in `create-analytics.ts` (currently constructs real client unconditionally) + real `flush()`/`shutdown(shutdownTimeoutMs)` bodies.
+
+## Follow-up
+
+> E7 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression (seam 166 / node 122 green).
+
+- **`ViolationPolicy` single-sourced** — added it to `analytics-kit/src/index.ts`'s type-export block; `config.ts` now imports it from `analytics-kit` and DROPPED the node-local copy. Kills the drift risk; the 15-pin held (additive type export, not a facade member). (Addresses the S2 reviewer suggestion.)

@@ -103,6 +103,8 @@ export function createSendBatch(deps: SendBatchDeps): (batch: NeutralEvent[]) =>
     let pending = events;
 
     while (pending.length > 0) {
+      // Redundant on the normal path (the queue already hands us <= maxBatchSize), but
+      // load-bearing after a 413 shrinks maxBatchSize — do not "simplify" it away.
       const slice = pending.slice(0, maxBatchSize);
       const outcome = await sendWithRetry(slice);
 

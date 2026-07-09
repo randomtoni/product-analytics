@@ -18,6 +18,7 @@ export type {
   AnalyticsProvider,
   RootAnalytics,
   ScopedAnalytics,
+  ViolationPolicy,
 } from './analytics-provider';
 export type { FeatureFlagPort, SessionReplayPort } from './ports';
 export { NoopAdapter } from './noop-adapter';

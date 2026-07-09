@@ -19,6 +19,11 @@ export function createAnalytics(
   if (config.key === undefined) {
     return new NodeNoop<DefaultTaxonomyShape>();
   }
+  if (config.ingestHost === undefined) {
+    console.warn(
+      'analytics: a key is set but no ingestHost is configured; every batch will POST to a host-less URL, fail, and be dropped. Set ingestHost.'
+    );
+  }
   // The transport: the consumer-injected `fetch`, else the Node 18+ global. Both satisfy
   // node's own minimal fetch contract (only `.status` is read).
   const fetchImpl = (config.fetch ?? fetch) as NodeFetch;

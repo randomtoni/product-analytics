@@ -68,3 +68,30 @@ test('unkeyed: an off-list prop does NOT throw — the no-op accepts every call 
     })
   ).not.toThrow();
 });
+
+// --- keyed-but-no-ingestHost misconfig warning (batches would silently drop) ---
+
+test('keyed with no ingestHost warns once at construction (misconfig would drop every batch)', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+  createAnalytics({ key: 'k', taxonomy });
+
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0][0]).toContain('ingestHost');
+});
+
+test('keyed WITH ingestHost does not warn', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+  createAnalytics({ key: 'k', taxonomy, ingestHost: 'https://ingest.example' });
+
+  expect(warn).not.toHaveBeenCalled();
+});
+
+test('the unkeyed no-op path does not warn (nothing is ever sent)', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+  createAnalytics({ taxonomy });
+
+  expect(warn).not.toHaveBeenCalled();
+});

@@ -84,11 +84,17 @@ function mapTraitProperties(properties: NeutralProperties | undefined): NeutralP
 // de-branded [WIRE] group-identify nested keys (group_type/group_key/group_set).
 function mapGroupProperties(properties: NeutralProperties | undefined): NeutralProperties {
   const props = properties ?? {};
-  return {
-    [WIRE_GROUP_TYPE_KEY]: props[WIRE_GROUP_TYPE_KEY],
-    [WIRE_GROUP_KEY_KEY]: props[WIRE_GROUP_KEY_KEY],
-    [WIRE_GROUP_SET_KEY]: props[WIRE_GROUP_SET_KEY],
-  };
+  const wire: NeutralProperties = {};
+  if (WIRE_GROUP_TYPE_KEY in props) {
+    wire[WIRE_GROUP_TYPE_KEY] = props[WIRE_GROUP_TYPE_KEY];
+  }
+  if (WIRE_GROUP_KEY_KEY in props) {
+    wire[WIRE_GROUP_KEY_KEY] = props[WIRE_GROUP_KEY_KEY];
+  }
+  if (WIRE_GROUP_SET_KEY in props) {
+    wire[WIRE_GROUP_SET_KEY] = props[WIRE_GROUP_SET_KEY];
+  }
+  return wire;
 }
 
 export function assembleBatchEnvelope(

@@ -75,3 +75,10 @@ Turns the buffered queue into real delivery: a node-internal wire-mapper lays ea
 - **Commit:** `E7-S4-batch-delivery-wire — Batch delivery: gzip envelope, node wire-mapper, 413-halving` on `core-cycle`
 - **Reviewer notes:** 0 critical, 3 suggestions (redundant-slice comment; ingestHost-absent warning for S6; fetch-cast note)
 - **Cross-story seams exposed:** **S5** trait/group events ride this SAME `mapEventToWire`+`assembleBatchEnvelope`+`createSendBatch` path — S5 extends `WireEvent` (lift trait bags to top-level wire keys, as browser does `set_traits`/`set_traits_once`); envelope/gzip/transport/413/retry are SETTLED. **S6** force-drains the queue whose `send` is this delivery closure (`flushNow()`/`drain()` from S3); resolve-on-give-up means a drain settles cleanly even on permanent-failure batches.
+
+## Follow-up
+
+> E7 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **Redundant-slice gotcha comment** — one line at the `deliver` re-slice noting it's redundant on the normal path but load-bearing for the 413 re-slice (don't "simplify" it away).
+- **Missing-`ingestHost` warning** — a construction-time `console.warn` when `config.key` is set but `ingestHost` absent (the silent-drop misconfig: host-less `/batch/` → fetch throws → status 0 → retried 4× → dropped). Construction-time only, gated after the unkeyed early-return; fires keyed+no-host, silent keyed+host, silent unkeyed (3 tests). (Addresses both S4 reviewer suggestions.)

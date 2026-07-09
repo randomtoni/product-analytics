@@ -153,6 +153,23 @@ test('a consumer event named like a trait bag key is NOT mapped as a trait event
   expect(wire.properties).toEqual({ set: 'a real consumer prop' });
 });
 
+// Known untyped-hatch collision, documented (not a regression): a consumer event
+// literally named `set_traits` (only reachable via the untyped-taxonomy escape hatch,
+// since a typed taxonomy never declares a reserved-name event) routes through the trait
+// branch because the mapper recognizes trait events BY NAME. Pinned so the deferred
+// structural-discriminant follow-up flips this deliberately, not by accident.
+test('an untyped-hatch event named set_traits maps THROUGH the trait branch (name-based recognizer collision)', () => {
+  const wire = mapEventToWire(
+    neutral({ event: SET_TRAITS_EVENT, properties: { set: { plan: 'pro' }, unrelated: 1 } })
+  );
+
+  // The trait branch runs: only the `set`/`set_once` wrapper keys survive; the sibling
+  // `unrelated` prop is dropped because it is not a recognized trait wrapper key.
+  expect(wire.event).toBe(SET_TRAITS_EVENT);
+  expect(wire.properties).toEqual({ set: { plan: 'pro' } });
+  expect(wire.properties).not.toHaveProperty('unrelated');
+});
+
 test('assembleBatchEnvelope wraps mapped events in { api_key, batch, sent_at }', () => {
   const now = new Date('2026-07-08T12:00:00.000Z');
   const envelope = assembleBatchEnvelope('proj-key', [neutral(), neutral({ dedupeId: 'dd-2' })], now);
