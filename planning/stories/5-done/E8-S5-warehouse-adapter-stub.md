@@ -48,3 +48,16 @@ A second query backend that typechecks against `AnalyticsQueryClient<TX>` unchan
 - **Name by role.** `WarehouseQueryAdapter` — an internal adapter module of the node package, named by role, never by vendor (BRIEF).
 
 ## Shipped
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08. Closes E8's feature set — THE bar-A proof.
+
+- **Files added (node/query):** `warehouse-query-adapter.ts` (role-named `WarehouseQueryAdapter`/`createWarehouseQueryAdapter` `implements AnalyticsQueryClient<TX>` in full — 5 methods each a NEUTRAL not-implemented throw `'analytics: warehouse query adapter is not yet implemented'`, never computes/connects; a tight doc block mapping each method → Postgres SQL over the taxonomy-generated typed VIEW per REFERENCE-BACKEND §E8-S5, `rawQuery(expr)`=SQL vs HogQL) + test
+- **Files changed:** node `index.ts` (+`WarehouseQueryAdapter`/`createWarehouseQueryAdapter` exports)
+- **New public API:** `@analytics-kit/node` `WarehouseQueryAdapter`/`createWarehouseQueryAdapter` — constructable + exported but NOT the default (`createQueryClient` selects `QueryNoop`/HTTP; config-driven HTTP↔warehouse selection is a future additive step). Named by role, no vendor, no consumer-event in the SQL mapping.
+- **THE bar-A proof:** `implements AnalyticsQueryClient<TX>` with the S1 interface BYTE-FOR-BYTE unchanged (`git diff packages/analytics-kit/` empty). Reviewer independently probed: the 0-arg stub bodies (dropped params for `no-unused-vars`, mirroring `QueryNoop`) do NOT weaken typing — the taxonomy spec params are enforced at the CALL SITE through an `AnalyticsQueryClient<TX>`-typed ref (invalid event / missing `within` / non-string rawQuery all fail to compile). Two real adapters (HTTP + warehouse), one interface, zero consumer change.
+- **Tests added:** node +4 (bar-A `toExtend<AnalyticsQueryClient<TX>>()` typed+default taxonomy + runtime assignment; factory returns interface-satisfying; every method rejects neutral not-implemented; message names-no-vendor) → 175; seam 172 unchanged. **Typecheck independently confirmed exit 0** (post-S4 lesson).
+- **Commit:** `E8-S5-warehouse-adapter-stub — Warehouse query adapter: interface-satisfying typed stub (bar-A proof)` on `core-cycle`
+- **Reviewer notes:** SHIP — 0 critical, 2 suggestions (member-count test lockstep on a 6th primitive; keep the throw-not-empty on fill-in); E8-close-ready
+- **E10 note:** the example consumer wires `createQueryClient(config)` + codes to `AnalyticsQueryClient<TX>` — should NEVER import `createWarehouseQueryAdapter` directly (proof/fill-in seat, not a consumer path); exercise the typed spec surface (funnel/retention/trend/uniqueCount taxonomy-keyed) + show the config-only no-op default; do NOT select the warehouse adapter by config (not wired, by design).

@@ -20,3 +20,7 @@ export {
   createHttpQueryAdapter,
 } from './query/http-query-adapter';
 export type { HttpQueryAdapterOptions } from './query/http-query-adapter';
+export {
+  WarehouseQueryAdapter,
+  createWarehouseQueryAdapter,
+} from './query/warehouse-query-adapter';
