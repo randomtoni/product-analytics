@@ -947,6 +947,48 @@ describe('wire-mapping seam — dedupeId → top-level uuid (S8)', () => {
     expect(wire.properties ?? {}).not.toHaveProperty('$insert_id');
     expect(containsInsertId(wire)).toBe(false);
   });
+
+  // DEFECT #14 fix (structural discriminant, end-to-end): a consumer event whose NAME collides
+  // with an adapter-internal event name (identify/autocapture/group_identify — reachable via the
+  // untyped-taxonomy escape hatch) flows through the SAME capture() seam with NO internalKind, so
+  // the wire-mapper does NOT misroute it. It keeps its own event name and its real props, never
+  // the internal-event wire shape (no name swap, no trait-bag lift). internalKind never on the wire.
+  test.each([MERGE_EVENT, AUTOCAPTURE_EVENT, GROUP_IDENTIFY_EVENT])(
+    'a consumer event named %s (no internalKind) keeps its own name + props on the wire',
+    (name) => {
+      const adapter = new BrowserAdapter({ key: freshKey() });
+      const event = adapter.runCapturePipeline(
+        makeEvent({ event: name, properties: { realProp: 1 } })
+      );
+
+      const wire = adapter.toWireEvent(event);
+
+      // The consumer's own name survives — never swapped to the [WIRE] internal name.
+      expect(wire.event).toBe(name);
+      expect(wire.event).not.toContain('$');
+      // The real prop rides through (not lifted to a top-level trait bag, not stripped).
+      expect(wire.properties).toMatchObject({ realProp: 1 });
+      expect(wire).not.toHaveProperty('set_traits');
+      // The structural discriminant is never wire-visible.
+      expect(wire).not.toHaveProperty('internalKind');
+      expect(JSON.stringify(wire)).not.toContain('internalKind');
+    }
+  );
+
+  test('a REAL identify() merge still maps to the internal merge wire shape — regression guard', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const capture = vi.spyOn(adapter, 'capture');
+    adapter.identify('user-1', { plan: 'pro' });
+    // The traits event is the last capture (a bare id-switch on anon emits the merge with bags).
+    const mergeEvent = capture.mock.calls.at(-1)![0];
+
+    const wire = adapter.toWireEvent(mergeEvent);
+
+    // The internal merge normalization ran: the trait bag was lifted to the top-level wire key.
+    expect(mergeEvent.internalKind).toBe('merge');
+    expect(wire.set_traits).toEqual({ plan: 'pro' });
+    expect(wire).not.toHaveProperty('internalKind');
+  });
 });
 
 describe('reset — clear identity/persistence/session, keep device id (S9)', () => {

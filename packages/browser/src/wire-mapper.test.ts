@@ -118,9 +118,9 @@ describe('wire-mapper — the rest of the [WIRE] top-level shape', () => {
   });
 });
 
-describe('wire-mapper — MERGE_EVENT / traits normalization (S2, keyed off MERGE_EVENT)', () => {
+describe('wire-mapper — merge / traits normalization (S2, keyed off internalKind === "merge")', () => {
   function makeMergeEvent(properties: Record<string, unknown>): NeutralEvent {
-    return makeEvent({ event: MERGE_EVENT, distinctId: 'user-1', properties });
+    return makeEvent({ event: MERGE_EVENT, internalKind: 'merge', distinctId: 'user-1', properties });
   }
 
   test('lifts set_traits / set_traits_once out of properties to top-level wire keys', () => {
@@ -147,15 +147,47 @@ describe('wire-mapper — MERGE_EVENT / traits normalization (S2, keyed off MERG
     expect(wire.properties?.[ANONYMOUS_DISTINCT_ID_KEY]).toBe('anon-9');
   });
 
-  test('normalization is keyed off MERGE_EVENT — a consumer event named the same as a trait key is NOT normalized', () => {
+  test('normalization is keyed off internalKind — a non-merge event carrying a trait-named key is NOT normalized', () => {
     // A non-merge event whose properties happen to carry a `set_traits`-named key is
-    // left untouched: the trait bag lift fires ONLY for the adapter-emitted MERGE_EVENT.
+    // left untouched: the trait bag lift fires ONLY for an adapter-minted `internalKind: merge`.
     const wire = mapEventToWire(
       makeEvent({ event: 'purchase', properties: { [SET_TRAITS_KEY]: { plan: 'pro' } } })
     );
 
     expect(wire.set_traits).toBeUndefined();
     expect(wire.properties?.[SET_TRAITS_KEY]).toEqual({ plan: 'pro' });
+  });
+
+  // DEFECT #14 fix (structural discriminant): a consumer event literally named `identify`
+  // (= MERGE_EVENT, reachable only via the untyped-taxonomy escape hatch) has no internalKind,
+  // so it is NOT misrouted through the merge normalization — its real props survive intact and
+  // its own event name is preserved (never swapped to a wire merge name).
+  test('a consumer event named identify (untyped hatch, no internalKind) passes through with props INTACT', () => {
+    const wire = mapEventToWire(
+      makeEvent({ event: MERGE_EVENT, properties: { [SET_TRAITS_KEY]: { plan: 'pro' }, real: 1 } })
+    );
+
+    // No lift: the `set_traits`-named key stays a plain consumer prop inside properties, the
+    // sibling `real` prop is kept, and the event name is the consumer's own `identify`.
+    expect(wire.event).toBe(MERGE_EVENT);
+    expect(wire.set_traits).toBeUndefined();
+    expect(wire.properties).toEqual({ [SET_TRAITS_KEY]: { plan: 'pro' }, real: 1 });
+  });
+
+  // Regression guard: a REAL merge event (internalKind set) still lifts the trait bags.
+  test('a REAL merge event (internalKind: merge) still lifts the trait bags — regression guard', () => {
+    const wire = mapEventToWire(makeMergeEvent({ [SET_TRAITS_KEY]: { plan: 'pro' } }));
+
+    expect(wire.set_traits).toEqual({ plan: 'pro' });
+    expect(wire.properties).toBeUndefined();
+  });
+
+  // The structural discriminant is never wire-visible.
+  test('internalKind is never emitted on a merge wire event (dropped by the explicit-field mapping)', () => {
+    const wire = mapEventToWire(makeMergeEvent({ [SET_TRAITS_KEY]: { plan: 'pro' } }));
+
+    expect(wire).not.toHaveProperty('internalKind');
+    expect(JSON.stringify(wire)).not.toContain('internalKind');
   });
 
   test('omits an absent trait bag rather than emitting an empty top-level key', () => {
@@ -221,8 +253,8 @@ describe('wire-mapper — pageview / pageleave [WIRE] event names (E6-S2)', () =
     expect(wire.event).toBe('$pageleave');
   });
 
-  test('the neutral autocapture event maps to the [WIRE] $autocapture name (E6-S7)', () => {
-    const wire = mapEventToWire(makeEvent({ event: AUTOCAPTURE_EVENT }));
+  test('the adapter-minted autocapture event maps to the [WIRE] $autocapture name (E6-S7, keyed off internalKind)', () => {
+    const wire = mapEventToWire(makeEvent({ event: AUTOCAPTURE_EVENT, internalKind: 'autocapture' }));
 
     expect(wire.event).toBe(AUTOCAPTURE_WIRE_EVENT);
     expect(wire.event).toBe('$autocapture');
@@ -234,6 +266,7 @@ describe('wire-mapper — pageview / pageleave [WIRE] event names (E6-S2)', () =
     const wire = mapEventToWire(
       makeEvent({
         event: AUTOCAPTURE_EVENT,
+        internalKind: 'autocapture',
         properties: { event_type: 'click', el_text: 'Buy', elements_chain: 'button:...' },
         dedupeId: 'ac-1',
       })
@@ -246,6 +279,18 @@ describe('wire-mapper — pageview / pageleave [WIRE] event names (E6-S2)', () =
       elements_chain: 'button:...',
     });
     expect(wire.uuid).toBe('ac-1');
+  });
+
+  // DEFECT #14 fix: a consumer event literally named `autocapture` (untyped hatch, no
+  // internalKind) is NOT swapped to $autocapture — it keeps its own name and props.
+  test('a consumer event named autocapture (no internalKind) keeps its own name + props', () => {
+    const wire = mapEventToWire(
+      makeEvent({ event: AUTOCAPTURE_EVENT, properties: { real: 1 } })
+    );
+
+    expect(wire.event).toBe(AUTOCAPTURE_EVENT);
+    expect(wire.event).not.toBe('$autocapture');
+    expect(wire.properties).toEqual({ real: 1 });
   });
 
   test('a pageview carries its properties + uuid through unchanged — only the event name is swapped', () => {
@@ -353,6 +398,7 @@ describe('wire-mapper — token stamps the [WIRE] auth key in-body on EVERY even
     const wire = mapEventToWire(
       makeEvent({
         event: MERGE_EVENT,
+        internalKind: 'merge',
         properties: {
           [ANONYMOUS_DISTINCT_ID_KEY]: 'anon-1',
           [SET_TRAITS_KEY]: { plan: 'pro' },
@@ -422,6 +468,7 @@ describe('wire-mapper — disableGeoip stamps the [WIRE] $geoip_disable property
     const wire = mapEventToWire(
       makeEvent({
         event: MERGE_EVENT,
+        internalKind: 'merge',
         properties: {
           [ANONYMOUS_DISTINCT_ID_KEY]: 'anon-1',
           [SET_TRAITS_KEY]: { plan: 'pro' },
@@ -444,8 +491,10 @@ describe('wire-mapper — disableGeoip stamps the [WIRE] $geoip_disable property
 });
 
 describe('wire-mapper — group-identify event name + nested group keys (FIX #8)', () => {
-  test('maps GROUP_IDENTIFY_EVENT to the [WIRE] $groupidentify name', () => {
-    const wire = mapEventToWire(makeEvent({ event: GROUP_IDENTIFY_EVENT }));
+  test('maps an adapter-minted group-identify event to the [WIRE] $groupidentify name (keyed off internalKind)', () => {
+    const wire = mapEventToWire(
+      makeEvent({ event: GROUP_IDENTIFY_EVENT, internalKind: 'group_identify' })
+    );
 
     expect(wire.event).toBe(GROUP_IDENTIFY_WIRE_EVENT);
     expect(wire.event).toBe('$groupidentify');
@@ -457,6 +506,7 @@ describe('wire-mapper — group-identify event name + nested group keys (FIX #8)
     const wire = mapEventToWire(
       makeEvent({
         event: GROUP_IDENTIFY_EVENT,
+        internalKind: 'group_identify',
         properties: {
           [GROUP_TYPE_KEY]: 'company',
           [GROUP_KEY_KEY]: 'acme',
@@ -475,6 +525,33 @@ describe('wire-mapper — group-identify event name + nested group keys (FIX #8)
     expect(wire).not.toHaveProperty(GROUP_TYPE_KEY);
     expect(wire).not.toHaveProperty(GROUP_KEY_KEY);
     expect(wire.uuid).toBe('gi-1');
+  });
+
+  // DEFECT #14 fix: a consumer event literally named `group_identify` (no internalKind)
+  // is NOT swapped to $groupidentify — it keeps its own name and props.
+  test('a consumer event named group_identify (no internalKind) keeps its own name + props', () => {
+    const wire = mapEventToWire(
+      makeEvent({ event: GROUP_IDENTIFY_EVENT, properties: { real: 1 } })
+    );
+
+    expect(wire.event).toBe(GROUP_IDENTIFY_EVENT);
+    expect(wire.event).not.toBe('$groupidentify');
+    expect(wire.properties).toEqual({ real: 1 });
+  });
+
+  // The structural discriminant is never wire-visible on an autocapture / group-identify event.
+  test('internalKind is never emitted on an autocapture or group-identify wire event', () => {
+    const acWire = mapEventToWire(
+      makeEvent({ event: AUTOCAPTURE_EVENT, internalKind: 'autocapture', properties: { a: 1 } })
+    );
+    const giWire = mapEventToWire(
+      makeEvent({ event: GROUP_IDENTIFY_EVENT, internalKind: 'group_identify', properties: { g: 1 } })
+    );
+
+    for (const wire of [acWire, giWire]) {
+      expect(wire).not.toHaveProperty('internalKind');
+      expect(JSON.stringify(wire)).not.toContain('internalKind');
+    }
   });
 });
 

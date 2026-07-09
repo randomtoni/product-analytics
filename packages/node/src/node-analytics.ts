@@ -148,7 +148,7 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
     const properties: NeutralProperties = {
       [once === true ? WIRE_SET_ONCE_KEY : WIRE_SET_KEY]: traits,
     };
-    this.enqueueInternal(SET_TRAITS_EVENT, distinctId, properties);
+    this.enqueueInternal(SET_TRAITS_EVENT, 'set_traits', distinctId, properties);
   }
 
   // Set group/cohort properties server-side. `distinctId` defaults to the de-branded
@@ -165,18 +165,27 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
       [WIRE_GROUP_KEY_KEY]: groupKey,
       [WIRE_GROUP_SET_KEY]: traits,
     };
-    this.enqueueInternal(SET_GROUP_TRAITS_EVENT, `${groupType}_${groupKey}`, properties);
+    this.enqueueInternal(
+      SET_GROUP_TRAITS_EVENT,
+      'set_group_traits',
+      `${groupType}_${groupKey}`,
+      properties
+    );
   }
 
   // Mint + enqueue an adapter-internal event (trait/group), riding the SAME queue and
-  // delivery as capture — a minted dedupeId feeds the wire `uuid`.
+  // delivery as capture — a minted dedupeId feeds the wire `uuid`. `internalKind` is the
+  // structural discriminant the wire-mapper matches on (never the event NAME), so a consumer
+  // event named the same as the wire event name is never mistaken for an internal event.
   private enqueueInternal(
     event: string,
+    internalKind: NeutralEvent['internalKind'],
     distinctId: string,
     properties: NeutralProperties
   ): void {
     this.queue.enqueue({
       event,
+      internalKind,
       distinctId,
       properties,
       timestamp: new Date(),

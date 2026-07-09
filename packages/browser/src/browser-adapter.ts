@@ -402,6 +402,7 @@ export class BrowserAdapter implements AnalyticsAdapter {
     return bindAutocaptureListeners((properties) => {
       this.capture({
         event: AUTOCAPTURE_EVENT,
+        internalKind: 'autocapture',
         distinctId: this.identity.getDistinctId(),
         properties,
         timestamp: new Date(),
@@ -843,6 +844,7 @@ export class BrowserAdapter implements AnalyticsAdapter {
   ): NeutralEvent {
     return {
       event: MERGE_EVENT,
+      internalKind: 'merge',
       distinctId,
       properties: this.traitBags(traits, traitsOnce),
       timestamp: new Date(),
@@ -901,6 +903,7 @@ export class BrowserAdapter implements AnalyticsAdapter {
     // lift). An absent traits bag emits no set key.
     this.capture({
       event: GROUP_IDENTIFY_EVENT,
+      internalKind: 'group_identify',
       distinctId: this.identity.getDistinctId(),
       properties: {
         [GROUP_TYPE_KEY]: groupType,

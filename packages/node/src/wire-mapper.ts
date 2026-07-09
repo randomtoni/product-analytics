@@ -56,9 +56,15 @@ export function mapEventToWire(event: NeutralEvent): WireEvent {
     timestamp: event.timestamp?.toISOString(),
   };
 
-  if (event.event === SET_TRAITS_EVENT) {
+  // Recognize the adapter-internal trait/group events by the STRUCTURAL `internalKind`
+  // discriminant the trait verbs mint them with — NOT by the event NAME. A consumer event
+  // literally named `set_traits`/`set_group_traits` (reachable under an untyped taxonomy)
+  // has `internalKind === undefined`, so it falls through to the plain pass-through above
+  // with its properties intact. The emitted wire event NAME is unchanged (still SET_TRAITS_EVENT
+  // etc.) — only the RECOGNITION moved off the name.
+  if (event.internalKind === 'set_traits') {
     wire.properties = mapTraitProperties(event.properties);
-  } else if (event.event === SET_GROUP_TRAITS_EVENT) {
+  } else if (event.internalKind === 'set_group_traits') {
     wire.properties = mapGroupProperties(event.properties);
   }
 

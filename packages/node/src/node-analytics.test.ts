@@ -432,6 +432,54 @@ test('setGroupTraits with a taxonomy alone does NOT gate — an off-taxonomy tra
   });
 });
 
+// DEFECT #14 fix (structural discriminant, end-to-end): a consumer event literally named
+// `set_traits` — reachable only via the UNTYPED-taxonomy escape hatch — is minted by capture()
+// with NO internalKind, so the wire-mapper does NOT run trait normalization on it. Its real
+// props survive to the wire, NOT stripped to the `set`/`set_once` wrapper keys. Contrast with
+// setTraits() (internalKind set), which still normalizes (pinned above).
+test('a consumer capture named set_traits (untyped taxonomy) keeps its real props — not trait-normalized', () => {
+  const sink = collectingSend();
+  // No taxonomy ⇒ untyped hatch: the reserved name is capturable and no guard runs.
+  const client = new NodeAnalyticsClient({ key: 'k', flushAt: 1 }, sink.send);
+
+  client.capture('user-1', 'set_traits', { realProp: 1, note: 'kept' });
+  flush();
+
+  const [event] = sink.delivered;
+  expect(event.event).toBe('set_traits');
+  expect(event.internalKind).toBeUndefined();
+  const wire = mapEventToWire(event);
+  // Real props intact — realProp not stripped, no wrapper-only shape.
+  expect(wire.properties).toEqual({ realProp: 1, note: 'kept' });
+  expect(wire.properties?.realProp).toBe(1);
+});
+
+test('a consumer capture named set_group_traits (untyped taxonomy) keeps its real props — not group-normalized', () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient({ key: 'k', flushAt: 1 }, sink.send);
+
+  client.capture('user-1', 'set_group_traits', { realProp: 2 });
+  flush();
+
+  const [event] = sink.delivered;
+  expect(event.event).toBe('set_group_traits');
+  expect(event.internalKind).toBeUndefined();
+  expect(mapEventToWire(event).properties).toEqual({ realProp: 2 });
+});
+
+// The trait verbs stamp the structural discriminant that drives wire recognition (not the name).
+test('setTraits mints internalKind: set_traits; setGroupTraits mints internalKind: set_group_traits', () => {
+  const { client, sink } = keyedClient({ flushAt: 2 });
+
+  client.setTraits('user-1', { plan: 'pro' });
+  client.setGroupTraits('company', 'acme', { name: 'Acme' });
+  flush();
+
+  const [traitsEvent, groupEvent] = sink.delivered;
+  expect(traitsEvent.internalKind).toBe('set_traits');
+  expect(groupEvent.internalKind).toBe('set_group_traits');
+});
+
 test('the raw wrapper key (`set`) is not itself allowlist-gated — the raw trait keys are', () => {
   const sink = collectingSend();
   const client = new NodeAnalyticsClient(

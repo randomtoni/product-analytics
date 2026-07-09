@@ -1,13 +1,10 @@
 import { RESERVED_PAGELEAVE_EVENT, type NeutralEvent, type NeutralProperties } from 'analytics-kit';
 import {
-  AUTOCAPTURE_EVENT,
   AUTOCAPTURE_WIRE_EVENT,
   GEOIP_DISABLE_WIRE_KEY,
-  GROUP_IDENTIFY_EVENT,
   GROUP_IDENTIFY_WIRE_EVENT,
   GROUPS_KEY,
   GROUPS_WIRE_KEY,
-  MERGE_EVENT,
   PAGELEAVE_WIRE_EVENT,
   PAGEVIEW_WIRE_EVENT,
   SET_TRAITS_KEY,
@@ -27,10 +24,11 @@ import {
 //   here). The neutral field name is `dedupeId` — the SAME name node (E7) exposes
 //   for its own idempotency key — so client- and server-side retries dedupe on one
 //   agreed value.
-// - On a merge/traits event (`event === MERGE_EVENT`) the two person-trait bags are
-//   lifted OUT of `properties` to the top-level `set_traits` / `set_traits_once`
-//   wire keys; the retained prior anon id (`anonymous_distinct_id`) stays inside
-//   `properties`. All of these are de-branded [WIRE] names, never neutral surface.
+// - On a merge/traits event (recognized by the structural `internalKind === 'merge'`
+//   discriminant, NOT the event name) the two person-trait bags are lifted OUT of
+//   `properties` to the top-level `set_traits` / `set_traits_once` wire keys; the
+//   retained prior anon id (`anonymous_distinct_id`) stays inside `properties`. All of
+//   these are de-branded [WIRE] names, never neutral surface.
 export interface WireEvent {
   event: string;
   distinct_id: string;
@@ -48,8 +46,9 @@ export interface WireEvent {
 // replayed unchanged across a retry, which is all dedupe requires).
 //
 // This is the single wire-mapper for the E5 transport. The pass-through mapping is
-// the base every event takes; the merge/traits normalization (keyed off
-// `MERGE_EVENT`, the adapter-emitted merge name — NOT a consumer string) layers on
+// the base every event takes; the merge/traits normalization (keyed off the
+// structural `internalKind === 'merge'` discriminant the adapter mints — NOT the
+// event name, so a consumer event named `identify` is never misrecognized) layers on
 // top of it, lifting the trait bags to top-level wire keys.
 // The adapter-internal, library-set wire toggles the mapper stamps onto the event.
 // disableGeoip resolves once at adapter construction — never a consumer value, so it
@@ -72,7 +71,7 @@ export function mapEventToWire(event: NeutralEvent, options?: WireMapOptions): W
   };
 
   const mapped =
-    event.event !== MERGE_EVENT || event.properties === undefined
+    event.internalKind !== 'merge' || event.properties === undefined
       ? base
       : normalizeMergeEvent(base, event.properties);
 
@@ -117,9 +116,11 @@ function stampToken(wire: WireEvent, token?: string): WireEvent {
 
 // Swap the neutral event name/marker for its [WIRE] name. A pageview is recognized by
 // the neutral `isPageView` marker (its `event` name is the router path, not a fixed
-// token); the pageleave by its reserved neutral event name. Every other event carries
-// its neutral name through verbatim. The `$`-prefixed tokens live only here (+ their
-// constants) — never on the neutral surface.
+// token); the pageleave by its reserved neutral event name; the adapter-minted
+// autocapture / group-identify events by their structural `internalKind` discriminant
+// (NOT the event name — a consumer event named `autocapture`/`group_identify` keeps its
+// own name). Every other event carries its neutral name through verbatim. The `$`-prefixed
+// tokens live only here (+ their constants) — never on the neutral surface.
 function wireEventName(event: NeutralEvent): string {
   if (event.isPageView === true) {
     return PAGEVIEW_WIRE_EVENT;
@@ -127,10 +128,10 @@ function wireEventName(event: NeutralEvent): string {
   if (event.event === RESERVED_PAGELEAVE_EVENT) {
     return PAGELEAVE_WIRE_EVENT;
   }
-  if (event.event === AUTOCAPTURE_EVENT) {
+  if (event.internalKind === 'autocapture') {
     return AUTOCAPTURE_WIRE_EVENT;
   }
-  if (event.event === GROUP_IDENTIFY_EVENT) {
+  if (event.internalKind === 'group_identify') {
     return GROUP_IDENTIFY_WIRE_EVENT;
   }
   return event.event;

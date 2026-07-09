@@ -29,6 +29,14 @@ export interface NeutralEvent {
   // event NAME is the router path/name, so this presence-only flag, not the name,
   // is what identifies a pageview. Absent on every `track()` event. No vendor token.
   isPageView?: true;
+  // Adapter-internal structural discriminant marking an adapter-MINTED internal event
+  // (a trait/group/merge/autocapture event the adapter creates, never a consumer capture).
+  // Same discipline as isPageView: a field a consumer's plain capture never sets, that the
+  // wire-mappers key their internal-event normalization off of INSTEAD of the event name —
+  // so a consumer event literally named `set_traits`/`identify`/etc. (reachable under an
+  // untyped taxonomy) is NOT misrecognized. Never reaches the wire (the wire-mappers pick
+  // explicit fields, not a spread). No vendor token.
+  internalKind?: 'set_traits' | 'set_group_traits' | 'group_identify' | 'merge' | 'autocapture';
   // Adapter-internal per-event enrichment override from a scoped context view (E6-S8).
   // Present only on events minted through `context(name).track/page/group`; absent on
   // root captures. Never reaches the wire (the wire-mapper picks explicit fields, not
