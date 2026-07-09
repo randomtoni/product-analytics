@@ -27,13 +27,19 @@ export function createQueryClient(
     );
     return new QueryNoop<DefaultTaxonomyShape>();
   }
+  if (config.projectId === undefined || config.projectId === '') {
+    console.warn(
+      'analytics: a queryEndpoint is set but no projectId is configured; the query URL is malformed and will fail. Set projectId.'
+    );
+  }
   // Keyed + endpointed ⇒ the real HTTP query adapter. It reads
   // `queryEndpoint`/`personalKey`/`projectId`/`fetch` off `config` and translates each
   // neutral primitive into the adapter-internal wire, POSTs with Bearer personal-key auth,
   // and normalizes the response into a neutral `QueryResult`.
   return createHttpQueryAdapterFromConfig<DefaultTaxonomyShape>({
-    ...config,
     queryEndpoint: config.queryEndpoint,
     personalKey: config.personalKey,
+    projectId: config.projectId,
+    fetch: config.fetch,
   });
 }

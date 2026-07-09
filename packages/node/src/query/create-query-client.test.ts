@@ -118,7 +118,7 @@ test('keyed-but-endpointless: the safe no-op never POSTs to a host-less URL', as
 
 test('keyed WITH queryEndpoint does not warn and returns the REAL HTTP adapter (not QueryNoop)', () => {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  const client = createQueryClient({ personalKey: 'pk', queryEndpoint: 'https://query.example', taxonomy });
+  const client = createQueryClient({ personalKey: 'pk', queryEndpoint: 'https://query.example', projectId: 'proj-1', taxonomy });
 
   expect(warn).not.toHaveBeenCalled();
   expect(client).toBeInstanceOf(HttpQueryAdapter);
@@ -145,6 +145,34 @@ test('keyed + endpointed: a query POSTs to the endpoint via the injected fetch (
   expect(url).toBe('https://query.example/api/projects/proj-7/query/');
   expect(init.method).toBe('POST');
   expect(init.headers['Authorization']).toBe('Bearer pk_read');
+});
+
+// --- projectId-absent warning (reviewer-flagged S3 improvement pass) ---
+
+test('keyed + endpointed but NO projectId warns once (malformed URL) yet still returns the real adapter', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const client = createQueryClient({ personalKey: 'pk', queryEndpoint: 'https://query.example', taxonomy });
+
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0][0]).toContain('projectId');
+  // A misconfig is the consumer's to see — it warns, it does NOT downgrade to a no-op.
+  expect(client).toBeInstanceOf(HttpQueryAdapter);
+  expect(client).not.toBeInstanceOf(QueryNoop);
+});
+
+test('keyed + endpointed with an EMPTY-string projectId also warns (malformed URL segment)', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  createQueryClient({ personalKey: 'pk', queryEndpoint: 'https://query.example', projectId: '', taxonomy });
+
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn.mock.calls[0][0]).toContain('projectId');
+});
+
+test('keyed + endpointed WITH a projectId does NOT warn', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  createQueryClient({ personalKey: 'pk', queryEndpoint: 'https://query.example', projectId: 'proj-9', taxonomy });
+
+  expect(warn).not.toHaveBeenCalled();
 });
 
 test('the unkeyed no-op path does not warn (nothing is ever queried)', () => {

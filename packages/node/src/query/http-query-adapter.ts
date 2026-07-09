@@ -1,6 +1,5 @@
 import type { QueryColumn, QueryResult, TaxonomyShape } from 'analytics-kit';
 import type { FetchLike } from '../config';
-import type { QueryClientConfig } from './config';
 import type {
   AnalyticsQueryClient,
   Aggregation,
@@ -394,12 +393,12 @@ export function createHttpQueryAdapter<TX extends TaxonomyShape>(
   return new HttpQueryAdapter<TX>(options);
 }
 
-export function createHttpQueryAdapterFromConfig<TX extends TaxonomyShape>(
-  config: QueryClientConfig & {
-    queryEndpoint: string;
-    personalKey: string;
-  }
-): HttpQueryAdapter<TX> {
+export function createHttpQueryAdapterFromConfig<TX extends TaxonomyShape>(config: {
+  queryEndpoint: string;
+  personalKey: string;
+  projectId?: string;
+  fetch?: FetchLike;
+}): HttpQueryAdapter<TX> {
   return new HttpQueryAdapter<TX>({
     queryEndpoint: config.queryEndpoint,
     personalKey: config.personalKey,

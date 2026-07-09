@@ -2,7 +2,12 @@ import type { DefaultTaxonomyShape } from 'analytics-kit';
 import { expect, test, vi } from 'vitest';
 import type { FetchLike } from '../config';
 import type { AnalyticsQueryClient } from './query-client';
-import { createHttpQueryAdapter, HttpQueryAdapter, normalizeResult } from './http-query-adapter';
+import {
+  createHttpQueryAdapter,
+  createHttpQueryAdapterFromConfig,
+  HttpQueryAdapter,
+  normalizeResult,
+} from './http-query-adapter';
 
 interface Call {
   url: string;
@@ -282,6 +287,36 @@ test('normalizeResult defends a non-array row under present columns (falls back,
 test('normalizeResult drops non-object entries in the columns-absent branch', () => {
   const result = normalizeResult({ results: [42, null, { ok: 1 }] }, undefined);
   expect(result.rows).toEqual([{ ok: 1 }]);
+});
+
+// --- createHttpQueryAdapterFromConfig: constructs from EXACTLY the four consumed fields ---
+
+test('createHttpQueryAdapterFromConfig builds a working adapter from queryEndpoint/personalKey/projectId/fetch', async () => {
+  const { fetchImpl, calls } = mockFetch(SYNC_ENVELOPE);
+  const client = createHttpQueryAdapterFromConfig<DefaultTaxonomyShape>({
+    queryEndpoint: 'https://query.example',
+    personalKey: 'pk_read',
+    projectId: 'proj-42',
+    fetch: fetchImpl,
+  });
+
+  await client.rawQuery('SELECT 1');
+
+  expect(calls[0].url).toBe('https://query.example/api/projects/proj-42/query/');
+  expect(calls[0].headers['Authorization']).toBe('Bearer pk_read');
+});
+
+test('createHttpQueryAdapterFromConfig defaults an absent projectId to the empty path segment', async () => {
+  const { fetchImpl, calls } = mockFetch(SYNC_ENVELOPE);
+  const client = createHttpQueryAdapterFromConfig<DefaultTaxonomyShape>({
+    queryEndpoint: 'https://query.example',
+    personalKey: 'pk_read',
+    fetch: fetchImpl,
+  });
+
+  await client.rawQuery('SELECT 1');
+
+  expect(calls[0].url).toBe('https://query.example/api/projects//query/');
 });
 
 // --- Bar A: this adapter and a second stub both satisfy AnalyticsQueryClient<TX> ---

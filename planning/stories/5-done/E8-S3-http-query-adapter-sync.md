@@ -75,3 +75,11 @@ The first real query backend: maps each neutral primitive (and `rawQuery`) to th
 - **Commit:** `E8-S3-http-query-adapter-sync — HTTP query adapter: sync path (primitive → wire → neutral result)` on `core-cycle`
 - **Reviewer notes:** 0 critical, 3 suggestions (non-OK guard improvement-pass candidate; explicit-fields; projectId-empty warn)
 - **Cross-story seams exposed:** **S4** extends `WireSyncEnvelope` with the `{query_status:{id,complete}}` variant + a bounded poll loop inside `run()`; reuses `normalizeResult(source: WireResultBearing, fromCache)` VERBATIM on `query_status.results` (columns absent there → pass-through branch; `fromCache` threaded as a separate arg precisely because async lives at a different level). Also the non-OK guard hooks here. **S5** parallel role-named class `implements AnalyticsQueryClient<TX>` — bar-A assignability already demonstrated (`HttpQueryAdapter`/`QueryNoop`/warehouse all swap zero-consumer-change).
+
+## Follow-up
+
+> E8 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression (node 180 / seam 172 green, typecheck exit 0).
+
+- **Explicit 4-field construction** — `createHttpQueryAdapterFromConfig` no longer spreads the full `config`; it takes/passes EXACTLY `queryEndpoint`/`personalKey`/`projectId`/`fetch` (input type tightened, dropped the unused `QueryClientConfig` import). Behavior-preserving. (Addresses the S3 spread suggestion.)
+- **projectId-empty warning** — a construction-time `console.warn` (once, neutral, no-throw) fires on the keyed+endpointed branch when `projectId` is absent/empty (the `.../api/projects//query/` malformed-URL misconfig) — mirrors the endpointless warn; still returns the real adapter. Tests: warns for no/empty projectId, not when present. (Addresses the S3 projectId suggestion.)
+- Skipped-with-reason: the S3 non-OK response guard was already added to `run()` in S4 (POST + poll, `response.ok === false` neutral throw).
