@@ -439,6 +439,55 @@ describe('size (drain-loop read for E7-S6)', () => {
   });
 });
 
+describe('timer unref (does not hold the Node event loop open on exit)', () => {
+  // Node's setTimeout handle carries .unref(); the queue must call it so a process that
+  // captures then exits without shutdown() isn't held open up to flushInterval. Spy on the
+  // fake-timer handle's unref to assert both the interval and the size-trigger timers unref.
+  function spyUnref() {
+    const unref = vi.fn();
+    const original = globalThis.setTimeout;
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, 'setTimeout')
+      .mockImplementation(((handler: () => void, timeout?: number) => {
+        const handle = original(handler, timeout) as unknown as { unref?: () => void };
+        handle.unref = unref;
+        return handle as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout);
+    return { unref, setTimeoutSpy };
+  }
+
+  test('the interval timer is unref\'d when it arms', () => {
+    const { unref } = spyUnref();
+    const { send } = spySend();
+    const queue = new BatchQueue<number>({ send, flushInterval: 10000 });
+
+    queue.enqueue(1); // sub-flushAt → arms the interval timer
+    expect(unref).toHaveBeenCalledTimes(1);
+  });
+
+  test('the size-trigger deferred timer is unref\'d when it schedules', () => {
+    const { unref } = spyUnref();
+    const { send } = spySend();
+    // flushAt:1 → the first enqueue crosses the threshold and schedules the deferred size
+    // flush directly, without first arming the interval — so this one setTimeout is the
+    // size-trigger timer, and its unref is the only one issued.
+    const queue = new BatchQueue<number>({ send, flushAt: 1, maxBatchSize: 100 });
+
+    queue.enqueue(1);
+    expect(unref).toHaveBeenCalledTimes(1);
+  });
+
+  test('a captured-then-no-shutdown queue never holds a ref\'d timer', () => {
+    const { unref, setTimeoutSpy } = spyUnref();
+    const { send } = spySend();
+    const queue = new BatchQueue<number>({ send, flushInterval: 5000, flushAt: 100 });
+
+    queue.enqueue(1); // a lone capture with no shutdown()
+    // Every timer the queue armed was unref'd — one unref per setTimeout it issued.
+    expect(unref).toHaveBeenCalledTimes(setTimeoutSpy.mock.calls.length);
+  });
+});
+
 describe('drain (quiesce handhold for E7-S6)', () => {
   test('drain returns the buffered events without sending and clears the timers', () => {
     const { send } = spySend();

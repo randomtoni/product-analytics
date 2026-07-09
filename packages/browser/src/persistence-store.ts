@@ -6,6 +6,19 @@ export interface PersistenceStoreOptions {
   saveDebounceMs?: number;
 }
 
+// Deep-copy an object/array value so a caller mutating the object it registered can't
+// reach back into the stored super-prop (and thence every emitted event). Scalars are
+// immutable, so they pass through untouched. structuredClone is the single copy path
+// (available in every supported runtime — Node 17+/modern browsers): a JSON round-trip
+// fallback is deliberately avoided, since it would diverge for non-JSON values, making
+// the stored shape environment-dependent.
+function detachValue(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  return structuredClone(value);
+}
+
 // A property store over a single storage backend. The in-memory `props` is the
 // source of truth for reads and is updated synchronously on every write; the
 // backend write is coalesced through a save-debounce and forced out on unload.
@@ -51,7 +64,7 @@ export class PersistenceStore {
     let changed = false;
     for (const [key, value] of Object.entries(props)) {
       if (this.props[key] !== value) {
-        this.props[key] = value;
+        this.props[key] = detachValue(value);
         changed = true;
       }
     }
@@ -67,7 +80,7 @@ export class PersistenceStore {
     let changed = false;
     for (const [key, value] of Object.entries(props)) {
       if (!(key in this.props) || this.props[key] === defaultValue) {
-        this.props[key] = value;
+        this.props[key] = detachValue(value);
         changed = true;
       }
     }

@@ -60,6 +60,7 @@ export function resolveAdapter(config: AnalyticsConfig): AnalyticsAdapter {
         enrichment,
         disableGeoip: config.enrichment?.country?.disableGeoip,
         autocapture,
+        consentDefault: config.consentDefault,
       });
 }
 

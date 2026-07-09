@@ -131,6 +131,9 @@ export class AnalyticsProviderImpl implements RootAnalytics {
     }
     // Passing every toggle (even all-undefined) is safe ONLY because each is opt-out-by-absence:
     // the adapter reads `!== false`, so an undefined member leaves that module on its own default.
+    // Only `country.disableGeoip` (a wire flag) is per-event; a per-context `country.countrySource`
+    // is deliberately NOT threaded — the country VALUE is instance-global (resolved once at init and
+    // register()'d as a super-property), so there is no per-event channel a scoped view could honor.
     return {
       page: enrichment.page,
       device: enrichment.device,

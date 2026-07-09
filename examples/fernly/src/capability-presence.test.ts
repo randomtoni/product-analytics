@@ -22,12 +22,11 @@ describe('capability-presence — runtime value exports (proves tsup emitted the
   });
 
   it('the node package exposes its runtime value exports on dist', () => {
-    // createAnalytics (node factory), createQueryClient (query factory), plus BOTH query adapters —
-    // the real HttpQueryAdapter and the WarehouseQueryAdapter stub (BRIEF §7 + §Adapters).
+    // createAnalytics (node factory) + createQueryClient (query factory) — the neutral node value
+    // surface. The concrete query adapters (HTTP + warehouse) are INTERNAL, reached only through
+    // createQueryClient's config-selection (bar A: a consumer never couples to a named backend).
     expect(typeof node.createAnalytics).toBe('function');
     expect(typeof node.createQueryClient).toBe('function');
-    expect(typeof node.HttpQueryAdapter).toBe('function');
-    expect(typeof node.WarehouseQueryAdapter).toBe('function');
   });
 
   it('the typecheck-time presence assertion is wired into the graph and all-true', () => {

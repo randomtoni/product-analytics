@@ -6,6 +6,8 @@ import {
   scanRepo,
   scanDoc,
   scanDeclarationBundles,
+  scanJsBundles,
+  stripComments,
   scanWireConfinementInSource,
   scanWireConfinement,
   isTestToolingFile,
@@ -63,6 +65,15 @@ describe('neutrality scan — current shipped tree PASSES', () => {
     const declViolations = scanDeclarationBundles(PACKAGES_DIR);
     expect(declViolations).toEqual([]);
   });
+
+  it('js-bundle dimension: the real rebuilt `dist/index.{js,mjs}` (8 files) PASSES', () => {
+    // The compiled bundle is the artifact a consumer INSTALLS and can open — the ONE place
+    // runtime wire VALUES (`kind: "HogQLQuery"`, `'$pageview'`) live after the `.d.ts` erases
+    // them. The only `posthog` in dist JS is the surviving provenance COMMENT, which is
+    // stripped before scanning; the confined query-kind values carry no vendor name → clean.
+    const jsViolations = scanJsBundles(PACKAGES_DIR);
+    expect(jsViolations, JSON.stringify(jsViolations, null, 2)).toEqual([]);
+  });
 });
 
 describe('neutrality scan — planted violations FAIL', () => {
@@ -90,6 +101,56 @@ describe('neutrality scan — planted violations FAIL', () => {
     });
     const violations = scanDeclarationBundles(join(root, 'packages'));
     expect(violations.some((v) => v.detail.includes('posthog'))).toBe(true);
+  });
+
+  it('js-bundle: flags a live vendor NAME value (posthog) shipped in dist/index.js', () => {
+    const root = synthPackages({
+      'packages/seam/dist/index.js':
+        'const client = { name: "posthog" };\nmodule.exports = { client };\n',
+      'packages/seam/dist/index.mjs': 'export const client = { name: "posthog" };\n',
+      'packages/seam/package.json': '{"name":"seam"}',
+    });
+    const violations = scanJsBundles(join(root, 'packages'));
+    expect(violations.map((v) => v.dimension)).toContain('js-bundle');
+    expect(violations.some((v) => v.detail.includes('posthog'))).toBe(true);
+  });
+
+  it('js-bundle: flags a shipped `fernly` value and a hostname (`us.i.`) value', () => {
+    const root = synthPackages({
+      'packages/seam/dist/index.js': 'const p = "fernly";\nconst host = "us.i.example.com";\n',
+      'packages/seam/dist/index.mjs': 'export const p = "fernly";\n',
+      'packages/seam/package.json': '{"name":"seam"}',
+    });
+    const details = scanJsBundles(join(root, 'packages')).map((v) => v.detail).join();
+    expect(details).toMatch(/fernly/i);
+    expect(details).toMatch(/us\.i\./i);
+  });
+
+  it('js-bundle: a provenance COMMENT + a `kind: "HogQLQuery"` value PASSES (comment stripped, no name token)', () => {
+    // Mirrors the real dist: the ONLY `posthog` is an audit provenance comment (stripped),
+    // and the required wire vocab `HogQLQuery` carries no vendor name token → clean.
+    const bundle =
+      "// De-branded from posthog's query-node kinds — provenance, audit evidence.\n" +
+      'const q = { kind: "HogQLQuery" };\nmodule.exports = { q };\n';
+    const root = synthPackages({
+      'packages/seam/dist/index.js': bundle,
+      'packages/seam/dist/index.mjs': bundle.replace('module.exports = { q };', 'export { q };'),
+      'packages/seam/package.json': '{"name":"seam"}',
+    });
+    expect(scanJsBundles(join(root, 'packages'))).toEqual([]);
+  });
+
+  it('js-bundle: catches a token planted ONLY in the .mjs sibling (proves BOTH extensions scanned)', () => {
+    const root = synthPackages({
+      'packages/seam/dist/index.js': 'module.exports = { ok: 1 };\n',
+      'packages/seam/dist/index.mjs': 'export const brand = "posthog";\n',
+      'packages/seam/package.json': '{"name":"seam"}',
+    });
+    const mjsHits = scanJsBundles(join(root, 'packages')).filter((v) =>
+      v.file.endsWith('index.mjs')
+    );
+    expect(mjsHits).toHaveLength(1);
+    expect(mjsHits[0].detail).toContain('posthog');
   });
 
   it('catches a token planted ONLY in the .d.mts sibling (proves BOTH extensions scanned)', () => {
@@ -188,5 +249,54 @@ describe('neutrality scan — bar-neutral & future-adapter invariants', () => {
     expect(FORBIDDEN_TOKENS.some((t) => 'POSTHOG_WIRE_EVENT'.toLowerCase().includes(t))).toBe(
       true
     );
+  });
+
+  it('future adapter: a NEW confined query KIND passes iff its const obeys `_WIRE_KIND`', () => {
+    // The node builder hoisted query-node discriminators into `*_WIRE_KIND` consts; the
+    // confinement convention now recognizes that suffix so a future adapter's new query kind
+    // passes the SAME rule with zero scan edits. (These consts are not `$`-prefixed, so the
+    // `$`-anchored AST pass doesn't visit them — the js-bundle NAME scan certifies the value;
+    // the `_WIRE_KIND` widening is the forward-consistency arm of that same convention.)
+    const confinedKind = `export const SCREENVIEW_WIRE_KIND = '$screenview_kind';`;
+    expect(scanWireConfinementInSource('future-adapter.ts', confinedKind)).toEqual([]);
+    // A `$`-prefixed kind value NOT held by a `_WIRE_` const still fails.
+    expect(
+      scanWireConfinementInSource('future-adapter.ts', `const k = '$screenview_kind';`)
+    ).not.toEqual([]);
+  });
+});
+
+describe('stripComments — parser-accurate, string-safe comment removal', () => {
+  it('strips a `//` provenance comment while leaving code intact', () => {
+    const src = `// De-branded from posthog's event-utils\nconst y = 2;\n`;
+    const out = stripComments(src);
+    expect(/posthog/i.test(out)).toBe(false);
+    expect(out).toContain('const y = 2;');
+  });
+
+  it('preserves a `//` INSIDE a string literal (a URL like "http://yandex.com/bots")', () => {
+    // The real hazard: `browser/dist/index.js` ships this bot-list URL as a VALUE. A naive
+    // `//…EOL` regex strip would truncate the string and blind the scan.
+    const src = `const url = "http://yandex.com/bots";\n// trailing comment\n`;
+    const out = stripComments(src);
+    expect(out).toContain('"http://yandex.com/bots"');
+    expect(out).not.toContain('trailing comment');
+  });
+
+  it('does NOT mis-open a template literal on a lone backtick INSIDE a comment (the real desync)', () => {
+    // The exact shape that broke a raw-scanner strip: a backtick in a `//` comment made the
+    // context-free scanner start a template token that swallowed the `posthog` provenance as
+    // string content. The full parser knows the backtick is comment trivia.
+    const src =
+      "// `capturePageleave` boolean when absent; disabled (posthog's default, de-branded)\n" +
+      'const captureEnabled = true;\n';
+    const out = stripComments(src);
+    expect(/posthog/i.test(out)).toBe(false);
+    expect(out).toContain('const captureEnabled = true;');
+  });
+
+  it('preserves line count so violation offsets stay legible', () => {
+    const src = `const a = 1;\n// a comment\nconst b = 2;\n`;
+    expect(stripComments(src).split('\n')).toHaveLength(src.split('\n').length);
   });
 });

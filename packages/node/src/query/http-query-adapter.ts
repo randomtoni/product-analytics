@@ -17,6 +17,15 @@ import type {
 // envelope are all confined here. The exported surface (`AnalyticsQueryClient`, the spec
 // types, `QueryResult`) carries business primitives only — no wire vocabulary escapes.
 
+// The query-node `kind` discriminators. Each is a wire value the PostHog-compatible query
+// endpoint requires verbatim (like `$pageview` on the capture wire), hoisted into one
+// confined const per the established `_WIRE_` discipline — single-source, non-exported.
+const EVENTS_NODE_WIRE_KIND = 'EventsNode' as const;
+const TRENDS_QUERY_WIRE_KIND = 'TrendsQuery' as const;
+const FUNNELS_QUERY_WIRE_KIND = 'FunnelsQuery' as const;
+const RETENTION_QUERY_WIRE_KIND = 'RetentionQuery' as const;
+const HOGQL_QUERY_WIRE_KIND = 'HogQLQuery' as const;
+
 type Interval = 'hour' | 'day' | 'week' | 'month';
 type Math = 'total' | 'dau';
 type RetentionPeriod = 'Day' | 'Week' | 'Month';
@@ -32,13 +41,13 @@ interface WireBreakdownFilter {
 }
 
 interface WireEventsNode {
-  kind: 'EventsNode';
+  kind: typeof EVENTS_NODE_WIRE_KIND;
   event: string;
   math?: Math;
 }
 
 interface WireTrendsQuery {
-  kind: 'TrendsQuery';
+  kind: typeof TRENDS_QUERY_WIRE_KIND;
   series: WireEventsNode[];
   interval: Interval;
   dateRange: WireDateRange;
@@ -46,7 +55,7 @@ interface WireTrendsQuery {
 }
 
 interface WireFunnelsQuery {
-  kind: 'FunnelsQuery';
+  kind: typeof FUNNELS_QUERY_WIRE_KIND;
   series: WireEventsNode[];
   funnelsFilter: {
     funnelWindowInterval: number;
@@ -59,11 +68,11 @@ interface WireRetentionEntity {
   id: string;
   name: string;
   type: 'events';
-  kind: 'EventsNode';
+  kind: typeof EVENTS_NODE_WIRE_KIND;
 }
 
 interface WireRetentionQuery {
-  kind: 'RetentionQuery';
+  kind: typeof RETENTION_QUERY_WIRE_KIND;
   retentionFilter: {
     targetEntity: WireRetentionEntity;
     returningEntity: WireRetentionEntity;
@@ -74,7 +83,7 @@ interface WireRetentionQuery {
 }
 
 interface WireHogQLQuery {
-  kind: 'HogQLQuery';
+  kind: typeof HOGQL_QUERY_WIRE_KIND;
   query: string;
 }
 
@@ -185,8 +194,8 @@ function eventBreakdown(breakdown: string | undefined): WireBreakdownFilter | un
 
 function eventsNode(event: string, math?: Math): WireEventsNode {
   return math === undefined
-    ? { kind: 'EventsNode', event }
-    : { kind: 'EventsNode', event, math };
+    ? { kind: EVENTS_NODE_WIRE_KIND, event }
+    : { kind: EVENTS_NODE_WIRE_KIND, event, math };
 }
 
 // Normalize a result-bearing wire object into the neutral QueryResult. Takes the
@@ -198,14 +207,21 @@ export function normalizeResult(
   source: WireResultBearing,
   fromCache: boolean | undefined
 ): QueryResult {
+  // `results` is required on the well-formed envelope, but the JSON is untrusted: a
+  // completed/zero-row envelope missing it must surface neutrally, never as a raw TypeError.
+  if (!Array.isArray(source.results)) {
+    throw new Error('analytics: query did not complete');
+  }
+  const results = source.results;
+
   const columns: QueryColumn[] = (source.columns ?? []).map((name, i) => {
     const type = source.types?.[i];
     return type === undefined ? { name } : { name, type };
   });
 
   const rows = columns.length > 0
-    ? source.results.map((row) => zipRow(row, columns))
-    : source.results
+    ? results.map((row) => zipRow(row, columns))
+    : results
         .filter((entry): entry is Record<string, unknown> => isRecord(entry))
         .map((entry) => entry);
 
@@ -268,7 +284,7 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
 
   async funnel(spec: FunnelSpec<TX>): Promise<QueryResult> {
     return this.run({
-      kind: 'FunnelsQuery',
+      kind: FUNNELS_QUERY_WIRE_KIND,
       series: spec.steps.map((step) => eventsNode(step)),
       funnelsFilter: {
         funnelWindowInterval: spec.within.value,
@@ -280,7 +296,7 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
 
   async retention(spec: RetentionSpec<TX>): Promise<QueryResult> {
     return this.run({
-      kind: 'RetentionQuery',
+      kind: RETENTION_QUERY_WIRE_KIND,
       retentionFilter: {
         targetEntity: retentionEntity(spec.cohortEvent),
         returningEntity: retentionEntity(spec.returnEvent),
@@ -293,7 +309,7 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
 
   async trend(spec: TrendSpec<TX>): Promise<QueryResult> {
     return this.run({
-      kind: 'TrendsQuery',
+      kind: TRENDS_QUERY_WIRE_KIND,
       series: [eventsNode(spec.event, MATH_FOR_AGGREGATION[spec.aggregation])],
       interval: INTERVAL_FOR_UNIT[spec.window.unit],
       dateRange: { date_from: relativeDateFrom(spec.window) },
@@ -303,7 +319,7 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
 
   async uniqueCount(spec: UniqueCountSpec<TX>): Promise<QueryResult> {
     return this.run({
-      kind: 'TrendsQuery',
+      kind: TRENDS_QUERY_WIRE_KIND,
       series: [eventsNode(spec.event, 'dau')],
       interval: INTERVAL_FOR_UNIT[spec.window.unit],
       dateRange: { date_from: relativeDateFrom(spec.window) },
@@ -312,7 +328,7 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
   }
 
   async rawQuery(expr: string): Promise<QueryResult> {
-    return this.run({ kind: 'HogQLQuery', query: expr });
+    return this.run({ kind: HOGQL_QUERY_WIRE_KIND, query: expr });
   }
 
   private async run(query: WireQueryNode): Promise<QueryResult> {
@@ -356,8 +372,11 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
       if (response.ok === false) {
         throw new Error('analytics: query request failed');
       }
-      const body = (await response.json()) as WireAsyncEnvelope;
+      const body = (await response.json()) as Partial<WireAsyncEnvelope>;
       status = body.query_status;
+      if (status === undefined) {
+        throw new Error('analytics: query did not complete');
+      }
       if (status.complete === true) {
         return this.resultFrom(status);
       }
@@ -384,7 +403,7 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
 }
 
 function retentionEntity(event: string): WireRetentionEntity {
-  return { id: event, name: event, type: 'events', kind: 'EventsNode' };
+  return { id: event, name: event, type: 'events', kind: EVENTS_NODE_WIRE_KIND };
 }
 
 export function createHttpQueryAdapter<TX extends TaxonomyShape>(

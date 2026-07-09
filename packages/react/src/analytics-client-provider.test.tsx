@@ -10,7 +10,7 @@ import {
   NOT_IN_PROVIDER,
   type AnalyticsClientContextValue,
 } from './analytics-client-context';
-import { createRecordingClient } from './recording-client';
+import { createRecordingClient } from './recording-client.test-helper';
 
 function ClientProbe({ onClient }: { onClient: (value: AnalyticsClientContextValue) => void }) {
   const value = useContext(AnalyticsClientContext);

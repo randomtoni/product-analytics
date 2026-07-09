@@ -51,7 +51,10 @@ export const interpretBodyBackPressure: BackPressureInterpreter = async (
   }
 
   const limitedScopes = body[LIMITED_SCOPES_FIELD] ?? [];
-  if (limitedScopes.length === 0) {
+  // A blind cast over JSON.parse: a malformed body (e.g. a bare string for the
+  // limited-scope field) would otherwise pass the length check and spuriously arm a
+  // cool-off. Only a non-empty ARRAY of scopes is back-pressure.
+  if (!Array.isArray(limitedScopes) || limitedScopes.length === 0) {
     return [];
   }
   return [{ scope: DEFAULT_BATCH_SCOPE, cooloffMs: SERVER_COOLOFF_MS }];

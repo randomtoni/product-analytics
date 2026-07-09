@@ -185,6 +185,61 @@ describe('RetryQueue — scheduling + poller', () => {
   });
 });
 
+describe('RetryQueue — rehold (attempt-preserving, budget-not-consumed)', () => {
+  test('rehold re-sends at the SAME attempt — the failure count does NOT advance', () => {
+    vi.useFakeTimers();
+    const { queue, sends } = makeQueue();
+
+    // Re-hold a batch that has already performed 3 retries. Unlike scheduleRetry (which
+    // would store 3+1=4), rehold must re-send at attempt 3 — the hold spends no budget.
+    queue.rehold(['a'], 3);
+    vi.advanceTimersByTime(3000);
+
+    expect(sends).toHaveLength(1);
+    expect(sends[0]).toEqual({ batch: ['a'], attempt: 3 });
+  });
+
+  test('rehold uses a fixed one-poll delay, NOT a growing exponential backoff', () => {
+    vi.useFakeTimers();
+    const { queue, sends } = makeQueue();
+
+    // A high attempt count would, under scheduleRetry, push the backoff far past one poll
+    // tick. rehold ignores the attempt for delay purposes — it is due at the very next tick.
+    queue.rehold(['a'], 9);
+    vi.advanceTimersByTime(3000);
+
+    expect(sends).toHaveLength(1);
+    expect(sends[0].attempt).toBe(9);
+  });
+
+  test('repeated reholds never inflate the attempt — a long hold stays at its attempt', () => {
+    vi.useFakeTimers();
+    let held = true;
+    const attempts: number[] = [];
+    const { queue } = makeQueue({
+      send: async (batch, attempt) => {
+        attempts.push(attempt);
+        // Model a persistent cool-off: while held, the send re-holds at the SAME attempt.
+        if (held) {
+          queue.rehold(batch, attempt);
+        }
+      },
+    });
+
+    queue.rehold(['a'], 0);
+    // Wake the poller several times while the hold persists — each re-holds at attempt 0.
+    vi.advanceTimersByTime(3000 * 5);
+    expect(attempts.every((a) => a === 0)).toBe(true);
+    expect(attempts.length).toBeGreaterThan(1);
+
+    // Release the hold: the next wake sends once more (still attempt 0) and the queue clears.
+    held = false;
+    vi.advanceTimersByTime(3000);
+    expect(attempts[attempts.length - 1]).toBe(0);
+    expect(queue.length).toBe(0);
+  });
+});
+
 describe('RetryQueue — online/offline gating', () => {
   test('holds retries while offline and drains them on reconnect', () => {
     vi.useFakeTimers();

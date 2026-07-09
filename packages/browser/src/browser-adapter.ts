@@ -95,6 +95,14 @@ interface EncodedBatch {
   compressed: boolean;
 }
 
+// The distinct "nothing sent because the scope is inside its server cool-off" outcome
+// of a batch POST — separate from an `undefined` no-target/empty result and from a real
+// response. A cool-off is NOT a delivery failure: the batch was already drained from the
+// request queue, so the caller must RE-HOLD it (reschedule at the same attempt), not
+// treat it as a clean no-op. Adapter-internal.
+const COOLING_OFF: unique symbol = Symbol('cooling-off');
+type PostBatchResult = NeutralFetchResponse | typeof COOLING_OFF | undefined;
+
 // The in-memory current-pageview record (neutral keys — no $-prefix). Minted when a
 // `page` event flows through capture() so E6-S2 can compute now − timestamp for a
 // pageleave duration; cleared on session rotation to start a fresh lineage.
@@ -180,6 +188,12 @@ export interface BrowserAdapterOptions {
   // are bound (SSR-guarded), each interaction minting a neutral autocapture event through
   // the SAME capture() pipeline. On/off is purely local — no remote-config phone-home.
   autocapture?: boolean;
+  // The consent-default policy (E4-S3), threaded from the seam config so the adapter's
+  // capture gate mirrors the facade's resolveOptedOut: a 'pending' client CAPTURES only
+  // when this is 'granted' (opt-in-by-default), and is DROPPED otherwise (the fail-safe).
+  // Capture-permission only — cookie persistence still keys off RAW 'granted' consent, so
+  // a pending+defaultGranted client captures yet writes no cookies until an explicit grant.
+  consentDefault?: ConsentState;
 }
 
 export class BrowserAdapter implements AnalyticsAdapter {
@@ -256,11 +270,16 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // once at construction; a library-set toggle, off unless explicitly true. Adapter-internal —
   // it drives only the wire-mapper stamp, never the neutral surface.
   private readonly disableGeoip: boolean;
+  // The consent-default policy (E4-S3): the tri-state the capture gate resolves a 'pending'
+  // consent against, mirroring the facade's resolveOptedOut. Only 'granted' opts a pending
+  // client IN; unset/'denied' keeps the fail-safe drop. Does NOT relax cookie persistence.
+  private readonly consentDefault: ConsentState | undefined;
 
   constructor(options: BrowserAdapterOptions) {
     this.compressionEnabled = options.compression !== false && isGzipSupported();
     this.enrichment = options.enrichment ?? {};
     this.disableGeoip = options.disableGeoip === true;
+    this.consentDefault = options.consentDefault;
     this.capturePageleaveEnabled =
       (options.enrichment?.pageleave ?? options.capturePageleave) !== false;
     this.botFilterEnabled = options.botFilter !== false;
@@ -354,10 +373,10 @@ export class BrowserAdapter implements AnalyticsAdapter {
 
   // Bind the capture-phase autocapture listeners (SSR-guarded inside the module, exactly
   // like bindUnloadListeners). Each DOM interaction mints a neutral autocapture event that
-  // rides the SAME capture() pipeline (bot gate → rate limiter → enrichment → wire map →
-  // transport). Element metadata is library-computed ⇒ TRUSTED — it is NOT allowlist-gated
-  // (capture() is downstream of the E3 facade gate). Returns an unbinder, or undefined in a
-  // non-DOM context. NO gating network call — the listeners are bound purely from config.
+  // rides the SAME capture() pipeline (consent gate → bot gate → rate limiter → enrichment →
+  // wire map → transport). Element metadata is library-computed ⇒ TRUSTED — it is NOT
+  // allowlist-gated. Returns an unbinder, or undefined in a non-DOM context. NO gating
+  // network call — the listeners are bound purely from config.
   private bindAutocapture(): (() => void) | undefined {
     return bindAutocaptureListeners((properties) => {
       this.capture({
@@ -469,6 +488,14 @@ export class BrowserAdapter implements AnalyticsAdapter {
   }
 
   capture(event: NeutralEvent): void {
+    // Consent is the FIRST gate — before bot filtering and before a rate-limit token
+    // is spent. This is the single choke point every internal caller funnels through
+    // (autocapture listeners, the unload pageleave, identify's merge/traits events), so a
+    // suppressed client captures nothing even for events minted directly on the live
+    // adapter, bypassing the facade's opt-out swap.
+    if (this.captureSuppressed()) {
+      return;
+    }
     // Bot/crawler suppression gates capture BEFORE the enrichment pipeline and
     // before the enqueue — a blocked client's event never enters the queue.
     if (this.isBot()) {
@@ -486,6 +513,21 @@ export class BrowserAdapter implements AnalyticsAdapter {
     const enriched = this.runCapturePipeline(event);
     this.queue.enable();
     this.queue.enqueue(this.toWireEvent(enriched));
+  }
+
+  // Whether capture is suppressed by consent — the INVERSE of the facade's resolveOptedOut,
+  // mirrored so a direct live-adapter caller (autocapture, the unload pageleave, identify's
+  // merge/traits events) obeys the SAME opt-out contract the facade swap enforces. 'granted'
+  // ⇒ allowed; 'denied' ⇒ suppressed; 'pending' resolves against consentDefault — captures
+  // ONLY when it is 'granted' (opt-in-by-default), else the fail-safe drop. getConsentState()
+  // already folds a DNT/GPC signal to 'denied', so a DNT client is suppressed here for free.
+  // Capture-permission ≠ cookie-permission: this can allow a pending+defaultGranted client to
+  // CAPTURE while cookie persistence (keyed off RAW 'granted') stays memory-only.
+  private captureSuppressed(): boolean {
+    const state = this.getConsentState();
+    if (state === 'granted') return false;
+    if (state === 'denied') return true;
+    return this.consentDefault !== 'granted';
   }
 
   private isBot(): boolean {
@@ -668,9 +710,9 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // Mint the pageleave for the current pageview and route it through capture() so it
   // rides the unload beacon (enqueued synchronously just before drain()). Fires ONLY
   // when a pageview record exists (a page was captured this session) AND the toggle is
-  // on. The duration/id/pathname are library-computed ⇒ trusted (no allowlist gating —
-  // capture() is downstream of the E3 facade gate). Inherits capture()'s bot gate +
-  // rate limiter by construction. Idempotent via unload()'s latch (called once).
+  // on. The duration/id/pathname are library-computed ⇒ trusted (no allowlist gating).
+  // Inherits capture()'s consent gate + bot gate + rate limiter by construction, so a
+  // non-granted client mints nothing here. Idempotent via unload()'s latch (called once).
   private capturePageleave(): void {
     if (!this.capturePageleaveEnabled) {
       return;
@@ -841,9 +883,21 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // retry state lives in the retry queue, all adapter-internal.
   private async sendBatchWithRetry(batch: WireEvent[], attempt: number): Promise<void> {
     const response = await this.postBatch(batch);
+    if (response === COOLING_OFF) {
+      // The scope is inside its server cool-off, but the batch was ALREADY drained from the
+      // request queue — re-hold it or it vanishes for the whole ~60s window. rehold() keeps
+      // the SAME attempt (a cool-off is not a delivery failure, so it must NOT advance the
+      // failure count and burn the retry/backoff budget) and re-checks after one poll tick,
+      // NOT a growing exponential delay. The poller re-holds on each wake until the window
+      // clears, then the next send actually delivers — one element rescheduled, no dup. Mirror
+      // the held set to durable storage so a reload mid-cool-off still re-sends it.
+      this.retryQueue.rehold(batch, attempt);
+      this.offlineQueue.persist(this.retryQueue.snapshot());
+      return;
+    }
     if (response === undefined) {
-      // No send happened (no target / empty / cooling off) — the retry queue is
-      // unchanged, so the durable mirror is too. Nothing to re-persist.
+      // No send happened (no target / empty) — nothing was drained's worth holding, the
+      // retry queue is unchanged, so the durable mirror is too. Nothing to re-persist.
       return;
     }
     if (isRetryableStatus(response.status) && attempt < maxRetriesForStatus(response.status)) {
@@ -859,21 +913,21 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // The adapter-owned batch POST: build the [WIRE] `data:[]` envelope, encode it
   // (gzip when compression is enabled, else uncompressed JSON), and POST it to the
   // S1-resolved ingest URL — returning the neutral response so the retry wrapper can
-  // read its status. When no ingest target is configured, the batch is empty, or the
-  // scope is inside its server cool-off window, nothing is sent and undefined is
-  // returned — which the retry wrapper already treats as an indistinguishable no-op,
-  // keeping the proactive cool-off from tangling with S3's reactive retry. After a
-  // completed POST, the backend's back-pressure signal is read off the response body
-  // (via the injected interpreter) and arms the affected scope's cool-off. The gzip
+  // read its status. When no ingest target is configured or the batch is empty, nothing
+  // is sent and `undefined` is returned (a genuine no-op — nothing was drained). When
+  // the scope is inside its server cool-off window, the DISTINCT `COOLING_OFF` signal is
+  // returned instead so the caller re-holds the already-drained batch rather than dropping
+  // it. After a completed POST, the backend's back-pressure signal is read off the response
+  // body (via the injected interpreter) and arms the affected scope's cool-off. The gzip
   // encode + its [WIRE] Content-Type/query params live below this method, in
   // encodeBatch() / postEncoded() — never on the neutral surface.
-  private async postBatch(batch: WireEvent[]): Promise<NeutralFetchResponse | undefined> {
+  private async postBatch(batch: WireEvent[]): Promise<PostBatchResult> {
     const url = this.ingestUrl();
     if (url === undefined || batch.length === 0) {
       return undefined;
     }
     if (this.rateLimiter.isCoolingOff(DEFAULT_BATCH_SCOPE)) {
-      return undefined;
+      return COOLING_OFF;
     }
     const json = assembleBatchBody(batch, Date.now());
     const encoded = await this.encodeBatch(json);

@@ -111,15 +111,15 @@ function deviceContext(): NeutralProperties {
     props.device_type = detectDeviceType(ua, signals);
   }
 
+  // Each numeric write is guarded on the VALUE being a number, not just the DOM object
+  // being present: a partial DOM shim (RN/SSR polyfill) can expose `window`/`screen`
+  // while leaving these fields undefined — writing them would leave literal
+  // `undefined`-valued keys, contradicting the "absent DOM ⇒ absent key" contract.
   const screen = win?.screen;
-  if (screen !== undefined) {
-    props.screen_height = screen.height;
-    props.screen_width = screen.width;
-  }
-  if (win !== undefined) {
-    props.viewport_height = win.innerHeight;
-    props.viewport_width = win.innerWidth;
-  }
+  if (typeof screen?.height === 'number') props.screen_height = screen.height;
+  if (typeof screen?.width === 'number') props.screen_width = screen.width;
+  if (typeof win?.innerHeight === 'number') props.viewport_height = win.innerHeight;
+  if (typeof win?.innerWidth === 'number') props.viewport_width = win.innerWidth;
 
   const language = nav?.language;
   if (language) props.browser_language = language;

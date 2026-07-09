@@ -102,6 +102,57 @@ describe('buildContext — jsdom (DOM present)', () => {
   });
 });
 
+describe('buildContext — partial-DOM shim (FIX D: value-guarded numeric keys)', () => {
+  // A partial DOM shim (RN / SSR polyfill) can expose `window` and `screen` while leaving
+  // innerHeight/innerWidth/screen.height/screen.width undefined. The numeric keys were
+  // guarded only on the object's PRESENCE, so they were written as literal `undefined`,
+  // contradicting the "absent DOM ⇒ absent key" contract. They must be ABSENT instead.
+  test('window/screen present but numerics undefined yields those keys ABSENT, not present-with-undefined', () => {
+    vi.stubGlobal('navigator', { userAgent: CHROME_MAC, vendor: '', language: 'en-US', maxTouchPoints: 0 });
+    vi.stubGlobal('window', {
+      location: { href: 'https://app.example.com/', host: 'app.example.com', pathname: '/' },
+      screen: { height: undefined, width: undefined },
+      innerHeight: undefined,
+      innerWidth: undefined,
+    });
+
+    const context = buildContext(LIB);
+
+    // The four numeric keys are absent entirely — not carried as `undefined` values.
+    expect(context).not.toHaveProperty('screen_height');
+    expect(context).not.toHaveProperty('screen_width');
+    expect(context).not.toHaveProperty('viewport_height');
+    expect(context).not.toHaveProperty('viewport_width');
+    // Object.keys must not even list them (a present-with-undefined key would show here).
+    const keys = Object.keys(context);
+    expect(keys).not.toContain('screen_height');
+    expect(keys).not.toContain('screen_width');
+    expect(keys).not.toContain('viewport_height');
+    expect(keys).not.toContain('viewport_width');
+    // The rest of the context still resolves — the guard is per-key, not all-or-nothing.
+    expect(context).toHaveProperty('current_url');
+    expect(context.browser).toBe('Chrome');
+    expect(context.lib).toBe('analytics-kit-browser');
+  });
+
+  test('a real numeric value IS written (regression — the guard only strips undefined)', () => {
+    vi.stubGlobal('navigator', { userAgent: CHROME_MAC, vendor: '', language: 'en-US', maxTouchPoints: 0 });
+    vi.stubGlobal('window', {
+      location: { href: 'https://app.example.com/', host: 'app.example.com', pathname: '/' },
+      screen: { height: 900, width: 1440 },
+      innerHeight: 800,
+      innerWidth: 1200,
+    });
+
+    const context = buildContext(LIB);
+
+    expect(context.screen_height).toBe(900);
+    expect(context.screen_width).toBe(1440);
+    expect(context.viewport_height).toBe(800);
+    expect(context.viewport_width).toBe(1200);
+  });
+});
+
 describe('buildContext — non-DOM degradation', () => {
   // Strip the DOM globals to prove enrichment degrades to absent keys, never a throw.
   function withoutDom(run: () => void): void {

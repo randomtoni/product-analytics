@@ -11,7 +11,7 @@ import type {
 } from 'analytics-kit';
 import { AnalyticsClientProvider } from './analytics-client-provider';
 import { useAnalytics } from './use-analytics';
-import { createRecordingClient } from './recording-client';
+import { createRecordingClient } from './recording-client.test-helper';
 
 const appTaxonomy = defineTaxonomy({
   events: {

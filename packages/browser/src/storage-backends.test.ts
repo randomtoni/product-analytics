@@ -163,6 +163,21 @@ describe('createLocalStoragePlusCookieBackend', () => {
     const store = createLocalStoragePlusCookieBackend(COOKIE_MIRRORED_KEYS);
     expect(store.parse('never_written')).toBeNull();
   });
+
+  test('set(name, null) fails soft — it does NOT throw on the entry cast (FIX F)', () => {
+    // The backend casts `value as StorageEntry` and indexes entry[key]; a null value would
+    // throw a TypeError on that index. It must fail soft (skip the cookie mirror) instead.
+    const store = createLocalStoragePlusCookieBackend(COOKIE_MIRRORED_KEYS);
+    expect(() => store.set(name, null)).not.toThrow();
+    // No cookie mirror was written for the null value.
+    expect(cookieBackend.parse(name)).toBeNull();
+  });
+
+  test('set(name, undefined) also fails soft (FIX F)', () => {
+    const store = createLocalStoragePlusCookieBackend(COOKIE_MIRRORED_KEYS);
+    expect(() => store.set(name, undefined)).not.toThrow();
+    expect(cookieBackend.parse(name)).toBeNull();
+  });
 });
 
 describe('buildPropsBackend', () => {

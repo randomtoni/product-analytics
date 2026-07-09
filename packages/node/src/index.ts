@@ -15,12 +15,3 @@ export type {
 } from './query/query-client';
 export { createQueryClient } from './query/create-query-client';
 export type { QueryClientConfig } from './query/config';
-export {
-  HttpQueryAdapter,
-  createHttpQueryAdapter,
-} from './query/http-query-adapter';
-export type { HttpQueryAdapterOptions } from './query/http-query-adapter';
-export {
-  WarehouseQueryAdapter,
-  createWarehouseQueryAdapter,
-} from './query/warehouse-query-adapter';

@@ -64,6 +64,77 @@ describe('register / register_once / unregister storage semantics', () => {
   });
 });
 
+describe('object-valued super-props are detached on store (FIX E — no caller aliasing)', () => {
+  test('mutating the caller object AFTER register does NOT mutate the stored value', () => {
+    const store = new PersistenceStore({ backend: createMemoryBackend(), name: 's' });
+    const profile = { plan: 'pro', flags: ['a'] };
+
+    store.register({ profile });
+    // The caller mutates its own object post-register.
+    profile.plan = 'enterprise';
+    profile.flags.push('b');
+
+    // The stored (and thus emitted) value is unchanged — it was deep-copied on store.
+    expect(store.getProperty('profile')).toEqual({ plan: 'pro', flags: ['a'] });
+  });
+
+  test('the snapshot returned by entries() is not the caller reference either', () => {
+    const store = new PersistenceStore({ backend: createMemoryBackend(), name: 's' });
+    const nested = { a: { b: 1 } };
+
+    store.register({ nested });
+    nested.a.b = 999;
+
+    const stored = store.getProperty<{ a: { b: number } }>('nested');
+    expect(stored?.a.b).toBe(1);
+  });
+
+  test('registerOnce also detaches object values from the caller', () => {
+    const store = new PersistenceStore({ backend: createMemoryBackend(), name: 's' });
+    const tags = { list: ['x'] };
+
+    store.registerOnce({ tags });
+    tags.list.push('y');
+
+    expect(store.getProperty('tags')).toEqual({ list: ['x'] });
+  });
+
+  test('array-valued super-props are detached too', () => {
+    const store = new PersistenceStore({ backend: createMemoryBackend(), name: 's' });
+    const items = [{ id: 1 }];
+
+    store.register({ items });
+    items[0].id = 2;
+    items.push({ id: 3 });
+
+    expect(store.getProperty('items')).toEqual([{ id: 1 }]);
+  });
+
+  test('scalar super-props are stored by value unchanged (regression — no over-copying)', () => {
+    const store = new PersistenceStore({ backend: createMemoryBackend(), name: 's' });
+    store.register({ count: 5, name: 'kit', on: true });
+    expect(store.getProperty('count')).toBe(5);
+    expect(store.getProperty('name')).toBe('kit');
+    expect(store.getProperty('on')).toBe(true);
+  });
+
+  test('a non-JSON value (Date) is deep-copied structurally, NOT flattened to a string (no fallback divergence)', () => {
+    // The old JSON round-trip fallback would coerce a Date to a string; structuredClone (the
+    // single copy path) preserves it as a Date, so the stored shape is environment-independent.
+    const store = new PersistenceStore({ backend: createMemoryBackend(), name: 's' });
+    const when = new Date('2024-01-02T03:04:05.000Z');
+
+    store.register({ seenAt: { when } });
+
+    const stored = store.getProperty<{ when: Date }>('seenAt');
+    expect(stored?.when).toBeInstanceOf(Date);
+    expect(stored?.when.getTime()).toBe(when.getTime());
+    // Still detached — mutating the caller's Date does not reach the stored copy.
+    when.setFullYear(1999);
+    expect(store.getProperty<{ when: Date }>('seenAt')?.when.getFullYear()).toBe(2024);
+  });
+});
+
 describe('load', () => {
   test('a fresh store hydrates its in-memory props from the backing entry', () => {
     const backend = createMemoryBackend();

@@ -60,17 +60,43 @@ test('an opted-out-by-default keyed adapter still resolves a truthful minted dis
   expect(adapter.getDistinctId()).not.toBe('anonymous');
 });
 
-test("consentDefault 'granted' + pending: capture runs, yet cookies stay suppressed until an explicit grant", () => {
+test("consentDefault 'granted' + pending: capture RUNS and DELIVERS, yet cookies stay suppressed until an explicit grant", () => {
   const key = 'consent-default-granted-key';
+  // Spy the pipeline on the prototype so we catch the SAME adapter the facade wraps —
+  // reaching it is the proof the consent gate no longer drops the event (the regression).
+  const pipeline = vi.spyOn(BrowserAdapter.prototype, 'runCapturePipeline');
   const analytics = createAnalytics({ key, consentDefault: 'granted' });
 
   // consentDefault resolves the pending state so capture runs at the facade...
   expect(analytics.hasOptedOut()).toBe(false);
   expect(() => analytics.track('x')).not.toThrow();
 
-  // ...but the adapter's durable consent is still pending, so no cookies are written.
+  // ...and the event actually reaches the capture pipeline in the adapter — it is
+  // DELIVERED, not silently dropped by a consent gate born 'pending'.
+  expect(pipeline).toHaveBeenCalledTimes(1);
+  expect(pipeline.mock.calls[0][0].event).toBe('x');
+
+  // ...but the adapter's durable consent is still pending, so no cookies are written
+  // (cookie persistence keys off RAW 'granted', not the capture-permission default).
   window.dispatchEvent(new Event('beforeunload'));
   expect(document.cookie).not.toContain(key);
+
+  vi.restoreAllMocks();
+});
+
+test('pending WITHOUT consentDefault (the fail-safe default) DROPS capture — no delivery', () => {
+  const key = 'consent-default-unset-key';
+  const pipeline = vi.spyOn(BrowserAdapter.prototype, 'runCapturePipeline');
+  const analytics = createAnalytics({ key });
+
+  // No consent policy ⇒ opt-out-by-default at the facade AND a suppressed adapter gate.
+  expect(analytics.hasOptedOut()).toBe(true);
+  expect(() => analytics.track('x')).not.toThrow();
+
+  // The pending adapter gate drops the event — it never reaches the pipeline.
+  expect(pipeline).not.toHaveBeenCalled();
+
+  vi.restoreAllMocks();
 });
 
 test('pointing ingestHost at two different first-party origins resolves two different URLs (bar B: config only, zero library change)', () => {

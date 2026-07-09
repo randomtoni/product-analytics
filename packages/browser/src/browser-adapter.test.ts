@@ -42,6 +42,16 @@ function freshKey(): string {
   return `test-${keySeq}-${Math.random().toString(36).slice(2)}`;
 }
 
+// capture() is gated on granted consent (a fresh adapter defaults to 'pending', which
+// drops — the opt-out-by-default fail-safe). Mechanics-focused tests exercise the capture
+// pipeline, not consent policy, so they grant up front. Idempotent — granting an already-
+// granted adapter is a no-op. Consent-policy tests (opt-out/pending/denied) construct the
+// adapter directly and drive the state themselves; they do NOT use this helper.
+function granted<A extends BrowserAdapter>(adapter: A): A {
+  adapter.setConsentState('granted');
+  return adapter;
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -803,7 +813,7 @@ describe('identify — client-side anon→identified merge (S6)', () => {
   });
 
   test('the merge event flows the normal capture pipeline (session-stamped like any event)', () => {
-    const adapter = new BrowserAdapter({ key: freshKey() });
+    const adapter = granted(new BrowserAdapter({ key: freshKey() }));
     const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
 
     adapter.identify('user-1');
@@ -1016,7 +1026,7 @@ describe('bot/crawler suppression at capture time (S7)', () => {
   test('a non-bot client captures normally — the pipeline runs', () => {
     const restore = stubNavigator({ userAgent: 'Mozilla/5.0 Chrome/120', webdriver: false });
     try {
-      const adapter = new BrowserAdapter({ key: freshKey() });
+      const adapter = granted(new BrowserAdapter({ key: freshKey() }));
       const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
 
       adapter.capture(makeEvent());
@@ -1031,16 +1041,16 @@ describe('bot/crawler suppression at capture time (S7)', () => {
     const restore = stubNavigator({ userAgent: 'Mozilla/5.0 AcmeInternalScanner/3.2', webdriver: false });
     try {
       // Without the extension, this UA captures normally...
-      const plain = new BrowserAdapter({ key: freshKey() });
+      const plain = granted(new BrowserAdapter({ key: freshKey() }));
       const plainPipeline = vi.spyOn(plain, 'runCapturePipeline');
       plain.capture(makeEvent());
       expect(plainPipeline).toHaveBeenCalledOnce();
 
       // ...with the extension, the same UA is now blocked before the pipeline.
-      const extended = new BrowserAdapter({
+      const extended = granted(new BrowserAdapter({
         key: freshKey(),
         blockedUserAgents: ['acmeinternalscanner'],
-      });
+      }));
       const extendedPipeline = vi.spyOn(extended, 'runCapturePipeline');
       extended.capture(makeEvent());
       expect(extendedPipeline).not.toHaveBeenCalled();
@@ -1052,7 +1062,7 @@ describe('bot/crawler suppression at capture time (S7)', () => {
   test('botFilter:false disables filtering entirely — an otherwise-blocked UA captures normally (bar B)', () => {
     const restore = stubNavigator({ userAgent: 'Mozilla/5.0 (compatible; Googlebot/2.1)', webdriver: true });
     try {
-      const adapter = new BrowserAdapter({ key: freshKey(), botFilter: false });
+      const adapter = granted(new BrowserAdapter({ key: freshKey(), botFilter: false }));
       const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
 
       adapter.capture(makeEvent());
@@ -1084,8 +1094,12 @@ describe('batch queue + real delivery (S2)', () => {
 
   // A mock fetch SPI: records every POST and resolves a benign 200 — never a real
   // backend. The adapter's own fetch() is the seam we stub (the E2 neutral primitive).
+  // Grants consent as it wires up — these are capture-mechanics tests, and capture() is
+  // consent-gated (a fresh adapter is 'pending', which drops); the opt-in/opt-out tests
+  // below drive the consent state themselves AFTER this grant.
   type Recorded = { url: string; options: NeutralFetchOptions };
   function mockFetch(adapter: BrowserAdapter): Recorded[] {
+    granted(adapter);
     const calls: Recorded[] = [];
     vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
       calls.push({ url, options });
@@ -1276,7 +1290,10 @@ describe('retry queue with backoff (S3)', () => {
   // A mock fetch that resolves each POST with the next status from a scripted list
   // (the last status repeats once the list is exhausted). Records every call so the
   // retry re-send count is assertable. status 0 models a network / no-HTTP failure.
+  // Grants consent as it wires up — capture() is consent-gated, and these are retry
+  // mechanics tests, not consent-policy tests.
   function mockFetchStatuses(adapter: BrowserAdapter, statuses: number[]): Recorded[] {
+    granted(adapter);
     const calls: Recorded[] = [];
     let i = 0;
     vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
@@ -1452,8 +1469,10 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
   type Recorded = { url: string; options: NeutralFetchOptions };
 
   // A mock fetch resolving a benign 200 with an EMPTY body (no back-pressure) —
-  // the common case; the token bucket is what's under test here.
+  // the common case; the token bucket is what's under test here. Grants consent as it
+  // wires up (capture() is consent-gated; these are rate-limit mechanics tests).
   function mockFetch(adapter: BrowserAdapter): Recorded[] {
+    granted(adapter);
     const calls: Recorded[] = [];
     vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
       calls.push({ url, options });
@@ -1465,8 +1484,9 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
   // A mock fetch whose response BODY carries the backend's body-borne back-pressure
   // signal from a scripted list (last entry repeats once exhausted). The adapter's
   // injected interpreter reads this off text() — the neutral response type is
-  // unchanged; only the body content models the signal.
+  // unchanged; only the body content models the signal. Grants consent as it wires up.
   function mockFetchBodies(adapter: BrowserAdapter, bodies: string[]): Recorded[] {
+    granted(adapter);
     const calls: Recorded[] = [];
     let i = 0;
     vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
@@ -1546,9 +1566,24 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
     expect(calls.flatMap((c) => batchOf(c.options))).toHaveLength(15);
   });
 
-  test('a body-borne back-pressure signal blocks the affected batch for the cool-off window (fake timers)', async () => {
+  // Read the durable offline-queue envelope straight off storage. The cool-off re-hold
+  // mirrors the retry-queue snapshot here, so a batch held during a cool-off is visible.
+  function persistedUuids(key: string): string[] {
+    const raw = localStorage.getItem(queueStoreName(key));
+    if (raw === null) return [];
+    const { batches } = JSON.parse(raw) as { batches: Record<string, unknown>[][] };
+    return batches.flat().map((e) => e.uuid as string);
+  }
+
+  test('a batch caught by a server cool-off is RE-HELD, not dropped — it survives the window and re-delivers (fake timers)', async () => {
+    // CORRECTED: this test previously asserted only that the fetch `calls` count did NOT
+    // grow during the cool-off — which silently locked in the DROP of the cooling-off
+    // batch as "correct". A cool-off is not a delivery failure: the batch was already
+    // drained from the request queue, so it must be re-held and re-delivered after the
+    // window, never silently lost. This now pins that fixed behavior.
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1, compression: false });
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, flushAt: 1, compression: false });
     // First POST's body signals back-pressure; every later response is clean.
     const calls = mockFetchBodies(adapter, [JSON.stringify({ quota_limited: ['events'] }), '']);
 
@@ -1557,23 +1592,65 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
     await adapter.flush();
     expect(calls).toHaveLength(1);
 
-    // While cooling off, the next flush's POST is SKIPPED — no new fetch fires.
+    // A second event is captured and flushed DURING the cool-off: its POST is skipped
+    // (no new fetch), but — crucially — the batch is NOT dropped. It is re-held in the
+    // retry queue and mirrored to durable storage.
     adapter.capture(makeEvent({ dedupeId: 'during-cooloff' }));
     await adapter.flush();
     expect(calls).toHaveLength(1);
+    expect(persistedUuids(key)).toContain('during-cooloff');
 
-    // Just short of the 60s window — still cooling off, still skipped.
-    vi.advanceTimersByTime(60 * 1000 - 1);
-    adapter.capture(makeEvent({ dedupeId: 'still-cooling' }));
+    // Advance past the 60s window AND enough poll cycles for the retry poller to wake and
+    // re-send the held batch (now that the scope is no longer cooling off).
+    await vi.advanceTimersByTimeAsync(120 * 1000);
+
+    // The re-held batch was delivered after the window — it did not vanish.
+    const delivered = calls.flatMap((c) => batchOf(c.options).map((e) => e.uuid as string));
+    expect(delivered).toContain('during-cooloff');
+    // And once delivered, the durable mirror no longer holds it (pruned on success).
+    expect(persistedUuids(key)).not.toContain('during-cooloff');
+  });
+
+  test('a cool-off does NOT consume the retry budget — a batch re-held across the window still delivers (fake timers)', async () => {
+    // A cool-off re-holds at the SAME attempt (it is not a delivery failure), so a batch
+    // caught by a long cool-off must never exhaust DEFAULT_MAX_RETRIES and get dropped.
+    // The retry poller wakes MANY times DURING the ~60s window (POLL_INTERVAL_MS = 3s ⇒
+    // ~20 wakes, twice the 10-retry budget); if each wake advanced the attempt the batch
+    // would be dropped before the window clears and never deliver. Delivery is therefore
+    // the proof the budget was NOT consumed.
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1, compression: false });
+    // The FIRST response arms the cool-off; every response after the window is clean.
+    const calls = mockFetchBodies(adapter, [JSON.stringify({ quota_limited: ['events'] }), '']);
+
+    adapter.capture(makeEvent({ dedupeId: 'arm' }));
+    await adapter.flush();
+    adapter.capture(makeEvent({ dedupeId: 'held' }));
+    await adapter.flush();
+
+    // Advance well past the window AND enough poll cycles that a budget-consuming re-hold
+    // would already have exhausted and dropped the batch.
+    await vi.advanceTimersByTimeAsync(180 * 1000);
+
+    const delivered = calls.flatMap((c) => batchOf(c.options).map((e) => e.uuid as string));
+    expect(delivered).toContain('held');
+  });
+
+  test('past the cool-off window, sending resumes for fresh captures too (fake timers)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1, compression: false });
+    const calls = mockFetchBodies(adapter, [JSON.stringify({ quota_limited: ['events'] }), '']);
+
+    adapter.capture(makeEvent({ dedupeId: 'first' }));
     await adapter.flush();
     expect(calls).toHaveLength(1);
 
-    // Past the window — sending resumes; the next flush POSTs again.
-    vi.advanceTimersByTime(1);
+    // Past the 60s window — a fresh capture POSTs again on the normal flush path.
+    vi.advanceTimersByTime(60 * 1000);
     adapter.capture(makeEvent({ dedupeId: 'after-cooloff' }));
     await adapter.flush();
-    expect(calls).toHaveLength(2);
-    expect(batchOf(calls[1].options).map((e) => e.uuid)).toContain('after-cooloff');
+    const delivered = calls.flatMap((c) => batchOf(c.options).map((e) => e.uuid as string));
+    expect(delivered).toContain('after-cooloff');
   });
 
   test('a clean response body arms NO cool-off — steady delivery continues (regression of the no-back-pressure path)', async () => {
@@ -1592,7 +1669,7 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
 
   test('the back-pressure signal is read off the response BODY, not a header — the neutral fetch response type is unchanged (bar A)', async () => {
     vi.useFakeTimers();
-    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1, compression: false });
+    const adapter = granted(new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, flushAt: 1, compression: false }));
 
     // The response the adapter reads exposes exactly the shipped neutral SPI —
     // status + text() + json(), NO header accessor. The signal is body-borne.
@@ -1704,7 +1781,10 @@ describe('gzip compression (S5)', () => {
   // path bypasses this.fetch and goes straight to the DOM fetch). The gzip body rides
   // as an ArrayBuffer with the [WIRE] Content-Type in the headers.
   type BinaryCall = { url: string; body: ArrayBuffer; contentType: string | undefined };
-  function spyDomFetch(): BinaryCall[] {
+  // Grants the adapter as it wires the spy up — these are compression mechanics tests and
+  // capture() is consent-gated (a fresh adapter is 'pending', which drops).
+  function spyDomFetch(adapter: BrowserAdapter): BinaryCall[] {
+    granted(adapter);
     const calls: BinaryCall[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(
       async (input: string | URL | Request, init?: RequestInit) => {
@@ -1717,9 +1797,10 @@ describe('gzip compression (S5)', () => {
   }
 
   // The uncompressed string path still rides the neutral fetch() SPI — spy it to prove
-  // the fallback / toggle-off cases deliver a JSON string, not binary.
+  // the fallback / toggle-off cases deliver a JSON string, not binary. Grants consent too.
   type StringCall = { url: string; options: NeutralFetchOptions };
   function spyNeutralFetch(adapter: BrowserAdapter): StringCall[] {
+    granted(adapter);
     const calls: StringCall[] = [];
     vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
       calls.push({ url, options });
@@ -1735,7 +1816,7 @@ describe('gzip compression (S5)', () => {
   test('the batch body is gzipped via the native CompressionStream path when it succeeds — sync fallback not reached', async () => {
     // native (mocked to a successful compression) yields valid gzip bytes.
     const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
-    const domCalls = spyDomFetch();
+    const domCalls = spyDomFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'gz-native' }));
     await adapter.flush();
@@ -1755,7 +1836,7 @@ describe('gzip compression (S5)', () => {
 
   test('the gzipped POST sets Content-Type text/plain and the [WIRE] compression/ver/_ query params', async () => {
     const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
-    const domCalls = spyDomFetch();
+    const domCalls = spyDomFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'gz-headers' }));
     await adapter.flush();
@@ -1774,7 +1855,7 @@ describe('gzip compression (S5)', () => {
     // sync fflate fallback must produce the bytes rather than shipping uncompressed.
     gzipMock.gzipCompress.mockResolvedValue(null);
     const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
-    const domCalls = spyDomFetch();
+    const domCalls = spyDomFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'gz-fflate' }));
     await adapter.flush();
@@ -1797,7 +1878,7 @@ describe('gzip compression (S5)', () => {
       realGzip.gzipSyncFallback(input)
     );
     const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
-    const domCalls = spyDomFetch();
+    const domCalls = spyDomFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'gz-validate' }));
     await adapter.flush();
@@ -1816,7 +1897,7 @@ describe('gzip compression (S5)', () => {
     gzipMock.gzipSyncFallback.mockReturnValue(new Uint8Array([0x00, 0x01, 0x02]));
     const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
     const stringCalls = spyNeutralFetch(adapter);
-    const domCalls = spyDomFetch();
+    const domCalls = spyDomFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'gz-bad-both' }));
     await adapter.flush();
@@ -1834,7 +1915,7 @@ describe('gzip compression (S5)', () => {
   test('the compression toggle off restores S2 uncompressed JSON POST via the neutral fetch() SPI', async () => {
     const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const stringCalls = spyNeutralFetch(adapter);
-    const domCalls = spyDomFetch();
+    const domCalls = spyDomFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'toggle-off' }));
     await adapter.flush();
@@ -1855,7 +1936,7 @@ describe('gzip compression (S5)', () => {
     gzipMock.isGzipSupported.mockReturnValue(false);
     const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
     const stringCalls = spyNeutralFetch(adapter);
-    const domCalls = spyDomFetch();
+    const domCalls = spyDomFetch(adapter);
 
     adapter.capture(makeEvent({ dedupeId: 'no-primitive' }));
     await adapter.flush();
@@ -1890,7 +1971,7 @@ describe('transport selection + keepalive + unload drain (S6)', () => {
   // test dispatches a lifecycle event on the same window.
   const liveAdapters: BrowserAdapter[] = [];
   function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
-    const adapter = new BrowserAdapter(options);
+    const adapter = granted(new BrowserAdapter(options));
     liveAdapters.push(adapter);
     return adapter;
   }
@@ -2268,7 +2349,7 @@ describe('pageleave minted at unload, riding the beacon (E6-S2)', () => {
 
   const liveAdapters: BrowserAdapter[] = [];
   function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
-    const adapter = new BrowserAdapter(options);
+    const adapter = granted(new BrowserAdapter(options));
     liveAdapters.push(adapter);
     return adapter;
   }
@@ -2990,7 +3071,7 @@ describe('per-event context enrichment (E6-S3)', () => {
 
   const liveAdapters: BrowserAdapter[] = [];
   function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
-    const adapter = new BrowserAdapter(options);
+    const adapter = granted(new BrowserAdapter(options));
     liveAdapters.push(adapter);
     return adapter;
   }
@@ -3151,7 +3232,7 @@ describe('UTM/campaign + session-entry + initial attribution (E6-S4)', () => {
 
   const liveAdapters: BrowserAdapter[] = [];
   function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
-    const adapter = new BrowserAdapter(options);
+    const adapter = granted(new BrowserAdapter(options));
     liveAdapters.push(adapter);
     return adapter;
   }
@@ -3417,7 +3498,7 @@ describe('per-module enrichment opt-out — structured `enrichment` object (E6-S
 
   const liveAdapters: BrowserAdapter[] = [];
   function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
-    const adapter = new BrowserAdapter(options);
+    const adapter = granted(new BrowserAdapter(options));
     liveAdapters.push(adapter);
     return adapter;
   }
@@ -3700,7 +3781,10 @@ describe('DOM autocapture (E6-S7)', () => {
   const INGEST = 'https://analytics.example.com';
 
   type Recorded = { url: string; options: NeutralFetchOptions };
+  // Grants consent as it wires up — autocapture events ride the consent-gated capture()
+  // pipeline, and these are autocapture mechanics tests, not consent-policy tests.
   function mockFetch(adapter: BrowserAdapter): Recorded[] {
+    granted(adapter);
     const calls: Recorded[] = [];
     vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
       calls.push({ url, options });
@@ -3864,12 +3948,12 @@ describe('DOM autocapture (E6-S7)', () => {
       async () => new Response('', { status: 200 })
     );
     try {
-      const adapter = new BrowserAdapter({
+      const adapter = granted(new BrowserAdapter({
         key: freshKey(),
         ingestHost: INGEST,
         compression: false,
         autocapture: true,
-      });
+      }));
       // Construction alone made zero network calls (no remote-config fetch to gate on).
       expect(globalFetch).not.toHaveBeenCalled();
 
@@ -3974,5 +4058,198 @@ describe('DOM autocapture (E6-S7)', () => {
     } finally {
       globals.document = original;
     }
+  });
+});
+
+// FIX A: capture() gates on granted consent as its FIRST line — the single choke point
+// every internal caller funnels through. Autocapture listeners and the unload pageleave
+// mint events by calling this.capture() DIRECTLY on the live adapter, bypassing the
+// facade's opt-out swap; without the gate a runtime opt-out would still see a click / an
+// unload enriched + enqueued + POSTed. These pin the fix.
+describe('consent gating at capture() — the direct-caller choke point (FIX A)', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  type Recorded = { url: string; options: NeutralFetchOptions };
+  function spyFetch(adapter: BrowserAdapter): Recorded[] {
+    const calls: Recorded[] = [];
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+    return calls;
+  }
+
+  function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
+    return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
+  }
+
+  const liveAdapters: BrowserAdapter[] = [];
+  function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
+    const adapter = new BrowserAdapter(options);
+    liveAdapters.push(adapter);
+    return adapter;
+  }
+
+  beforeEach(() => {
+    beaconMock.calls.length = 0;
+    beaconMock.returns = true;
+    const nav = navigator as unknown as { sendBeacon?: (url: string) => boolean };
+    if (!('sendBeacon' in nav)) {
+      nav.sendBeacon = () => true;
+    }
+    document.body.innerHTML = '';
+  });
+
+  afterEach(() => {
+    for (const adapter of liveAdapters.splice(0)) {
+      (adapter as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+      (adapter as unknown as { detachAutocaptureListeners?: () => void }).detachAutocaptureListeners?.();
+    }
+    vi.restoreAllMocks();
+    document.body.innerHTML = '';
+  });
+
+  test('after a runtime opt-out (denied) a click AND a page-unload produce ZERO delivered/enqueued events', async () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false, autocapture: true });
+    adapter.setConsentState('granted');
+    // Capture a page so a pageview record exists — the unload pageleave has something to mint.
+    adapter.capture(makeEvent({ event: RESERVED_PAGE_EVENT, isPageView: true }));
+    await adapter.flush();
+
+    // Opt out at runtime, then spy AFTER — every call recorded now is post-opt-out.
+    adapter.setConsentState('denied');
+    const calls = spyFetch(adapter);
+    const beaconsBefore = beaconMock.calls.length;
+
+    // A DOM click (autocapture listener → this.capture) and a full unload (capturePageleave
+    // → this.capture, then the beacon drain) both fire against the live adapter.
+    const button = document.createElement('button');
+    button.textContent = 'buy';
+    document.body.appendChild(button);
+    button.click();
+    adapter.unload();
+    await adapter.flush();
+
+    // The consent gate no-ops both direct callers: nothing enriched, enqueued, POSTed, or
+    // beaconed after the opt-out.
+    expect(calls).toHaveLength(0);
+    expect(beaconMock.calls.length).toBe(beaconsBefore);
+  });
+
+  test('a granted client still captures the autocaptured click AND the unload pageleave normally', async () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false, autocapture: true });
+    adapter.setConsentState('granted');
+    const calls = spyFetch(adapter);
+
+    adapter.capture(makeEvent({ event: RESERVED_PAGE_EVENT, isPageView: true }));
+    const button = document.createElement('button');
+    button.textContent = 'buy';
+    document.body.appendChild(button);
+    button.click();
+    await adapter.flush();
+
+    // The page + the autocaptured click both delivered on the normal path.
+    const delivered = calls.flatMap((c) => batchOf(c.options).map((e) => e.event));
+    expect(delivered).toContain('$autocapture');
+
+    // The unload pageleave rides the beacon drain — it is minted (granted) and beaconed.
+    beaconMock.calls.length = 0;
+    adapter.unload();
+    const beaconedBodies = beaconMock.calls.map((c) => String(c.body));
+    expect(beaconedBodies.some((b) => b.includes('$pageleave'))).toBe(true);
+  });
+
+  test('the default pending (unasked) state also drops — capture is opt-out-by-default', async () => {
+    // A FRESH adapter is 'pending', which resolves to not-granted and drops. This pins the
+    // opt-out-by-default fail-safe (pending is NOT a permissive state).
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    expect(adapter.getConsentState()).toBe('pending');
+    const calls = spyFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 'pending-drop' }));
+    await adapter.flush();
+
+    expect(calls).toHaveLength(0);
+  });
+
+  test('the merge/traits events minted by identify() are also gated — a denied client mints none', () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    adapter.setConsentState('denied');
+    const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
+
+    adapter.identify('user-1', { plan: 'pro' });
+
+    // identify routes through capture(); the consent gate stops it before the pipeline.
+    expect(pipeline).not.toHaveBeenCalled();
+  });
+
+  test("consentDefault 'granted' + pending CAPTURES and DELIVERS — the fail-safe gate opts in-by-default", async () => {
+    // The regression fix: a pending adapter born with consentDefault 'granted' must NOT be
+    // dropped by the capture gate — it captures on the normal transport path.
+    const adapter = makeAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      consentDefault: 'granted',
+    });
+    expect(adapter.getConsentState()).toBe('pending');
+    const calls = spyFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 'default-granted-pending' }));
+    await adapter.flush();
+
+    const delivered = calls.flatMap((c) => batchOf(c.options).map((e) => e.uuid as string));
+    expect(delivered).toContain('default-granted-pending');
+  });
+
+  test("consentDefault 'granted' + pending CAPTURES but writes NO cookies — capture-permission ≠ cookie-permission", () => {
+    // Composition proof: the new capture gate lets a pending+defaultGranted client through,
+    // yet cookie persistence keys off RAW 'granted', so it stays memory-mode. A custom prop
+    // written now must NOT survive a reload (nothing re-seeds it).
+    const key = freshKey();
+    const writer = makeAdapter({
+      key,
+      persistence: 'localStorage+cookie',
+      consentDefault: 'granted',
+    });
+    expect(writer.getConsentState()).toBe('pending');
+    writer.setPersistedProperty('custom_prop', 'ephemeral');
+    window.dispatchEvent(new Event('beforeunload'));
+
+    // No identity cookie was written for this pending client...
+    expect(document.cookie).not.toContain(key);
+    // ...and the prop did not persist durably (memory-mode) — a reload sees nothing.
+    const reloaded = makeAdapter({ key, persistence: 'localStorage+cookie', consentDefault: 'granted' });
+    expect(reloaded.getPersistedProperty('custom_prop')).toBeUndefined();
+  });
+
+  test("consentDefault 'denied' + pending DROPS capture — an explicit opt-out-by-default policy", () => {
+    const adapter = makeAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      consentDefault: 'denied',
+    });
+    const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
+
+    adapter.capture(makeEvent({ dedupeId: 'default-denied-pending' }));
+
+    expect(pipeline).not.toHaveBeenCalled();
+  });
+
+  test("a runtime opt-out (denied) STILL drops even under consentDefault 'granted' — an explicit denial always wins", async () => {
+    const adapter = makeAdapter({
+      key: freshKey(),
+      ingestHost: INGEST,
+      compression: false,
+      consentDefault: 'granted',
+    });
+    adapter.setConsentState('denied');
+    const calls = spyFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 'denied-over-default' }));
+    await adapter.flush();
+
+    expect(calls).toHaveLength(0);
   });
 });

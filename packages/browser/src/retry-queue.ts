@@ -139,6 +139,16 @@ export class RetryQueue<T> {
     this.startPolling();
   }
 
+  // Re-hold a batch WITHOUT consuming its retry/backoff budget — for a non-failure hold
+  // (e.g. a server cool-off): the send never reached the wire, so the failure count must
+  // NOT advance. Re-enqueues at the SAME `attempt` with a fixed one-poll delay, so the
+  // poller re-checks it shortly (re-holding again while the hold persists) rather than
+  // growing an exponential backoff. Distinct from scheduleRetry, which stores attempt+1.
+  rehold(batch: T[], attempt: number): void {
+    this.queue.push({ retryAt: Date.now() + POLL_INTERVAL_MS, attempt, batch });
+    this.startPolling();
+  }
+
   // A non-destructive read of the held batches (retry order preserved). The
   // offline-persistence slice (S9) mirrors this to durable storage; it does not
   // clear the queue or touch the poller. Returns a fresh outer array so a

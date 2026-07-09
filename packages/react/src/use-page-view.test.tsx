@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { StrictMode, type ReactNode } from 'react';
 import { renderHook } from '@testing-library/react';
 import { describe, expect, expectTypeOf, test, vi } from 'vitest';
 import { createAnalytics } from '@analytics-kit/browser';
@@ -6,7 +6,7 @@ import { defineTaxonomy } from 'analytics-kit';
 import type { RootAnalytics, ShapeOf } from 'analytics-kit';
 import { AnalyticsClientProvider } from './analytics-client-provider';
 import { usePageView } from './use-page-view';
-import { createRecordingClient } from './recording-client';
+import { createRecordingClient } from './recording-client.test-helper';
 
 const appTaxonomy = defineTaxonomy({
   events: {
@@ -20,6 +20,18 @@ type AppShape = ShapeOf<typeof appTaxonomy.decl>;
 function clientProvider(client: RootAnalytics) {
   return function Wrapper({ children }: { children: ReactNode }) {
     return <AnalyticsClientProvider client={client}>{children}</AnalyticsClientProvider>;
+  };
+}
+
+// StrictMode dev-double-invoke: mount→unmount→remount with effects re-run and refs
+// PERSISTED — the exact condition the idempotent-on-routeKey fire must survive.
+function strictClientProvider(client: RootAnalytics) {
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return (
+      <StrictMode>
+        <AnalyticsClientProvider client={client}>{children}</AnalyticsClientProvider>
+      </StrictMode>
+    );
   };
 }
 
@@ -150,6 +162,57 @@ describe('usePageView — captureOnMount', () => {
       initialProps: { path: '/home' },
     });
     expect(client.page).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('usePageView — StrictMode double-invoke (idempotent on routeKey)', () => {
+  test('default: fires exactly ONE page() on mount despite the dev double-invoke', () => {
+    const client = createRecordingClient();
+    renderHook(({ path }: { path: string }) => usePageView(path), {
+      wrapper: strictClientProvider(client),
+      initialProps: { path: '/home' },
+    });
+    expect(client.page).toHaveBeenCalledTimes(1);
+  });
+
+  test('captureOnMount:false: fires ZERO on mount despite the dev double-invoke', () => {
+    const client = createRecordingClient();
+    renderHook(({ path }: { path: string }) => usePageView(path, { captureOnMount: false }), {
+      wrapper: strictClientProvider(client),
+      initialProps: { path: '/home' },
+    });
+    expect(client.page).not.toHaveBeenCalled();
+  });
+
+  test('default: fires exactly ONE page() per distinct routeKey change under StrictMode', () => {
+    const client = createRecordingClient();
+    const { rerender } = renderHook(({ path }: { path: string }) => usePageView(path), {
+      wrapper: strictClientProvider(client),
+      initialProps: { path: '/home' },
+    });
+    expect(client.page).toHaveBeenCalledTimes(1);
+
+    rerender({ path: '/about' });
+    expect(client.page).toHaveBeenCalledTimes(2);
+
+    rerender({ path: '/home' });
+    rerender({ path: '/home' });
+    expect(client.page).toHaveBeenCalledTimes(3);
+  });
+
+  test('captureOnMount:false: zero on mount, then ONE per subsequent distinct change under StrictMode', () => {
+    const client = createRecordingClient();
+    const { rerender } = renderHook(
+      ({ path }: { path: string }) => usePageView(path, { captureOnMount: false }),
+      { wrapper: strictClientProvider(client), initialProps: { path: '/home' } }
+    );
+    expect(client.page).not.toHaveBeenCalled();
+
+    rerender({ path: '/about' });
+    expect(client.page).toHaveBeenCalledTimes(1);
+
+    rerender({ path: '/pricing' });
+    expect(client.page).toHaveBeenCalledTimes(2);
   });
 });
 

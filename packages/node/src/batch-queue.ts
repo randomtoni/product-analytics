@@ -106,6 +106,10 @@ export class BatchQueue<T> {
     this.intervalTimer = setTimeout(() => {
       this.drainAndSend();
     }, this.flushIntervalMs);
+    // Node's timer handle carries .unref() — call it so a captured-then-exited process
+    // isn't held open by a pending flush; browser/edge setTimeout returns a bare number,
+    // where the optional-chain makes this a no-op.
+    this.intervalTimer?.unref?.();
   }
 
   private scheduleFlush(): void {
@@ -115,6 +119,7 @@ export class BatchQueue<T> {
     this.pendingFlush = setTimeout(() => {
       this.drainAndSend();
     }, 0);
+    this.pendingFlush?.unref?.();
   }
 
   // The single drain path every trigger routes through: clears both timers at the top

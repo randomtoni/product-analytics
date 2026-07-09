@@ -259,6 +259,39 @@ test('async: a 202 with no inline status body gives up neutrally (nothing to pol
   await expect(client.rawQuery('SELECT 1')).rejects.toThrow('query did not complete');
 });
 
+// --- Malformed wire JSON: unguarded casts must NOT leak a raw TypeError ---
+
+test('async: a 200 poll body missing query_status surfaces the neutral error (NOT a raw TypeError)', async () => {
+  // POST accepts async; the poll then returns a 200 whose body has NO query_status key —
+  // reading `.complete` on the absent status would throw a raw TypeError without the guard.
+  const { client } = adapter([PENDING, { ok: true, status: 200, json: {} }]);
+
+  const error = (await client.rawQuery('SELECT 1').catch((e: unknown) => e)) as Error;
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error).not.toBeInstanceOf(TypeError);
+  expect(error.message).toBe('analytics: query did not complete');
+  expect(error.message).not.toMatch(/query_status/);
+});
+
+test('async: a completed status envelope missing results surfaces the neutral error (NOT a raw TypeError)', async () => {
+  // The poll flips complete:true but the completed envelope carries NO results array —
+  // normalizeResult accessing `.map`/`.filter` on the absent results would raw-TypeError.
+  const noResults = {
+    ok: true,
+    status: 200,
+    json: { query_status: { id: 'qs-empty', complete: true } },
+  };
+  const { client } = adapter([PENDING, noResults]);
+
+  const error = (await client.rawQuery('SELECT 1').catch((e: unknown) => e)) as Error;
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error).not.toBeInstanceOf(TypeError);
+  expect(error.message).toBe('analytics: query did not complete');
+  expect(error.message).not.toMatch(/results|query_status/);
+});
+
 // --- Non-OK response guard (reviewer-flagged S3 improvement pass) ---
 
 test('a non-OK POST response throws a neutral error (no vendor envelope leaked)', async () => {

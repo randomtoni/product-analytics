@@ -23,6 +23,7 @@ import ts from 'typescript';
 export interface Violation {
   dimension:
     | 'declaration'
+    | 'js-bundle'
     | 'package-name'
     | 'file-name'
     | 'doc'
@@ -44,12 +45,16 @@ export const FORBIDDEN_TOKENS: readonly string[] = [
 ];
 
 // The confinement convention: a `$`-prefixed wire literal is PERMITTED only as the value
-// of a const whose exported identifier ends in `_WIRE_EVENT` or `_WIRE_KEY`. A future
-// adapter's new wire token passes this SAME gate with ZERO scan edits iff it obeys the
-// convention — this is the "scan gains no exceptions" invariant, encoded as a rule rather
+// of a const whose exported identifier ends in `_WIRE_EVENT`, `_WIRE_KEY`, or `_WIRE_KIND`.
+// A future adapter's new wire token passes this SAME gate with ZERO scan edits iff it obeys
+// the convention — this is the "scan gains no exceptions" invariant, encoded as a rule rather
 // than a per-value whitelist. A per-value whitelist is REJECTED: it would ship a vendor-token
-// registry in-repo and would need editing for every new adapter.
-const WIRE_CONST_NAME = /_WIRE_(EVENT|KEY)$/;
+// registry in-repo and would need editing for every new adapter. `_WIRE_KIND` covers the
+// node query-node discriminators (`EventsNode`, `TrendsQuery`, …) hoisted into confined
+// consts; those are NOT `$`-prefixed so this `$`-anchored AST pass never visits them — the
+// widening is for forward-consistency, and the js-bundle NAME scan is what actually certifies
+// that shipped query vocab carries no vendor token.
+const WIRE_CONST_NAME = /_WIRE_(EVENT|KEY|KIND)$/;
 
 function lowerIncludes(haystack: string, needle: string): boolean {
   return haystack.toLowerCase().includes(needle.toLowerCase());
@@ -132,6 +137,96 @@ export function scanDeclarationBundles(packagesDir: string): Violation[] {
   return violations;
 }
 
+// --- Dimension 1b: compiled JS bundle (the artifact a consumer INSTALLS) ------
+
+// Strip every comment from bundle text, leaving string literals intact. This is the crux of
+// the js-bundle dimension: a de-branding PROVENANCE comment ("De-branded from posthog's …")
+// survives tsup/esbuild into `dist/*.js` (empirically verified — esbuild keeps them), and it
+// is audit evidence, exempt by the SAME logic the declaration dimension already applies to
+// `//` comments. A live vendor NAME as a runtime VALUE must still fail. We CANNOT use a naive
+// `//…$`/`/*…*/` regex: `dist/index.js` ships string literals containing `//` (e.g. the
+// real `"http://yandex.com/bots"` bot-list value in the browser bundle) that a text regex
+// would corrupt, silently blinding the scan.
+//
+// We also can't use the raw `ts.createScanner` (context-free): a lone backtick INSIDE a `//`
+// comment (real case — the provenance comment `` `capturePageleave` boolean … (posthog's ``)
+// makes the scanner mis-open a template literal that swallows thousands of chars — comment and
+// all — as string content, silently blinding the scan. Only the full parser has the context
+// to know that backtick is comment trivia. So we PARSE with `ts.createSourceFile` and collect
+// comment ranges via `ts.getLeadingCommentRanges`/`getTrailingCommentRanges` walked over every
+// token position (these ranges are parser-accurate — never string-literal or template bytes),
+// then blank exactly those ranges. Newlines inside a comment are preserved so line numbers
+// don't shift and violation detail stays legible.
+export function stripComments(source: string): string {
+  const sf = ts.createSourceFile('bundle.js', source, ts.ScriptTarget.Latest, true);
+  const ranges: ts.CommentRange[] = [];
+
+  const collect = (pos: number): void => {
+    for (const r of ts.getLeadingCommentRanges(source, pos) ?? []) ranges.push(r);
+    for (const r of ts.getTrailingCommentRanges(source, pos) ?? []) ranges.push(r);
+  };
+
+  const visit = (node: ts.Node): void => {
+    collect(node.getFullStart());
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  collect(sf.endOfFileToken.getFullStart());
+
+  // Blank the collected comment ranges (keeping newlines). Dedup by start so leading/trailing
+  // overlaps at a boundary don't double-count; apply right-to-left so earlier offsets hold.
+  const seen = new Set<number>();
+  const unique = ranges
+    .filter((r) => (seen.has(r.pos) ? false : (seen.add(r.pos), true)))
+    .sort((a, b) => b.pos - a.pos);
+
+  let out = source;
+  for (const r of unique) {
+    const blanked = out.slice(r.pos, r.end).replace(/[^\n]/g, '');
+    out = out.slice(0, r.pos) + blanked + out.slice(r.end);
+  }
+  return out;
+}
+
+// tsup emits each package as `dist/index.js` (CJS) AND `dist/index.mjs` (ESM) — 8 files
+// across 4 packages, mirroring the dual-file declaration loop. Unlike `.d.ts`, these bundles
+// carry RUNTIME VALUES: a `kind: "HogQLQuery"` literal or a `'$pageview'` string ships here,
+// type-erased out of the declaration surface — so this is the ONLY dimension that certifies
+// what a consumer actually opens in `node_modules`. We strip comments first (provenance is
+// exempt audit evidence, per `stripComments`), then scan for the vendor NAME tokens. The
+// required wire vocabulary (`HogQLQuery`, `TrendsQuery`, `$pageview`, …) carries NO name
+// token, so legitimately-shipped confined wire values pass for free — no exemption needed.
+export function scanJsBundles(packagesDir: string): Violation[] {
+  const violations: Violation[] = [];
+  for (const pkg of readdirSync(packagesDir)) {
+    const distDir = join(packagesDir, pkg, 'dist');
+    for (const ext of ['index.js', 'index.mjs']) {
+      const file = join(distDir, ext);
+      let content: string;
+      try {
+        content = readFileSync(file, 'utf8');
+      } catch {
+        // The bundle must exist — the gate runs after `build`. A missing bundle is itself a
+        // failure (we cannot certify an artifact we cannot read).
+        violations.push({
+          dimension: 'js-bundle',
+          file,
+          detail: `js bundle missing — build must run before the scan`,
+        });
+        continue;
+      }
+      for (const tok of findForbidden(stripComments(content))) {
+        violations.push({
+          dimension: 'js-bundle',
+          file,
+          detail: `forbidden token "${tok}" as a value in published js bundle`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 // --- Dimension 2/3: package.json names + file/dir names under packages/ ------
 
 export function scanPackageAndFileNames(packagesDir: string): Violation[] {
@@ -207,7 +302,7 @@ export function scanDoc(docPath: string, content: string): Violation[] {
 // confinement check) so we use it.
 //
 // A `$`-literal PASSES only when it is the initializer value of a const whose exported
-// identifier matches `_WIRE_(EVENT|KEY)`. It FAILS anywhere else — an escaped-confinement
+// identifier matches `_WIRE_(EVENT|KEY|KIND)`. It FAILS anywhere else — an escaped-confinement
 // leak (e.g. someone inlining '$pageview' in an adapter instead of importing the const).
 export function scanWireConfinementInSource(filePath: string, source: string): Violation[] {
   const violations: Violation[] = [];
@@ -219,7 +314,7 @@ export function scanWireConfinementInSource(filePath: string, source: string): V
         violations.push({
           dimension: 'wire-confinement',
           file: filePath,
-          detail: `wire literal "${node.text}" escaped a _WIRE_(EVENT|KEY) const`,
+          detail: `wire literal "${node.text}" escaped a _WIRE_(EVENT|KEY|KIND) const`,
         });
       }
     }
@@ -284,6 +379,7 @@ export interface RepoScanPaths {
 export function scanRepo(paths: RepoScanPaths): Violation[] {
   const violations: Violation[] = [];
   violations.push(...scanDeclarationBundles(paths.packagesDir));
+  violations.push(...scanJsBundles(paths.packagesDir));
   violations.push(...scanPackageAndFileNames(paths.packagesDir));
   violations.push(...scanWireConfinement(paths.packagesDir));
 

@@ -204,6 +204,11 @@ export function createLocalStoragePlusCookieBackend(
     },
 
     set(name, value) {
+      // A null/undefined value carries no entry to mirror: fail soft (skip the cookie
+      // mirror rather than index into null) and let localStorage store the raw value.
+      if (value == null) {
+        return localStorageBackend.set(name, value);
+      }
       const stored = localStorageBackend.set(name, value);
       const entry = value as StorageEntry;
       const cookieMirror: StorageEntry = {};

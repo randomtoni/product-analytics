@@ -289,6 +289,20 @@ test('normalizeResult drops non-object entries in the columns-absent branch', ()
   expect(result.rows).toEqual([{ ok: 1 }]);
 });
 
+test('normalizeResult throws the neutral error (NOT a raw TypeError) when results is absent', () => {
+  // The wire envelope is untrusted: a completed/zero-row body missing `results` must not
+  // raw-TypeError off `.map`/`.filter` — it surfaces as the neutral did-not-complete error.
+  let thrown: unknown;
+  try {
+    normalizeResult({} as unknown as Parameters<typeof normalizeResult>[0], undefined);
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown).toBeInstanceOf(Error);
+  expect(thrown).not.toBeInstanceOf(TypeError);
+  expect((thrown as Error).message).toBe('analytics: query did not complete');
+});
+
 // --- createHttpQueryAdapterFromConfig: constructs from EXACTLY the four consumed fields ---
 
 test('createHttpQueryAdapterFromConfig builds a working adapter from queryEndpoint/personalKey/projectId/fetch', async () => {
