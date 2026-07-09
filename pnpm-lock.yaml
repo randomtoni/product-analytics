@@ -33,6 +33,43 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@20.19.43)(jsdom@26.1.0)
 
+  examples/fernly:
+    dependencies:
+      '@analytics-kit/browser':
+        specifier: workspace:*
+        version: link:../../packages/browser
+      '@analytics-kit/node':
+        specifier: workspace:*
+        version: link:../../packages/node
+      '@analytics-kit/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      analytics-kit:
+        specifier: workspace:*
+        version: link:../../packages/analytics-kit
+    devDependencies:
+      '@testing-library/dom':
+        specifier: ^10.4.0
+        version: 10.4.1
+      '@testing-library/react':
+        specifier: ^16.3.0
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.3(@types/react@19.2.17)
+      jsdom:
+        specifier: ^26.1.0
+        version: 26.1.0
+      react:
+        specifier: ^19.0.0
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.7(react@19.2.7)
+
   packages/analytics-kit: {}
 
   packages/browser:
