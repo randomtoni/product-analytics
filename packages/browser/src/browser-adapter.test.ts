@@ -1857,7 +1857,6 @@ describe('fetch REJECTION is normalized to status-0 → re-held + persisted, nev
     vi.useFakeTimers();
     const key = freshKey();
 
-    // --- load 1: fetch REJECTS (offline) → the batch is held + mirrored to disk ---
     const writer = makeAdapter({
       key,
       persistence: 'localStorage+cookie',
@@ -1873,7 +1872,6 @@ describe('fetch REJECTION is normalized to status-0 → re-held + persisted, nev
     (writer as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
     (writer as unknown as { retryQueue: { drain: () => void } }).retryQueue.drain();
 
-    // --- load 2: a FRESH adapter over the SAME storage, now delivering (200) ---
     const reloaded = makeAdapter({
       key,
       persistence: 'localStorage+cookie',
@@ -2533,8 +2531,6 @@ describe('transport selection + keepalive + unload drain (S6)', () => {
     return uuids;
   }
 
-  // --- transport preference: fetch → XHR → sendBeacon by availability ---
-
   test('the normal POST rides the fetch() SPI when fetch is available (fetch is preferred)', async () => {
     const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls: { url: string; options: NeutralFetchOptions }[] = [];
@@ -2598,8 +2594,6 @@ describe('transport selection + keepalive + unload drain (S6)', () => {
     vi.unstubAllGlobals();
   });
 
-  // --- keepalive on fetch POSTs under the ~52 KB cap (binary/DOM-fetch path) ---
-
   test('sets keepalive on the compressed fetch POST when the body is under the ~52 KB cap', async () => {
     // Drive the compressed (binary) path — the DOM-fetch path where keepalive lives.
     gzipMock.isGzipSupported.mockReturnValue(true);
@@ -2650,8 +2644,6 @@ describe('transport selection + keepalive + unload drain (S6)', () => {
 
     vi.restoreAllMocks();
   });
-
-  // --- unload drains BOTH queues via sendBeacon ---
 
   test('unload() beacon-sends the buffered batch-queue events as one data:[] envelope', () => {
     const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
@@ -2870,8 +2862,6 @@ describe('transport selection + keepalive + unload drain (S6)', () => {
 
     vi.restoreAllMocks();
   });
-
-  // --- bar A: transport selection + unload stay adapter-internal ---
 
   test('the neutral surface carries NO transport-selection / beacon vocabulary (bar A)', () => {
     const adapter: AnalyticsAdapter = makeAdapter({ key: freshKey(), ingestHost: INGEST });
@@ -3219,12 +3209,10 @@ describe('offline queue persistence — survives a reload (S9, NEW WORK)', () =>
     return (envelope.batches as Record<string, unknown>[][]).flat().map((e) => e.uuid as string);
   }
 
-  // THE headline reload test.
   test('events captured offline are written to durable storage and rehydrate + flush on a fresh adapter (reload)', async () => {
     vi.useFakeTimers();
     const key = freshKey();
 
-    // --- load 1: capture while offline (fetch fails with status 0) ---
     const writer = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
     writer.setConsentState('granted');
     mockFetchStatuses(writer, [0]); // every send is a network failure (offline)
@@ -3241,7 +3229,6 @@ describe('offline queue persistence — survives a reload (S9, NEW WORK)', () =>
     (writer as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
     (writer as unknown as { retryQueue: { drain: () => void } }).retryQueue.drain();
 
-    // --- load 2: a FRESH adapter against the SAME localStorage, now online (200) ---
     const reloaded = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
     const reloadedCalls = mockFetchStatuses(reloaded, [200]); // now delivers
 
@@ -3357,7 +3344,6 @@ describe('offline queue persistence — survives a reload (S9, NEW WORK)', () =>
     const key = freshKey();
     granted(makeAdapter({ key, persistence: 'localStorage+cookie' }));
 
-    // --- tab A: captures offline, so its undelivered batch is mirrored to disk. ---
     const tabA = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
     mockFetchStatuses(tabA, [0]);
     tabA.capture(makeEvent({ dedupeId: 'tab-A-offline' }));
@@ -3367,9 +3353,9 @@ describe('offline queue persistence — survives a reload (S9, NEW WORK)', () =>
     (tabA as unknown as { retryQueue: { drain: () => void } }).retryQueue.drain();
     expect(persistedUuids(key)).toContain('tab-A-offline');
 
-    // --- tab B: a fresh adapter over the SAME storage, EMPTY retry queue. Its first send
-    // outcome mirrors an empty snapshot → persist([]) → remove(tab B's key). Under the old
-    // shared-key design this DELETED tab A's mirrored batch (the clobber). ---
+    // Tab B has an EMPTY retry queue; its first send mirrors an empty snapshot → persist([])
+    // → remove(tab B's key). Under the old shared-key design this DELETED tab A's mirrored
+    // batch (the clobber).
     const tabB = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
     mockFetchStatuses(tabB, [200]); // tab B delivers cleanly ⇒ persists an empty snapshot
     tabB.capture(makeEvent({ dedupeId: 'tab-B-online' }));
@@ -3920,8 +3906,6 @@ describe('UTM/campaign + session-entry + initial attribution (E6-S4)', () => {
     vi.restoreAllMocks();
   });
 
-  // --- LIFESPAN 1: UTM/campaign parse (per-event, fresh when present) ---
-
   test('a URL carrying utm_*/click-id params stamps the neutral keys on the event — none $-prefixed', () => {
     const adapter = makeAdapter({ key: freshKey() });
     goTo('/landing?utm_source=news&utm_medium=email&utm_campaign=spring&gclid=g123&fbclid=f456');
@@ -3971,8 +3955,6 @@ describe('UTM/campaign + session-entry + initial attribution (E6-S4)', () => {
 
     expect(props.utm_source).toBe('consumer');
   });
-
-  // --- LIFESPAN 2: session-entry props (per-session, reset on rotation) ---
 
   test('session-entry url + referrer are captured once at session start and re-emitted on every event that session', () => {
     const adapter = makeAdapter({ key: freshKey() });
@@ -4036,8 +4018,6 @@ describe('UTM/campaign + session-entry + initial attribution (E6-S4)', () => {
     }
     expect(props).toHaveProperty('session_entry_url');
   });
-
-  // --- LIFESPAN 3: initial/set-once person props (set-once-per-identity) ---
 
   test('initial_* attribution props are written set-once on first touch', () => {
     const adapter = makeAdapter({ key: freshKey() });
@@ -4103,8 +4083,6 @@ describe('UTM/campaign + session-entry + initial attribution (E6-S4)', () => {
     // The set-once props are still present and correct (guard is behavior-preserving).
     expect(adapter.getPersistedProperty('initial_utm_source')).toBe('news');
   });
-
-  // --- bar A + E3: library-computed ⇒ trusted, NOT allowlist-gated ---
 
   test('utm/session-entry/initial keys are NOT allowlist-gated — they survive a restrictive facade allowlist (bar A + E3)', () => {
     const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
@@ -4194,8 +4172,6 @@ describe('per-module enrichment opt-out — structured `enrichment` object (E6-S
     vi.restoreAllMocks();
   });
 
-  // --- DEFAULT: all-on opt-out (no `enrichment` key) ---
-
   test('default (no enrichment key) leaves ALL five modules on — page/device/referrer/utm keys present + pageleave fires', () => {
     vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
     const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
@@ -4221,8 +4197,6 @@ describe('per-module enrichment opt-out — structured `enrichment` object (E6-S
     expect(props).toHaveProperty('browser');
     expect(props.utm_source).toBe('news');
   });
-
-  // --- PER-MODULE INDEPENDENCE: one false disables ONLY that module ---
 
   test('page:false drops ONLY the page keys — device/referrer/utm still present', () => {
     vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
@@ -4318,8 +4292,6 @@ describe('per-module enrichment opt-out — structured `enrichment` object (E6-S
     expect(pageleaveEvents(beacons)).toHaveLength(0);
   });
 
-  // --- REGRESSION: the legacy `capturePageleave` boolean still works (S2 contract) ---
-
   test('the legacy capturePageleave:false boolean still disables pageleave when enrichment.pageleave is absent', () => {
     const adapter = makeAdapter({
       key: freshKey(),
@@ -4348,8 +4320,6 @@ describe('per-module enrichment opt-out — structured `enrichment` object (E6-S
     expect(pageleaveEvents(beacons)).toHaveLength(1);
   });
 
-  // --- COMBINED: two toggles off at once, the rest on ---
-
   test('two modules off at once (page + utm) disables exactly those two — device/referrer/pageleave stay on', () => {
     vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');
     const adapter = makeAdapter({
@@ -4371,8 +4341,6 @@ describe('per-module enrichment opt-out — structured `enrichment` object (E6-S
     adapter.unload();
     expect(pageleaveEvents(beacons)).toHaveLength(1);
   });
-
-  // --- END-TO-END: the toggle threads through resolveAdapter's whitelist (bar B) ---
 
   test('the enrichment config threads from the seam through resolveAdapter into the adapter (not silently dropped)', () => {
     vi.spyOn(document, 'referrer', 'get').mockReturnValue('https://ref.example.com/x');

@@ -81,8 +81,6 @@ test('a no-props event captures with no properties bag', () => {
   expect(event.properties).toBeUndefined();
 });
 
-// --- dedupeId: mint vs caller-supplied ---
-
 test('no caller dedupeId → NeutralEvent.dedupeId is populated (minted)', () => {
   const { client, sink } = keyedClient();
 
@@ -138,8 +136,6 @@ test('a no-props event with no options still mints a dedupeId', () => {
   expect(event.dedupeId.length).toBeGreaterThan(0);
 });
 
-// --- distinctId required (runtime is enforced by the type; assert it lands verbatim) ---
-
 test('distinctId is the exact first-arg value on the minted event', () => {
   const { client, sink } = keyedClient();
 
@@ -149,8 +145,6 @@ test('distinctId is the exact first-arg value on the minted event', () => {
   const [event] = sink.delivered;
   expect(event.distinctId).toBe('acct-server-actor');
 });
-
-// --- server-side allowlist gate (bar A) ---
 
 // The off-list bag is assembled behind a widening so the runtime guard — not the compiler —
 // is what would reject it if a guard were active (the compile-time rejection is pinned in
@@ -232,8 +226,6 @@ test('node-vs-seam parity: { taxonomy, no allowlist } is ungated on both — off
   expect(sink.delivered[0].properties).toEqual({ amount: 1, rogue: 'x' });
 });
 
-// --- browser-only NeutralEvent fields stay unset ---
-
 test('server-minted NeutralEvent leaves isPageView/sessionId/enrichmentProfile unset', () => {
   const { client, sink } = keyedClient();
 
@@ -245,8 +237,6 @@ test('server-minted NeutralEvent leaves isPageView/sessionId/enrichmentProfile u
   expect(event.sessionId).toBeUndefined();
   expect(event.enrichmentProfile).toBeUndefined();
 });
-
-// --- config threads the queue knobs into the client ---
 
 test('config.flushAt threads into the queue: a flushAt-sized burst delivers, sub-flushAt does not', () => {
   const sink = collectingSend();
@@ -292,8 +282,6 @@ test('config.maxBatchSize threads into the queue: a deep buffer slices per deliv
 
   expect(sink.batches.map((b) => b.length)).toEqual([2, 2, 1]);
 });
-
-// --- setTraits / setGroupTraits: mint through the same queue + wire ---
 
 test('setTraits mints a set-traits event that rides the same queue (delivered gzipped-batch path)', () => {
   const { client, sink } = keyedClient();
@@ -513,8 +501,6 @@ test('traits and captures ride the SAME queue and batch together', () => {
   ]);
 });
 
-// --- flush(): force-drain bypassing the trigger, resolve once POSTs settle ---
-
 test('flush() force-drains the buffer before the interval elapses and resolves', async () => {
   const sink = collectingSend();
   // flushAt high + interval long: nothing would ship on its own before flush().
@@ -572,8 +558,6 @@ test('flush() leaves the client usable — a later capture still ships', async (
   await client.flush();
   expect(sink.delivered).toHaveLength(2);
 });
-
-// --- shutdown(): drain-until-empty, catch mid-drain enqueue, quiesce ---
 
 test('shutdown() drains the buffer and resolves', async () => {
   const sink = collectingSend();
@@ -640,8 +624,6 @@ test('shutdown() with an empty buffer resolves immediately (nothing to drain)', 
   expect(sink.delivered).toHaveLength(0);
 });
 
-// --- shutdown() timeout: deterministic settle, not hung ---
-
 test('shutdown() settles deterministically on timeout when a delivery hangs — process not hung', async () => {
   const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   // A delivery that never resolves: without the timeout race, shutdown would hang forever.
@@ -692,8 +674,6 @@ test('shutdownTimeoutMs is configurable — the drain window honors the override
   expect(errSpy).toHaveBeenCalled();
 });
 
-// --- post-shutdown quiesce: timer cleared, later capture inert (no re-arm) ---
-
 test('after shutdown() a later capture is inert — nothing ships, no delivery timer re-arms', async () => {
   const sink = collectingSend();
   const client = new NodeAnalyticsClient(
@@ -733,8 +713,6 @@ test('a second shutdown() is a no-op and resolves', async () => {
   await client.shutdown();
   await expect(client.shutdown()).resolves.toBeUndefined();
 });
-
-// --- zero browser coupling ---
 
 test('node source imports nothing from @analytics-kit/browser', async () => {
   const { readFileSync, readdirSync } = await import('node:fs');

@@ -96,8 +96,6 @@ test('query-client taxonomy-typing compile-time pins are present (validated by t
   ]).toHaveLength(8);
 });
 
-// --- own keyof pin (does NOT touch the frozen-15 AnalyticsProvider pin nor the NodeAnalytics pin) ---
-
 test('AnalyticsQueryClient exposes exactly its own five query members, each returning Promise<QueryResult>', () => {
   expectTypeOf<keyof AnalyticsQueryClient<never>>().toEqualTypeOf<
     'funnel' | 'retention' | 'trend' | 'uniqueCount' | 'rawQuery'

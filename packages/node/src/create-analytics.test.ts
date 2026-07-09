@@ -24,8 +24,6 @@ test('a keyed config yields the real client', () => {
   expect(client).toBeInstanceOf(NodeAnalyticsClient);
 });
 
-// --- unkeyed ⇒ whole-stack silent no-op (bar B) ---
-
 test('an unkeyed config yields the NodeNoop null-object client', () => {
   const client = createAnalytics({ taxonomy });
   expect(client).toBeInstanceOf(NodeNoop);
@@ -68,8 +66,6 @@ test('unkeyed: an off-list prop does NOT throw — the no-op accepts every call 
     })
   ).not.toThrow();
 });
-
-// --- keyed-but-no-ingestHost misconfig warning (batches would silently drop) ---
 
 test('keyed with no ingestHost warns once at construction (misconfig would drop every batch)', () => {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

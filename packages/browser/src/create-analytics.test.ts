@@ -144,7 +144,6 @@ test('omitting persistence yields the durable default (localStorage+cookie survi
   expect(reloaded.getPersistedProperty('device_id')).toBe('durable');
 });
 
-// --- E6-S6: pluggable country source (via the facade register() gate) ---
 describe('pluggable country source — routed through the facade register() gate (E6-S6)', () => {
   let keySeq = 0;
   function freshKey(): string {
@@ -297,8 +296,6 @@ describe('pluggable country source — routed through the facade register() gate
     expect(registerSpy).not.toHaveBeenCalled();
   });
 
-  // --- E3 gate: the injected country VALUE is consumer-supplied ⇒ allowlist-gated ---
-
   test('an off-list `country` value is REJECTED loudly (throw) under a restrictive allowlist WITHOUT country', () => {
     // The allowlist omits `country`; onViolation defaults to 'throw'. The register() gate
     // fires exactly as it would for an off-list consumer track prop.
@@ -350,7 +347,6 @@ describe('pluggable country source — routed through the facade register() gate
   });
 });
 
-// --- E6-S6: disableGeoip threads to the adapter as a [WIRE] toggle (NOT gated) ---
 describe('disableGeoip threads through resolveAdapter → BrowserAdapterOptions (E6-S6)', () => {
   test('enrichment.country.disableGeoip threads to a resolved BrowserAdapter (config only, bar B)', () => {
     const adapter = resolveAdapter({
@@ -387,7 +383,6 @@ describe('disableGeoip threads through resolveAdapter → BrowserAdapterOptions 
   });
 });
 
-// --- E6-S8: per-context capture profiles — named contexts + scoped context() view ---
 describe('per-context capture profiles — named contexts applied by config only (E6-S8)', () => {
   let keySeq = 0;
   function freshKey(): string {
@@ -583,7 +578,6 @@ describe('per-context capture profiles — named contexts applied by config only
   });
 });
 
-// --- Defect #11: a super-prop registered while opted-out survives opt-in + reload ---
 // Generalizes to ANY consumer register() while opted-out, not just the config country prop:
 // the facade routes register() to the LIVE adapter (like reset), so under pending the value
 // lands in the memory-backed store — retained, never persisted/sent — and promoteToDurable

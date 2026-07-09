@@ -811,8 +811,6 @@ test('AnalyticsProvider method signatures are pinned (compile-time)', () => {
   expectTypeOf<AnalyticsProvider['shutdown']>().returns.toEqualTypeOf<Promise<void>>();
 });
 
-// --- E6-S8: per-context capture profiles — RootAnalytics + ScopedAnalytics pins ---
-
 test('RootAnalytics exposes the frozen fifteen PLUS context — the widened return type (E6-S8)', () => {
   // The new pin: context() rides RootAnalytics, NOT the frozen AnalyticsProvider. The
   // 15-member `keyof AnalyticsProvider` pin above must stay untouched — this is a SEPARATE

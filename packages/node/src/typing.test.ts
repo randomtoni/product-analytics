@@ -99,8 +99,6 @@ test('taxonomy-typing compile-time pins are present (validated by tsc, not execu
   ]).toHaveLength(10);
 });
 
-// --- separate NodeAnalytics surface pin (does NOT touch the frozen-15 AnalyticsProvider) ---
-
 test('NodeAnalytics exposes exactly its own narrow server surface', () => {
   expectTypeOf<keyof NodeAnalytics<never>>().toEqualTypeOf<
     'capture' | 'setTraits' | 'setGroupTraits' | 'flush' | 'shutdown'

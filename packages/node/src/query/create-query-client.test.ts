@@ -16,8 +16,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// --- AC1: unkeyed ⇒ empty QueryResult from every method + zero network (bar B) ---
-
 test('createQueryClient({}) yields the QueryNoop null-object client', () => {
   const client = createQueryClient({});
   expect(client).toBeInstanceOf(QueryNoop);
@@ -60,8 +58,6 @@ test('unkeyed: never touches the injected fetch — zero invocations (bar B)', a
   expect(fetchSpy).not.toHaveBeenCalled();
 });
 
-// --- AC2: distinct config surface — query fields never alias the ingest key/host ---
-
 test('distinct config surface: a query config carrying only personalKey is fully keyed for query', () => {
   // The query factory keys off `personalKey`, NOT the ingest `key`. A query config with a
   // personalKey (and no ingest `key` field even present) is keyed for query purposes; the
@@ -94,8 +90,6 @@ test('distinct config surface: QueryClientConfig has no ingest key/host fields o
   void _withIngestHost;
   expect(true).toBe(true);
 });
-
-// --- AC3: keyed-but-endpointless ⇒ exactly one console.warn + safe no-op ---
 
 test('keyed with no queryEndpoint warns exactly once and returns a safe no-op', () => {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -147,8 +141,6 @@ test('keyed + endpointed: a query POSTs to the endpoint via the injected fetch (
   expect(init.headers['Authorization']).toBe('Bearer pk_read');
 });
 
-// --- projectId-absent warning (reviewer-flagged S3 improvement pass) ---
-
 test('keyed + endpointed but NO projectId warns once (malformed URL) yet still returns the real adapter', () => {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const client = createQueryClient({ personalKey: 'pk', queryEndpoint: 'https://query.example', taxonomy });
@@ -182,8 +174,6 @@ test('the unkeyed no-op path does not warn (nothing is ever queried)', () => {
   expect(warn).not.toHaveBeenCalled();
 });
 
-// --- AC4: taxonomy overload return types; bare widens to DefaultTaxonomyShape ---
-
 test('taxonomy overload returns AnalyticsQueryClient<ShapeOf<T>>; bare widens to DefaultTaxonomyShape', () => {
   const typed = createQueryClient({ taxonomy });
   expectTypeOf(typed).toEqualTypeOf<AnalyticsQueryClient<ShapeOf<(typeof taxonomy)['decl']>>>();
@@ -200,8 +190,6 @@ test('taxonomy overload returns AnalyticsQueryClient<ShapeOf<T>>; bare widens to
 
   expect(typeof typed.funnel).toBe('function');
 });
-
-// --- AC5: QueryNoop implements AnalyticsQueryClient<TX> structurally + never throws ---
 
 test('QueryNoop structurally satisfies AnalyticsQueryClient and never throws', async () => {
   const noop: AnalyticsQueryClient<DefaultTaxonomyShape> = new QueryNoop<DefaultTaxonomyShape>();

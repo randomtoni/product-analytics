@@ -13,7 +13,6 @@ type TX = ShapeOf<(typeof taxonomy)['decl']>;
 
 const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implemented';
 
-// --- The bar-A proof: a SECOND adapter satisfies AnalyticsQueryClient<TX> unchanged. ---
 // The `implements AnalyticsQueryClient<TX>` clause on the class compiles (checked by tsc);
 // these assignability assertions pin that a WarehouseQueryAdapter instance IS a valid
 // AnalyticsQueryClient — with zero change to the S1 interface (two adapters, one interface).
@@ -39,7 +38,6 @@ test('createWarehouseQueryAdapter returns something satisfying AnalyticsQueryCli
   expect(typeof client.rawQuery).toBe('function');
 });
 
-// --- Each method is a typed stub that does not compute: throws the neutral error. ---
 // Called through the AnalyticsQueryClient<TX> interface — the bar-A surface a consumer sees.
 
 test('every method rejects with the neutral not-implemented error (no vendor leak, never computes)', async () => {

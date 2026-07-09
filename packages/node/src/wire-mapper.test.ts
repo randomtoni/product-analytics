@@ -71,7 +71,6 @@ test('browser-only NeutralEvent fields never leak onto the wire (plain pass-thro
   expect(serialized).not.toContain('geoip');
 });
 
-// --- trait-event wire mapping (node's nested $set convention, NOT the browser lift) ---
 // The trait/group normalization is recognized by the STRUCTURAL `internalKind` discriminant
 // the trait verbs mint — NOT the event NAME. The wire event NAME is still SET_TRAITS_EVENT etc.
 

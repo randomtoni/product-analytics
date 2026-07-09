@@ -2,10 +2,6 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, basename, sep } from 'node:path';
 import ts from 'typescript';
 
-// The vendor/product-name neutrality gate (E11-S5). The whole reason the library
-// exists is that no vendor name leaks into its consumer-observable SURFACE, so this
-// is a durable, re-runnable, exit-nonzero check — NOT a manual grep.
-//
 // Why NOT a raw `grep` over `packages/**` (architect-locked): a raw text grep is the
 // WRONG tool and would false-fail on three legitimate categories that live in the tree
 // by design —
@@ -64,8 +60,6 @@ function findForbidden(text: string): string[] {
   return FORBIDDEN_TOKENS.filter((tok) => lowerIncludes(text, tok));
 }
 
-// --- File-set helpers -------------------------------------------------------
-
 function walk(dir: string, predicate: (path: string) => boolean): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
@@ -97,8 +91,6 @@ export function isTestToolingFile(path: string): boolean {
     name.endsWith('.test-helper.ts')
   );
 }
-
-// --- Dimension 1: declaration bundle (public identifier/type surface) --------
 
 // tsup rolls each package up into ONE declaration bundle: `dist/index.d.ts` AND its
 // `dist/index.d.mts` sibling (8 files total across 4 packages). There are NO per-source
@@ -136,8 +128,6 @@ export function scanDeclarationBundles(packagesDir: string): Violation[] {
   }
   return violations;
 }
-
-// --- Dimension 1b: compiled JS bundle (the artifact a consumer INSTALLS) ------
 
 // Strip every comment from bundle text, leaving string literals intact. This is the crux of
 // the js-bundle dimension: a de-branding PROVENANCE comment ("De-branded from posthog's …")
@@ -227,8 +217,6 @@ export function scanJsBundles(packagesDir: string): Violation[] {
   return violations;
 }
 
-// --- Dimension 2/3: package.json names + file/dir names under packages/ ------
-
 export function scanPackageAndFileNames(packagesDir: string): Violation[] {
   const violations: Violation[] = [];
   for (const pkg of readdirSync(packagesDir)) {
@@ -264,8 +252,6 @@ export function scanPackageAndFileNames(packagesDir: string): Violation[] {
   return violations;
 }
 
-// --- Dimension 4: shipped docs (root README + S1 matrix + S2 guide) ----------
-
 // Docs have NO internal exemption: EVERY forbidden token including `fernly` fails in prose.
 // The ONE allowed doc form of `fernly` is inside an `examples/fernly` PATH segment (S1/S2
 // reference the example only as a filesystem path/link). We encode that carve-out precisely
@@ -290,8 +276,6 @@ export function scanDoc(docPath: string, content: string): Violation[] {
   }
   return violations;
 }
-
-// --- Dimension 5: `$`-wire-literal confinement (AST over reachable src) ------
 
 // Classify `$`-prefixed STRING LITERALS in one src file. Uses the TypeScript compiler AST
 // so classification is literal-scoped, not text-scoped: a `$`-token inside a `//` comment
@@ -358,8 +342,6 @@ export function scanWireConfinement(packagesDir: string): Violation[] {
 // citations the epic already exempts. They never reach `dist` (so they are absent from the
 // declaration dimension) and they are not docs, so this scan does NOT read non-doc `//`
 // comments in `src` for the `posthog` token at all.
-
-// --- The gate: run every dimension over the real repo tree -------------------
 
 export interface RepoScanPaths {
   repoRoot: string;

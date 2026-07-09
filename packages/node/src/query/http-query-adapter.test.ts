@@ -57,8 +57,6 @@ const SYNC_ENVELOPE = {
   is_cached: true,
 };
 
-// --- Transport: URL / method / auth header (every primitive) ---
-
 test('POSTs to {queryEndpoint}/api/projects/{projectId}/query/ with Bearer auth + json content-type', async () => {
   const { client, calls } = adapter(SYNC_ENVELOPE);
 
@@ -92,8 +90,6 @@ test('never synthesizes a vendor host — the URL is exactly {config host}{path}
   expect(calls[0].url).not.toMatch(/posthog/i);
   expect(calls[0].url.startsWith('https://self-hosted.internal/')).toBe(true);
 });
-
-// --- Per-primitive kind-discriminated body (via injected mock fetch, no real network) ---
 
 test('trend → { query: { kind: TrendsQuery, ... } } sent DIRECTLY (not wrapped in InsightVizNode)', async () => {
   const { client, calls } = adapter(SYNC_ENVELOPE);
@@ -189,8 +185,6 @@ test('breakdown, when supplied, becomes an event breakdownFilter; omitted otherw
   expect('breakdownFilter' in b2.query && b2.query.breakdownFilter !== undefined).toBe(false);
 });
 
-// --- Envelope → QueryResult normalization ---
-
 test('sync envelope normalizes to QueryResult: rows keyed by column, columns ordered, fromCache from is_cached', async () => {
   const { client } = adapter(SYNC_ENVELOPE);
 
@@ -254,8 +248,6 @@ test('the raw vendor envelope shape (results/columns/types/hogql/is_cached/kind)
   expect(Object.keys(result).sort()).toEqual(['columns', 'fromCache', 'generatedAt', 'rows']);
 });
 
-// --- normalizeResult helper (the shared normalizer S4 reuses on query_status.results) ---
-
 test('normalizeResult zips cell-array rows when columns are present', () => {
   const result = normalizeResult(
     { results: [[1, 2]], columns: ['a', 'b'], types: ['UInt64', 'UInt64'] },
@@ -303,8 +295,6 @@ test('normalizeResult throws the neutral error (NOT a raw TypeError) when result
   expect((thrown as Error).message).toBe('analytics: query did not complete');
 });
 
-// --- createHttpQueryAdapterFromConfig: constructs from EXACTLY the four consumed fields ---
-
 test('createHttpQueryAdapterFromConfig builds a working adapter from queryEndpoint/personalKey/projectId/fetch', async () => {
   const { fetchImpl, calls } = mockFetch(SYNC_ENVELOPE);
   const client = createHttpQueryAdapterFromConfig<DefaultTaxonomyShape>({
@@ -332,8 +322,6 @@ test('createHttpQueryAdapterFromConfig defaults an absent projectId to the empty
 
   expect(calls[0].url).toBe('https://query.example/api/projects//query/');
 });
-
-// --- Bar A: this adapter and a second stub both satisfy AnalyticsQueryClient<TX> ---
 
 test('bar A: HttpQueryAdapter is assignable to AnalyticsQueryClient<TX> (a second backend swaps in with zero consumer change)', () => {
   const { fetchImpl } = mockFetch(SYNC_ENVELOPE);

@@ -8,7 +8,7 @@ const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implement
 // throws a neutral not-implemented error. Its reason to exist is the bar-A proof: a second
 // adapter satisfies the same neutral interface as `HttpQueryAdapter`, unchanged.
 //
-// --- Intended per-method SQL mapping (the fill-in seat) ---
+// Intended per-method SQL mapping (the fill-in seat):
 // The first real fill-in emits Postgres SQL over the taxonomy-generated typed VIEW (safe-cast
 // projections over the JSONB base — never raw JSONB, never DuckDB-first). Each method targets
 // the view's columns generically; NO consumer event/domain name is baked into any SQL here.

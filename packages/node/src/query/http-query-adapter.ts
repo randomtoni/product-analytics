@@ -11,7 +11,6 @@ import type {
   UniqueCountSpec,
 } from './query-client';
 
-// --- Adapter-internal wire vocabulary (NON-EXPORTED). ---
 // Everything below models the backend's HTTP query wire and NEVER leaves this module:
 // the `kind` discriminators, the field casing quirks, the `math` enum, and the response
 // envelope are all confined here. The exported surface (`AnalyticsQueryClient`, the spec

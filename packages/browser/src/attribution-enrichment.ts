@@ -1,16 +1,5 @@
 import type { NeutralProperties } from 'analytics-kit';
 
-// Campaign / attribution enrichment: the three DISTINCT lifespans of acquisition data,
-// as pure derivations from the current URL + referrer. The stateful pieces (which
-// session an entry-prop was captured under; whether an initial-prop has been written)
-// live in the adapter — this module only derives, it holds no state.
-//
-// - parseCampaignParams(): per-EVENT — fresh utm/click-id keys from the live URL query.
-// - buildEntryInfo() / derivePersonProps(): the raw {referrer, url} an entry-prop / initial-
-//   prop is derived from, and the neutral prop bag derived from a stored {referrer, url}.
-// - deriveSessionEntryProps(): per-SESSION — the stored entry {referrer, url} re-prefixed.
-// - deriveInitialProps(): set-once-per-IDENTITY — the same, re-prefixed `initial_*`.
-//
 // De-branded from posthog-js `event-utils.ts` (getCampaignParams / getPersonInfo /
 // getPersonPropsFromInfo / getInitialPersonPropsFromInfo) + `session-props.ts`
 // (getSessionProps). Every key here is NEUTRAL (no `$`-prefix) and library-computed ⇒
@@ -88,10 +77,8 @@ function hostOf(url: string): string | undefined {
   }
 }
 
-// Read one query param off a URL. De-branded from posthog's getQueryParam
-// (request-utils.ts:44) — split off the hash, take the first `?`-delimited query, match
-// the key, decode. Returns undefined for an absent (or valueless) param, so an absent
-// param emits NO key rather than an empty string.
+// De-branded from posthog's getQueryParam (request-utils.ts:44). Returns undefined for an
+// absent (or valueless) param, so an absent param emits NO key rather than an empty string.
 function getQueryParam(url: string, param: string): string | undefined {
   const withoutHash = url.split('#')[0] ?? '';
   const query = withoutHash.split(/\?(.*)/)[1] ?? '';

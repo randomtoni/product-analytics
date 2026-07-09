@@ -83,8 +83,6 @@ const COMPLETE = {
   },
 };
 
-// --- AC1: POST-pending → GET-poll-complete → normalized QueryResult ---
-
 test('async: POST returns pending {query_status:{complete:false}} → polls to completion → normalized QueryResult', async () => {
   const { client, calls } = adapter([PENDING, COMPLETE]);
 
@@ -150,8 +148,6 @@ test('async: multiple pending poll responses before completion — loop keeps po
   expect(result.rows).toHaveLength(2);
 });
 
-// --- AC1/AC3: sync path (S3) still works, and is indistinguishable from async ---
-
 test('sync: an inline envelope (no query_status) takes the sync branch unchanged — S3 regression', async () => {
   const syncEnvelope = {
     ok: true,
@@ -193,8 +189,6 @@ test('sync and async return the SAME QueryResult shape — a caller cannot tell 
   expect(fromSync.columns).toEqual(fromAsync.columns);
 });
 
-// --- AC2: bounded poll — never hangs, gives up with a neutral error ---
-
 test('async: a query that NEVER completes terminates (bounded) with a neutral error — no vendor/query_status leak', async () => {
   // Every poll stays pending forever.
   const { client, calls } = adapter([{ json: { query_status: { id: 'qs-stuck', complete: false } } }]);
@@ -234,8 +228,6 @@ test('async: the poll loop is drivable under FAKE timers with the real setTimeou
   expect(result.rows).toHaveLength(2);
 });
 
-// --- AC2: query_status.error surfaces neutrally ---
-
 test('async: a query_status.error completion surfaces as a neutral error (no envelope leak)', async () => {
   const failed = {
     json: { query_status: { id: 'qs-err', complete: true, error: true, error_message: 'timeout in clickhouse' } },
@@ -258,8 +250,6 @@ test('async: a 202 with no inline status body gives up neutrally (nothing to pol
 
   await expect(client.rawQuery('SELECT 1')).rejects.toThrow('query did not complete');
 });
-
-// --- Malformed wire JSON: unguarded casts must NOT leak a raw TypeError ---
 
 test('async: a 200 poll body missing query_status surfaces the neutral error (NOT a raw TypeError)', async () => {
   // POST accepts async; the poll then returns a 200 whose body has NO query_status key —
@@ -292,8 +282,6 @@ test('async: a completed status envelope missing results surfaces the neutral er
   expect(error.message).not.toMatch(/results|query_status/);
 });
 
-// --- Non-OK response guard (reviewer-flagged S3 improvement pass) ---
-
 test('a non-OK POST response throws a neutral error (no vendor envelope leaked)', async () => {
   const { client } = adapter([{ ok: false, status: 500, json: { detail: 'internal', type: 'server_error' } }]);
 
@@ -308,8 +296,6 @@ test('a non-OK POLL response throws a neutral error', async () => {
 
   await expect(client.rawQuery('SELECT 1')).rejects.toThrow('analytics: query request failed');
 });
-
-// --- AC4 / Bar A: no query_status / vendor field in the returned value ---
 
 test('bar A: the returned value carries ONLY neutral keys — no query_status / results / is_cached leak', async () => {
   const { client } = adapter([PENDING, COMPLETE]);
