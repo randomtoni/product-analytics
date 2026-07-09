@@ -19,7 +19,7 @@ Gives the query client its own server-only config surface (endpoint + personal k
 ### In
 
 - A `QueryClientConfig` type in `@analytics-kit/node` (e.g. `query/config.ts`):
-  - `queryEndpoint?: string` — the config-supplied query host/URL (no vendor default).
+  - `queryEndpoint?: string` — the config-supplied query **host** (no vendor default). The adapter appends the adapter-internal `/api/projects/{projectId}/query/` path (S3); the consumer supplies the host only, not the full path — mirrors how `ingestHost` is a host and `ingestPath` the adapter-internal path in `NodeAnalyticsConfig`.
   - `personalKey?: string` — the server personal/read key (Bearer auth), distinct from the ingest `key`.
   - `projectId?: string` — project scope for the query path.
   - `taxonomy?: Taxonomy<TaxonomyDecl>` — so specs type-check (same pattern as `NodeAnalyticsConfig`).
@@ -51,6 +51,11 @@ Gives the query client its own server-only config surface (endpoint + personal k
 - **Auth/config is a distinct, server-only surface.** Query uses a **server personal key** with a config-supplied endpoint + project scope, kept separate from the ingest write key/host (E5/E7). Personal-key handling is server-side only — never shipped to the browser, keys never in client code. Reusing the ingest write key for queries was rejected (wrong scope, unsafe). — architect (2026-07-07, epic Notes)
 - **Unkeyed ⇒ silent no-op/stub.** Endpoint, project scope, and personal key are all consumer-supplied; the client is server-side only — never in the browser bundle. — epic Success criteria.
 - **Factory + null-object pattern.** Mirror `createAnalytics` (`packages/node/src/create-analytics.ts`) and `NodeNoop` (`packages/node/src/node-noop.ts`) exactly: overloaded factory, `personalKey === undefined ⇒ new QueryNoop()`, structured keyed branch. The no-op implements the narrow `AnalyticsQueryClient` (shape A standalone client), NOT the seam's wider `AnalyticsAdapter` — same reasoning as `NodeNoop`.
+- **Exact overload signature (mirror `createAnalytics`'s at create-analytics.ts:7-13).** Three declarations, same shape:
+  - `export function createQueryClient<const T extends TaxonomyDecl>(config: QueryClientConfig & { taxonomy: Taxonomy<T> }): AnalyticsQueryClient<ShapeOf<T>>;`
+  - `export function createQueryClient(config: QueryClientConfig): AnalyticsQueryClient<DefaultTaxonomyShape>;`
+  - implementation signature returns `AnalyticsQueryClient<DefaultTaxonomyShape>` and internally returns the `TX`-erased `QueryNoop`/adapter (the `createAnalytics` impl casts through `DefaultTaxonomyShape` — follow the same erasure, no per-call generic on the impl body). Import `Taxonomy`, `TaxonomyDecl`, `ShapeOf`, `DefaultTaxonomyShape` from `analytics-kit` (all already exported from its `index.ts`).
+- **`taxonomy?: Taxonomy<TaxonomyDecl>` on the config** matches `NodeAnalyticsConfig`'s field exactly (`config.ts:11`). The generic overload keys off `T` from the `{ taxonomy: Taxonomy<T> }` intersection, not off the config field's widened type — identical to how `createAnalytics` recovers `T`.
 - **No-op returns an empty `QueryResult`, not a throw or `undefined`.** A snapshot job calling a no-op client in an unkeyed env should get a well-formed zero-row snapshot (columns `[]`, rows `[]`, `generatedAt` set), not an exception — matches the "no-op when unkeyed" posture (a disabled analytics env produces empty data, not errors).
 - **Reuse `FetchLike`** already exported from `packages/node/src/config.ts` (`typeof fetch`) — the query adapter (S3) reads only `.status`/`.json()`/`.text()` off the response, same minimal contract as node capture's `NodeFetch`.
 - **Keyed branch is deliberately a fill-in for S3.** Do not build the HTTP adapter here; leave the keyed path returning the no-op (or a clearly-marked placeholder) so S3 slots the real adapter in without reshaping the factory. — PM (sequencing).
