@@ -51,3 +51,18 @@ The `@analytics-kit/react` package is a bare stub (`index.ts` = `version`, `inde
 - **Frozen-15 discipline** carries into S2–S4, not here: the react binding EXPOSES the facade, adds no facade verbs (`keyof AnalyticsProvider` pinned at 15 in `analytics-kit`'s `analytics-provider.test.ts`).
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, for S2): the "tsup React-externalized" claim is design-correct but vacuous today (the `src/index.ts` entry exports only `version`, imports no React) — S2 should re-confirm `grep react dist/` is empty once a real component is exported.
+- > Reviewer suggestion (2026-07-08, later): consider `peerDependenciesMeta` for optional/dev-only peers (posthog-js marks `@types/react` optional) when the binding ships — avoids spurious consumer peer-warnings on partial setups. Fine as plain devDeps for infra.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08. First E9 story — the React/JSX build + test harness (foundation for S2–S4).
+
+- **Files changed (react):** `package.json` (+`@analytics-kit/browser` `workspace:*` PEER [inward runtime construction path, single shared client] + React/test devDeps: `react`/`react-dom` `^19` + `@testing-library/react ^16` + `@testing-library/dom ^10` + `jsdom ^26` + `@types/react(-dom) ^19` + `@analytics-kit/browser` dev-mirror; **KEPT `analytics-kit` regular dep** = the TYPE surface incl. taxonomy `ShapeOf`/`TaxonomyShape`/`DefaultTaxonomyShape` which browser does NOT re-export), `tsconfig.json` (`jsx:"react-jsx"` + `lib:["ES2022","DOM"]`), `vitest.config.ts` (`environment:'jsdom'`), `pnpm-lock.yaml`
+- **Files added (react):** `src/smoke.tsx` (throwaway JSX component, no `import React`) + `src/smoke.test.tsx` (`@testing-library/react` render+mount assertion under jsdom)
+- **New public API:** none — `src/index.ts` still exports `version` (S2–S4 add real exports). Zero vendor refs in name/config/filenames.
+- **The two-deps-two-reasons split (load-bearing, reviewer-verified necessary):** seam `analytics-kit` (regular dep) = neutral TYPE contract the hooks name; `@analytics-kit/browser` (peer) = runtime `createAnalytics` factory. Browser genuinely can't supply taxonomy types (verified against `index.ts` exports) → a future non-browser binding reuses the same seam-typed hooks. React is a PEER (`>=18`), NOT a hard runtime dep. React 19 chosen (matches workspace-resolved react, avoids a 2nd copy).
+- **Tests added:** react +1 (smoke render under jsdom; `version` export test retained) → 2 files/2 tests; all 4 gates exit 0 (typecheck explicitly verified; build emits ESM+CJS+`.d.ts`; tsup probe confirmed React externalized, not inlined)
+- **Commit:** `E9-S1-react-package-scaffold — @analytics-kit/react package scaffold + React test infra` on `core-cycle`
+- **Reviewer notes:** 0 critical, 2 forward suggestions (S2 re-confirm React-externalized; peerDependenciesMeta later)
+- **Cross-story seams exposed:** the jsx(`react-jsx`)+jsdom+`@testing-library/react` harness is live — S2's `.tsx` provider + render tests drop straight in. **S2 config-branch:** `import { createAnalytics } from '@analytics-kit/browser'` (peer; devDep resolves it in tests). **S3 `useAnalytics<TX>`:** import types from `analytics-kit` (seam) — `RootAnalytics`/`AnalyticsConfig`/`ScopedAnalytics` + taxonomy `ShapeOf`/`TaxonomyShape`/`DefaultTaxonomyShape`. Naming: seam interface is `AnalyticsProvider` (pinned) → React component is `AnalyticsClientProvider` (S2, avoids the clash).
