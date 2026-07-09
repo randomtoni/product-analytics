@@ -307,6 +307,81 @@ binding — all from its own code. The runnable proof of this exact path is the 
 usage against the shipped surface, and touches nothing under `packages/**`. Read it as the worked,
 end-to-end reference for everything in this section.
 
+## Bar A: provider-swap = one adapter, zero consumer change
+
+The second acceptance bar is: **swapping the backend means writing ONE adapter and changing NO
+consumer code.** This section is the audit — the finite SPI a new backend fills, a concrete
+re-runnable swap that proves zero consumer change, and the shipped precedent that a second adapter
+already drops in behind the seam unchanged.
+
+### The client SPI a new adapter fills
+
+A new client backend is a single class satisfying the `AnalyticsAdapter` interface
+(`packages/analytics-kit/src/adapter.ts`). It is a **bounded, finite surface** — implement these
+**18 members**, and nothing else in the library changes:
+
+| # | Member | Role |
+|---|--------|------|
+| 1 | `capture(event)` | Enqueue a neutral event for delivery. |
+| 2 | `identify(distinctId, traits?, traitsOnce?)` | Bind the actor and set/first-set traits. |
+| 3 | `register(props, options?)` | Store super-properties merged into every event; `once` keeps the first value. |
+| 4 | `unregister(key)` | Remove one super-property key. |
+| 5 | `reset(options?)` | Re-anonymize on logout; keep the device id unless re-minted. |
+| 6 | `getDistinctId()` | Cheap synchronous read of the current distinct id. |
+| 7 | `group(type, key, traits?)` | Associate the actor with a group and set its traits. |
+| 8 | `alias(previousId, distinctId)` | Link two ids as the same actor. |
+| 9 | `flush()` | Drain any queued events; resolves when quiesced. |
+| 10 | `shutdown()` | Flush and release resources. |
+| 11 | `getConsentState()` | Read the current consent posture. |
+| 12 | `setConsentState(state)` | Set the consent posture. |
+| 13 | `fetch(url, options)` | The transport primitive — neutral request/response shape. |
+| 14 | `getPersistedProperty(key)` | Read one persisted value. |
+| 15 | `setPersistedProperty(key, value)` | Write/clear one persisted value. |
+| 16 | `getLibraryId()` | Identify the emitting library on the wire. |
+| 17 | `getLibraryVersion()` | The library version on the wire. |
+| 18 | `getCustomUserAgent()` | Optional user-agent override for outbound requests. |
+
+The consumer facade (`AnalyticsProvider` / `RootAnalytics`), the configuration surface
+(`AnalyticsConfig`), the typed taxonomy, the allowlist, and every line of consumer code stay
+**untouched**. A new backend is genuinely fill-in-the-blanks: satisfy the 18 members, pass the
+same object into `createAnalytics(config, adapter, deps)`, done. (An on-paper second adapter — say a
+self-hosted client — is exactly this: one class implementing the 18 members, translating each neutral
+primitive to its own wire, and nothing outside the class moves.)
+
+### The swap, demonstrated re-runnably
+
+The concrete proof is a re-runnable check: the **same consumer call site** works across two adapters
+with zero consumer edits. The consumer under `examples/fernly` selects its backend by config through
+one seam — an unkeyed setup gets the no-op adapter, a keyed setup gets a recording adapter — and both
+flow through the identical `createAnalytics(config, adapter, deps)` call. The swap audit asserts that:
+
+- both adapters satisfy the 18-member `AnalyticsAdapter` SPI (structurally);
+- the same call site produces the same `RootAnalytics` facade — its `keyof` is **identical** across
+  the swap;
+- the same sequence of neutral facade calls (`identify` / `track` / `group` / `register` / `page` /
+  `reset`) runs identically against either backend; the only difference lives **behind the seam**
+  (the no-op backend records nothing, the recording backend captures the same driven stream).
+
+Consumer code is byte-identical across the swap — only which adapter the seam selected differs.
+
+### The query-side precedent (already met)
+
+Bar A is **already met on the query side**, shipped. Two adapters sit behind ONE
+`AnalyticsQueryClient` interface, both real exports from `@analytics-kit/node`:
+
+- `HttpQueryAdapter` — the first backend: translates each neutral KPI primitive (`funnel`,
+  `retention`, `trend`, `uniqueCount`, `rawQuery`) to an HTTP query endpoint and normalizes the wire
+  envelope back into the neutral `QueryResult`.
+- `WarehouseQueryAdapter` — a second backend, a typed stub satisfying the same
+  `AnalyticsQueryClient` interface (each method typechecks; its intended fill-in emits SQL over the
+  taxonomy-generated typed view).
+
+**Two adapters, one interface, seam unchanged** — the concrete precedent that a second backend drops
+in behind the seam with no consumer or library-seam edits. Tie it together: the 18-member
+`AnalyticsAdapter` SPI is the fill-in surface for a new client backend, the demonstrated swap proves
+zero consumer change on the client side, and the query-side pair proves the exact same pattern
+already holds for the query seam.
+
 ## Development
 
 Quality gates (see `CLAUDE.md`): **typecheck · lint · test · build**, all green. Package manager:
