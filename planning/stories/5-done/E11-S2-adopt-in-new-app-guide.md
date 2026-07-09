@@ -67,3 +67,10 @@ Bar B — new-app adoption = config only, zero library change — needs a walkab
 - **Commit:** `E11-S2-adopt-in-new-app-guide — "Adopt in a new app" config-only guide` on `core-cycle`
 - **Reviewer notes:** ship-ready — 0 critical, 1 precision suggestion (derive-omits-page-props wording)
 - **Cross-story seams exposed (S3/S4, both independent of this guide):** S3 (bar-A) → the `NoopAdapter`↔recording-adapter swap through `examples/fernly` (zero consumer edits) + on-paper 2nd-adapter over the `AnalyticsAdapter` SPI citing the E8 `WarehouseQueryAdapter`. S4 (bar-B + capability) → the gated `examples/fernly` diff-is-`examples/**`-only assertion proving THIS guide's claim + the capability-completeness table (declared-only flags/replay rows) gated over `dist`.
+
+## Follow-up
+
+> E11 post-close improvement pass, 2026-07-09 (commit follows). Reviewer-verified, scan PASS.
+
+- **Derive-allowlist phrasing tightened** — adopt-guide section 5 now says the derived allowlist covers "your declared events, traits, and groups (page props are not derived — declare those in the allowlist explicitly, or they're blocked at the seam)", replacing the broader "in lockstep with your declared vocabulary". Matches `deriveAllowlistFromTaxonomy` (destructures `{events,traits,groups}`, never `page`), so a reader who declares page props doesn't infer they're covered. (Addresses the S2 derive-precision suggestion.)
+- Skipped-with-reason: the S3 swap-test-#2 self-doc pointer (zero-comment default; test #4 already covers the Noop-records-nothing evidence).

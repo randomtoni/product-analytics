@@ -64,3 +64,9 @@ Makes "a new adapter is fill-in-the-blanks" concrete: every neutral interface me
 - **Commit:** `E11-S1-interface-implementation-matrix — README interface→implementation matrix` on `core-cycle`
 - **Reviewer notes:** ship-ready — 0 critical, 2 suggestions (Node flush/shutdown rows; rawQuery phrasing = no-change)
 - **Cross-story seams exposed (S2):** the adopt guide lands in the SAME `README.md` inside the same S5 scan — describe-by-role/no-vendor/no-`$`-literal/`examples/fernly`-path-only apply verbatim (run `pnpm neutrality-scan` after). The real config surface to walk (from `AnalyticsConfig`, NOT the old sketch): `key`/`taxonomy`/`allowlist`/`onViolation`/`persistence`/`consentDefault`/`cookieDomain`/`crossSubdomainCookie`/session-timeouts/`ingestHost`/`ingestPath`/`botFilter`/flush-knobs/`compression`/`enrichment`/`autocapture`/`contexts`/`defaultContext`.
+
+## Follow-up
+
+> E11 post-close improvement pass, 2026-07-09 (commit follows). Reviewer-verified, scan PASS.
+
+- **Node matrix rows completed** — added `flush()`/`shutdown()` rows to the README Node table (was 3 of the 5 `NodeAnalytics` members; the client table already had `flush`/`shutdown`, so a reader diffing vs `keyof NodeAnalytics` saw two real lifecycle methods with no row). Rows are by-role: `flush()` force-drains the in-memory queue via the injected delivery closure (stays usable); `shutdown()` drains + quiesces for process exit (timeout-raced). Neutral, no `$`-literal. `keyof NodeAnalytics` = 5, now fully covered. (Addresses the S1 Node-rows suggestion.)

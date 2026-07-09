@@ -13,12 +13,29 @@
       "outputs": ["dist/**"]
     },
     "typecheck": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build", "//#typecheck-scripts"]
     },
     "test": {
       "dependsOn": ["^build"]
     },
-    "lint": {},
+    "lint": {
+      "dependsOn": ["//#lint-scripts"]
+    },
+    "//#typecheck-scripts": {
+      "inputs": [
+        "scripts/**/*.ts",
+        "vitest.config.ts",
+        "tsconfig.scripts.json",
+        "tsconfig.base.json"
+      ]
+    },
+    "//#lint-scripts": {
+      "inputs": [
+        "scripts/**/*.ts",
+        "vitest.config.ts",
+        "eslint.config.js"
+      ]
+    },
     "//#neutrality-scan": {
       "dependsOn": [
         "analytics-kit#build",

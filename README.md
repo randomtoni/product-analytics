@@ -120,6 +120,8 @@ delivery seam is injected.
 | `capture(distinctId, event, props?, options?)` | Allowlist-gated, then minted (with a `dedupeId`) and enqueued on the batch queue; the injected delivery closure sends the batch as a gzipped POST to the configured ingest host/path. | Provide a delivery closure (the injected `SendBatch`): accept a batch of neutral events and forward them to your backend's ingest endpoint. |
 | `setTraits(distinctId, traits, once?)` | Gated, then minted as an adapter-internal trait event carrying the set / set-once trait bag under de-branded nested wire keys, riding the same batch queue as `capture`. | Same delivery closure receives the trait event; a self-hosted backend applies its set / set-once trait bag to the distinct id. |
 | `setGroupTraits(groupType, groupKey, traits)` | Gated, then minted as an adapter-internal group event (distinct id defaults to a `${groupType}_${groupKey}` composite) carrying the group type/key and trait bag under de-branded nested wire keys, on the same batch queue. | Same delivery closure receives the group event; a self-hosted backend records the group membership and applies its trait bag. |
+| `flush()` | Force-drains the in-memory batch queue immediately (bypassing the size/interval trigger) via the injected delivery closure and resolves once the in-flight send(s) settle; the client stays usable afterward. | Same delivery closure receives the force-sent batch; resolve when your forward settles. Shares the client's lifecycle semantics. |
+| `shutdown()` | Drains the queue and quiesces for process exit — marks the client stopped first so racing captures go inert, re-drains until empty (raced against a timeout so a wedged backend can't hang the process), then clears the queue timers. | Same delivery closure receives the final drained batches; the seam quiesces after. Shares the client's lifecycle semantics. |
 
 ### Query — `AnalyticsQueryClient` (KPI primitives)
 
@@ -232,7 +234,8 @@ analytics.context("embed").track("checkout_completed", { plan: "pro", total_cent
 **Consumer supplies:** the set of property keys permitted to leave the app — as an explicit
 `allowlist` array, plus an `onViolation` policy (`'throw' | 'drop-and-error-log'`). You can derive
 the allowlist from your taxonomy with `deriveAllowlistFromTaxonomy(taxonomy)` so the permitted keys
-stay in lockstep with your declared vocabulary. **Library owns:** enforcement — `enforceAllowlist`
+stay in lockstep with your declared events, traits, and groups (page props are not derived — declare
+those in the allowlist explicitly, or they're blocked at the seam). **Library owns:** enforcement — `enforceAllowlist`
 gates every capture, identify, group, and register call before anything reaches the backend, so an
 off-list property is stopped at the seam.
 
