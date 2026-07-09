@@ -52,3 +52,18 @@ Bar B — new-app adoption = config only, zero library change — needs a walkab
 - Describe-by-role constraint applies (same as S1): levers named by neutral role, zero vendor references, no `$`-prefixed wire literals in prose.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-09, improvement-pass): section 5's "`deriveAllowlistFromTaxonomy(taxonomy)` so the permitted keys stay in lockstep with your declared vocabulary" is slightly broader than the impl — `deriveAllowlistFromTaxonomy` derives from `events`+`traits`+`groups` only, NOT `page` props. Tighten to "from your declared events, traits, and groups" so a reader who declares page props doesn't infer they're covered by the derived list (they'd be blocked at the seam). Precision, not a bug.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-09. The bar-B walkable adoption path (reviewer-verified every lever→real export).
+
+- **Files changed:** `README.md` — appended "Adopt in a new app" (7 lever subsections + install block + a bar-B invariant subsection) after the S1 matrix. Did NOT touch the S1 matrix or the (already-corrected) sketch.
+- **New public API:** none — docs-only. NO config surface built (documents EXISTING levers as shipped).
+- **The guide (every lever → real export, reviewer independently verified vs source — unions match character-for-character):** typed taxonomy (`defineTaxonomy`/`ShapeOf`/`TX`) · identity mapping (`identify`/`group`) · cookie domain+scope/persistence (`cookieDomain`/`crossSubdomainCookie`/`persistence` `'cookie'|'localStorage+cookie'|'memory'`) · named contexts (`contexts: Record<string,CaptureProfile>`/`defaultContext`/`context()`→`ScopedAnalytics`) · payload allowlist (`allowlist`/`onViolation` `'throw'|'drop-and-error-log'`/`deriveAllowlistFromTaxonomy`; enforcement=`enforceAllowlist`) · KPI/snapshot (`createQueryClient` + the 5 methods, `Duration` spec) · framework (`AnalyticsClientProvider`/`useAnalytics`/`usePageView`). Each states consumer-supplies (config/generics) vs library-owns (mechanism) — "mechanisms from the library, contents from the consumer." NO aspirational config (no `backend.writeKey`; root verb `track`).
+- **Neutrality (gated by S5, reviewer independently grep-clean):** levers by neutral role, zero `posthog`/`ph_`/vendor-hostname/`$`-literal; **`fernly` ONLY as `examples/fernly` path-links** (the scan's `scanDoc` carve-out strips `examples/fernly` before the `fernly` check; zero bare-prose `fernly`). `pnpm neutrality-scan` PASSES.
+- **Bar-B asserted + grounded (not overclaimed):** the invariant subsection states a new app adopts with ZERO edits under `packages/**`, grounded in the runnable example under `examples/fernly` (imports only the neutral surface, one taxonomy every surface, 79 tests pass). The guide ASSERTS (prose); S4 PROVES it re-runnably.
+- **Gates:** `pnpm neutrality-scan` PASS (15); build/test/typecheck/lint 19/19 (fernly 79 unaffected).
+- **Commit:** `E11-S2-adopt-in-new-app-guide — "Adopt in a new app" config-only guide` on `core-cycle`
+- **Reviewer notes:** ship-ready — 0 critical, 1 precision suggestion (derive-omits-page-props wording)
+- **Cross-story seams exposed (S3/S4, both independent of this guide):** S3 (bar-A) → the `NoopAdapter`↔recording-adapter swap through `examples/fernly` (zero consumer edits) + on-paper 2nd-adapter over the `AnalyticsAdapter` SPI citing the E8 `WarehouseQueryAdapter`. S4 (bar-B + capability) → the gated `examples/fernly` diff-is-`examples/**`-only assertion proving THIS guide's claim + the capability-completeness table (declared-only flags/replay rows) gated over `dist`.

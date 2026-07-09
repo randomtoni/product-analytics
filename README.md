@@ -137,6 +137,176 @@ fill-in-the-blanks contract below.
 | `uniqueCount(spec)` | HTTP query endpoint (Bearer personal key): sends the unique-count spec, normalizes the response into `QueryResult`. | `SELECT count(distinct distinct_id)` over `spec.window` for the event; normalize into `QueryResult`. |
 | `rawQuery(expr)` | HTTP query endpoint (Bearer personal key): passes `expr` through in the HTTP adapter's query dialect, normalizes the response into `QueryResult`. | Pass `expr` to the SQL engine as SQL (this adapter's dialect is SQL); normalize the driver's rows/columns into `QueryResult`. |
 
+## Adopt in a new app
+
+The second acceptance bar — **new-app adoption = config only, zero library change** — means a new
+app becomes a full consumer by supplying **configuration and generics alone**, editing nothing under
+`packages/**`. This section walks that path one lever at a time. The theme throughout is
+**mechanisms from the library, contents from the consumer**: the library owns each mechanism
+(typing, enforcement, persistence, batching, delivery, query normalization); the consumer supplies
+the contents (its own event/trait names, its actor model, its permitted keys, its KPI definitions)
+through config and type parameters.
+
+Every lever below is a real shipped export. Install only the target you need:
+
+```sh
+pnpm add analytics-kit            # the seam: contracts, taxonomy, allowlist, factory
+pnpm add @analytics-kit/browser   # browser target (createAnalytics + track)
+pnpm add @analytics-kit/node      # server target + query client
+pnpm add @analytics-kit/react     # optional React binding (provider + hooks)
+```
+
+### 1. Typed taxonomy — declare your own events, traits, groups, page props
+
+**Consumer supplies:** its own event/trait/group/page-property vocabulary as a declaration passed to
+`defineTaxonomy`. **Library owns:** the typing mechanism — `defineTaxonomy` returns a `Taxonomy`
+whose `ShapeOf<T>` is threaded as the `TX` generic through every surface (client, node, query), so a
+misnamed event or a wrong-typed property is a compile error, not a runtime surprise.
+
+```ts
+import { defineTaxonomy, type ShapeOf } from "analytics-kit";
+
+const taxonomy = defineTaxonomy({
+  events: { checkout_completed: { plan: "string", total_cents: "number" } },
+  traits: { plan: "string" },
+  groups: { workspace: { seats: "number" } },
+  page: { route: "string" },
+});
+// createAnalytics({ taxonomy, ... }) infers the whole typed surface from this one declaration.
+```
+
+The taxonomy is declared **once** and carried across the client, the node capture surface, and the
+query client via the same `ShapeOf<T>` generic — one vocabulary, every surface.
+
+### 2. Identity mapping — map your actor model onto the neutral verbs
+
+**Consumer supplies:** the mapping from its own domain model (users, accounts, workspaces) onto the
+neutral identity verbs — `identify(id, traits?, traitsOnce?)`, `group(type, key, props?)`, and event
+properties. **Library owns:** identity persistence and association; it carries **no** built-in roles
+or account concepts, so nothing about your domain leaks into the seam. You decide what a distinct id
+is and which of your entities become groups.
+
+```ts
+analytics.identify(user.id, { plan: user.plan });
+analytics.group("workspace", workspace.id, { seats: workspace.seatCount });
+```
+
+### 3. Cookie domain + scope, persistence mode
+
+**Consumer supplies:** three `AnalyticsConfig` fields — `cookieDomain` (which domain the identity
+cookie is scoped to), `crossSubdomainCookie` (whether identity is shared across subdomains, so a
+visitor recognized on the marketing subdomain stays the same person in the app), and `persistence`
+(`'cookie' | 'localStorage+cookie' | 'memory'`). **Library owns:** the persistence mechanism itself —
+where and how identity/session state is stored and read back.
+
+```ts
+createAnalytics({
+  taxonomy,
+  cookieDomain: ".example.com",
+  crossSubdomainCookie: true,
+  persistence: "localStorage+cookie",
+});
+```
+
+### 4. Named contexts + capture profiles
+
+**Consumer supplies:** a `contexts` map of named `CaptureProfile`s (each a partial bundle of the
+existing `autocapture` / `enrichment` toggles) plus an optional `defaultContext`. **Library owns:**
+the scoping mechanism — `analytics.context(name)` returns a `ScopedAnalytics` view that applies the
+named profile's per-event enrichment while sharing one identity, session, and transport with the
+root, so cross-context funnels still stitch together.
+
+```ts
+const analytics = createAnalytics({
+  taxonomy,
+  enrichment: { page: true, device: true },
+  contexts: { embed: { enrichment: { device: false } } },
+  defaultContext: "embed",
+});
+
+analytics.context("embed").track("checkout_completed", { plan: "pro", total_cents: 4200 });
+```
+
+### 5. The payload allowlist
+
+**Consumer supplies:** the set of property keys permitted to leave the app — as an explicit
+`allowlist` array, plus an `onViolation` policy (`'throw' | 'drop-and-error-log'`). You can derive
+the allowlist from your taxonomy with `deriveAllowlistFromTaxonomy(taxonomy)` so the permitted keys
+stay in lockstep with your declared vocabulary. **Library owns:** enforcement — `enforceAllowlist`
+gates every capture, identify, group, and register call before anything reaches the backend, so an
+off-list property is stopped at the seam.
+
+```ts
+import { deriveAllowlistFromTaxonomy } from "analytics-kit";
+
+createAnalytics({
+  taxonomy,
+  allowlist: deriveAllowlistFromTaxonomy(taxonomy), // or an explicit string[]
+  onViolation: "drop-and-error-log",
+});
+```
+
+### 6. KPI / snapshot definitions — the query client
+
+**Consumer supplies:** its KPI definitions as calls to the query client — `funnel`, `retention`,
+`trend`, `uniqueCount`, and the escape-hatch `rawQuery` — plus where snapshots of the results get
+stored (the consumer owns snapshot storage; the library computes, it does not persist reports).
+**Library owns:** the read-side mechanism — `createQueryClient` (from `@analytics-kit/node`) issues
+each primitive against the configured read endpoint and normalizes the response into a neutral
+`QueryResult`. The same taxonomy generic types the step/event names in each spec.
+
+```ts
+import { createQueryClient } from "@analytics-kit/node";
+
+const queries = createQueryClient({
+  taxonomy,
+  queryEndpoint: process.env.ANALYTICS_QUERY_ENDPOINT,
+  personalKey: process.env.ANALYTICS_PERSONAL_KEY,
+  projectId: process.env.ANALYTICS_PROJECT_ID,
+});
+
+const result = await queries.funnel({
+  steps: ["checkout_completed"],
+  within: { value: 7, unit: "day" },
+});
+```
+
+### 7. Framework wiring — the optional React binding
+
+**Consumer supplies:** the client instance it built with `createAnalytics`, handed to
+`AnalyticsClientProvider` at the app root, plus its own route key for page tracking. **Library
+owns:** the wiring — `useAnalytics()` reads the typed client from context, and `usePageView(routeKey)`
+fires a page view on route change. Nothing framework-specific leaks into the core seam; the binding
+is an optional install (`@analytics-kit/react`).
+
+```tsx
+import { AnalyticsClientProvider, useAnalytics, usePageView } from "@analytics-kit/react";
+
+function App({ analytics, route }) {
+  return (
+    <AnalyticsClientProvider client={analytics}>
+      <Page route={route} />
+    </AnalyticsClientProvider>
+  );
+}
+
+function Page({ route }) {
+  usePageView(route, { name: route });
+  const analytics = useAnalytics();
+  return <button onClick={() => analytics.track("checkout_completed", { plan: "pro", total_cents: 4200 })}>Buy</button>;
+}
+```
+
+### The bar-B invariant
+
+Every lever above is **configuration or a type parameter** — none of it edits the library. A new app
+adopts `analytics-kit` with **zero edits under `packages/**`**: it declares a taxonomy, supplies an
+allowlist, sets its cookie/persistence/context config, defines its KPIs, and wires the optional React
+binding — all from its own code. The runnable proof of this exact path is the consumer under
+`examples/fernly`: a workspace member that adopts the library by config alone, typechecks its whole
+usage against the shipped surface, and touches nothing under `packages/**`. Read it as the worked,
+end-to-end reference for everything in this section.
+
 ## Development
 
 Quality gates (see `CLAUDE.md`): **typecheck · lint · test · build**, all green. Package manager:
