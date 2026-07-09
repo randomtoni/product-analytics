@@ -1,10 +1,10 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-09 — E10 (example consumer / bar B) shipped; NOW = E11 (closes the cycle)
+Last updated: 2026-07-09 — E11 (adoption audit) shipped; the R1 core cycle is COMPLETE (E1–E11 all done) — awaiting `/roadmap promote`
 
 ## Status
 
-Pre-1.0. The vendor-neutral **`core`** seam is v1 (E1–E3 shipped); the **browser target** (E4 identity, E5 transport, E6 capture/enrichment), the **node server target** (E7 capture), the **query client** (E8 read side), and the **React binding** (E9) are capability-complete for R1, and the **example consumer** (E10 — Fernly under `examples/`) proves new-app adoption is config-only (bar B). NOW holds the one remaining epic — **E11** (adoption audit: README interface→implementation matrix, adopt guide, bar A/B sweep + vendor-name scan) — which CLOSES the cycle. Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
+Pre-1.0. **The R1 core cycle is COMPLETE — E1–E11 all shipped.** The vendor-neutral **`core`** seam (E1–E3) plus the **browser** (E4 identity · E5 transport · E6 capture/enrichment), **node** (E7 capture · E8 query), and **React** (E9) targets are capability-complete; the **example consumer** (E10 — Fernly) proves config-only adoption; and the **adoption audit** (E11) gates both acceptance bars + vendor-neutrality as standing CI checks. NOW is fully drained — awaiting **`/roadmap promote`** to open the next cycle (user-driven). Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
 
 ## Sequencing
 
@@ -29,7 +29,7 @@ Every remaining epic is committed. `/implement-epics all` builds them in the dep
 - **[E8-QRY-query-client](epics/done/E8-QRY-query-client.md)** *(done)* — neutral `AnalyticsQueryClient` (funnel / retention / trend / uniqueCount + `rawQuery(expr: string)` escape hatch, all taxonomy-typed → flat neutral `QueryResult`) in `@analytics-kit/node`; `HttpQueryAdapter` (sync + bounded async poll, Bearer personal-key auth, all wire vocab adapter-internal); `WarehouseQueryAdapter` typed stub = the bar-A proof (two adapters, one interface, seam unchanged); server-only `QueryClientConfig` distinct from ingest; unkeyed `QueryNoop` (bar B). Frozen-15 pin held.
 - **[E9-RCT-react-binding](epics/done/E9-RCT-react-binding.md)** *(done)* — optional `@analytics-kit/react` binding: SSR-safe `AnalyticsClientProvider` (synchronous create-once construction, discriminated `client` XOR `config` props, unkeyed no-op rides through), `useAnalytics<TX>()` (clean `RootAnalytics<TX>`, taxonomy through the hook, sentinel-throws outside a provider), optional router-agnostic `usePageView<TX>()` (manual `page()` on a consumer-threaded route, no history listener). Peer-dep react + browser; frozen-15 pin held; zero vendor refs.
 - **[E10-CORE-example-consumer](epics/done/E10-CORE-example-consumer.md)** *(done)* — generic example consumer (invented product **Fernly**) under `examples/`, proving new-app adoption is config-only (bar B). One consumer, one taxonomy, every surface: browser-facade merge/contexts/allowlist + node capture + query snapshots + React binding — all `examples/**`-only, zero `packages/**` (several slices needed no source change at all). `examples/fernly` is a workspace member whose `turbo typecheck`-against-`dist` gate IS the bar-B proof.
-- **[E11-CORE-adoption-audit](epics/E11-CORE-adoption-audit.md)** *(active, ← E10)* — README interface→implementation matrix, adopt-in-a-new-app guide, and a bar A / bar B sweep including a vendor/product-name scan.
+- **[E11-CORE-adoption-audit](epics/done/E11-CORE-adoption-audit.md)** *(done)* — the capstone audit: a CI-able exit-nonzero vendor/product-name neutrality scan (`scripts/neutrality-scan.ts`, scan-by-dimension over `dist` + `$`-wire-confinement), the README interface→implementation matrix + adopt-in-a-new-app guide, and re-runnable gated proofs of BOTH acceptance bars (bar A = adapter-swap test, bar B = config-only footprint test) + a capability-completeness audit vs the BRIEF contract (no silent gap; by-design-omitted flags/replay rows). Frozen-15 pin held; whole surface neutrality-gated.
 
 ## UPCOMING
 
@@ -44,6 +44,7 @@ _Empty._
 | Shipped | Closed | Epics |
 |---|---|---|
 | `core` seam | 2026-07-08 | E1, E2, E3 → [`epics/done/`](epics/done/) |
+| R1 targets + audit | 2026-07-09 | E4, E5, E6, E7, E8, E9, E10, E11 → [`epics/done/`](epics/done/) |
 
 ## How to read this file
 
