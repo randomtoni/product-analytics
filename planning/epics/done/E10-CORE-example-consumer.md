@@ -1,11 +1,11 @@
 ---
 id: E10-CORE-example-consumer
-status: active
+status: done
 area: core
 touches: [identify, capture, browser, node, react, query, privacy]
 api_impact: additive
 blocked_by: [E6-CAP-capture-enrichment, E7-NODE-server-capture, E8-QRY-query-client, E9-RCT-react-binding]
-updated: 2026-07-08
+updated: 2026-07-09
 ---
 
 # E10-CORE-example-consumer — Generic example consumer (proves bar B)
@@ -31,18 +31,18 @@ The example is an invented, fictional B2B product — **Fernly**, a team documen
 
 ## Stories
 
-The whole harness adopts at the **seam** `createAnalytics(config, recordingAdapter, deps)` — its public second-param injectable `AnalyticsAdapter` — with Fernly's own in-memory recording adapter (shape (A), architect-ruled 2026-07-08). No slice instantiates `BrowserAdapter`. `examples/fernly` is a real pnpm workspace member exposing `typecheck` + `test` (no `build`), enrolled in `turbo run typecheck` against the real packages' built `dist/*.d.ts` — that gate IS the bar-B proof. All 8 stories live in [`stories/2-ready-for-dev/`](../stories/2-ready-for-dev/).
+All 8 shipped to [`stories/5-done/`](../stories/5-done/). The whole harness adopts at the **seam** `createAnalytics(config, recordingAdapter, deps)` — the public second-param injectable `AnalyticsAdapter` — with Fernly's own in-memory recording adapter (shape (A)). No slice instantiates `BrowserAdapter` (except S8's config-branch, which shows the real zero-boilerplate browser adoption path — unkeyed no-op). `examples/fernly` is a real pnpm workspace member exposing `typecheck` + `test` (no `build`), enrolled in `turbo run typecheck` against the real packages' built `dist/*.d.ts` — **that gate IS the bar-B proof**. The whole example is ONE consumer (invented product **Fernly**, neutral) wired against ONE taxonomy (S2), every surface typed off it; the bar-B diff invariant (every slice touches only `examples/**` + `pnpm-workspace.yaml`, zero `packages/**`) held across all 8 — and **several slices needed NO source change at all** (S3, S4), the strongest form of config-only adoption.
 
-- **[E10-S1](../stories/2-ready-for-dev/E10-S1-fernly-scaffold-recording-adapter.md)** *(additive, no deps)* — scaffold `examples/fernly/` as a workspace member + the in-memory recording `AnalyticsAdapter` (models the anon→identified merge state machine) + headless no-op with no key. The harness spine.
-- **[E10-S2](../stories/2-ready-for-dev/E10-S2-fernly-taxonomy-identity-mapping.md)** *(additive, ← S1)* — Fernly taxonomy via `defineTaxonomy<T>()` (7 events + traits + `workspace`/`team` groups) + identity mapping (reviewer/workspace/team/role) onto `identify`/`group`/`setTraits`. The one taxonomy every later slice types off.
-- **[E10-S3](../stories/2-ready-for-dev/E10-S3-cross-subdomain-merge-reset.md)** *(additive, ← S1,S2)* — `cookieDomain: '.fernly.example'` config + a simulated `marketing → app` anon→identified merge preserving the id + `reset()` clears identity, proven at the seam (E4).
-- **[E10-S4](../stories/2-ready-for-dev/E10-S4-named-contexts-capture-profiles.md)** *(additive, ← S1,S2)* — named contexts + capture profiles (`marketing` vs `app`) sharing one identity/session/transport, asserted on the stream (E6).
-- **[E10-S5](../stories/2-ready-for-dev/E10-S5-allowlist-loud-failure.md)** *(additive, ← S1,S2)* — explicit `allowlist` + the deliberate off-list-key loud-failure assertion (throw default; drop-and-error-log branch), executable (E3, privacy).
-- **[E10-S6](../stories/2-ready-for-dev/E10-S6-node-server-capture.md)** *(additive, ← S2)* — node `capture(distinctId, 'plan_upgraded', props, {dedupeId})` on the same distinct id + `await shutdown()` in a signal handler; browser + node shown as SIBLINGS (E7).
-- **[E10-S7](../stories/2-ready-for-dev/E10-S7-kpi-snapshot-query-methods.md)** *(additive, ← S2)* — KPI/snapshot defs via `createQueryClient` calling `funnel`/`retention`/`trend`/`uniqueCount`/`rawQuery`, each returning the neutral `QueryResult` snapshot shape (E8).
-- **[E10-S8](../stories/2-ready-for-dev/E10-S8-react-wiring.md)** *(additive, ← S1,S2)* — React binding: `AnalyticsClientProvider` (config-branch shown + client-branch fed the seam+mock) + `useAnalytics<TX>()` + `usePageView` on a consumer-threaded route value; typecheck-only `.tsx` + jsdom test (E9).
+- **[E10-S1](../stories/5-done/E10-S1-fernly-scaffold-recording-adapter.md)** *(done — `20d55b2`)* — scaffold `examples/fernly/` workspace member + in-memory recording `AnalyticsAdapter` (full 18-member SPI + anon→identified merge state machine) + headless unkeyed no-op (harness owns the NoopAdapter branch). **Consent-granting pin** (`getConsentState()→'granted'`) — else every downstream stream assertion passes vacuously empty.
+- **[E10-S2](../stories/5-done/E10-S2-fernly-taxonomy-identity-mapping.md)** *(done — `bdce029`)* — Fernly taxonomy via `defineTaxonomy<T>()` (7 events + `role`/`plan`/`email` traits + `workspace`/`team` groups + page) + identity mapping onto `identify`/`group`/`setTraits` (incl. `setTraits`→`identify` routing). **The one taxonomy every later slice types off.**
+- **[E10-S3](../stories/5-done/E10-S3-cross-subdomain-merge-reset.md)** *(done — `b99d9fe`)* — `cookieDomain`/`crossSubdomainCookie` config + simulated `marketing→app` merge preserving the id + `reset()` re-anonymizes, at the neutral seam (E4). Zero source change — config live-wired + adapter merge modeled.
+- **[E10-S4](../stories/5-done/E10-S4-named-contexts-capture-profiles.md)** *(done — `9cd6ad7`)* — named contexts (`marketing` vs `app`) sharing one identity/session (funnel-stitching, incl. post-`identify`); per-context `enrichmentProfile` DIFFERS on the minted event (enrichment-driven, NOT autocapture) (E6). Zero source change.
+- **[E10-S5](../stories/5-done/E10-S5-allowlist-loud-failure.md)** *(done — `84f3d8e`)* — explicit `allowlist` + off-list-key loud failure (`register({ssn})` to dodge the compile-error, throw default + drop-and-error-log branch) + derive-from-taxonomy path (omits page keys) (E3, privacy).
+- **[E10-S6](../stories/5-done/E10-S6-node-server-capture.md)** *(done — `d8bf768`)* — node `capture(distinctId, 'plan_upgraded', props, {dedupeId})` on the same distinct id + `await shutdown()` in a signal handler; `dedupeId`→wire `uuid` (duplicate→same-uuid idempotency); browser+node as SIBLINGS (E7).
+- **[E10-S7](../stories/5-done/E10-S7-kpi-snapshot-query-methods.md)** *(done — `6cddaf7`)* — KPI/snapshot defs via `createQueryClient` (never the adapter direct) calling `funnel`/`retention`/`trend`/`uniqueCount`/`rawQuery`, mocked sync wire → normalized neutral `QueryResult`; consumer owns the `SnapshotRecord` wrapper (E8).
+- **[E10-S8](../stories/5-done/E10-S8-react-wiring.md)** *(done — `aa0b8cc`)* — React binding: `AnalyticsClientProvider` (config-branch zero-boilerplate + client-branch fed the S1 seam-mock) + `useAnalytics<ShapeOf<T>>()` + router-driven `usePageView`; typecheck-honest `.tsx` + jsdom test (mount→resolve→route-change-fires-2nd-`page()`, no history listener) (E9).
 
-Dependency graph: **S1 → S2**; then S2 fans out to **{S3, S4, S5, S8}** (each also ← S1) and **{S6, S7}** (← S2 only, no harness-adapter dep). No cycles. A valid topo order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8.
+Built topo order: **S1 → S2**; then S2 fanned out to **{S3, S4, S5, S8}** (each also ← S1) and **{S6, S7}** (← S2 only). Final example suite: **79 tests / 10 files**, `turbo typecheck`+`test` green.
 
 ## Out of scope
 

@@ -1,10 +1,10 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-08 — E9 (react) shipped; NOW = E10–E11
+Last updated: 2026-07-09 — E10 (example consumer / bar B) shipped; NOW = E11 (closes the cycle)
 
 ## Status
 
-Pre-1.0. The vendor-neutral **`core`** seam is v1 (E1–E3 shipped); the **browser target** (E4 identity, E5 transport, E6 capture/enrichment), the **node server target** (E7 capture), the **query client** (E8 read side), and the **React binding** (E9 — `@analytics-kit/react` provider + hooks) are capability-complete for R1. NOW holds the remaining epics — **E10** (example consumer, bar B) and **E11** (adoption audit, closes NOW). Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
+Pre-1.0. The vendor-neutral **`core`** seam is v1 (E1–E3 shipped); the **browser target** (E4 identity, E5 transport, E6 capture/enrichment), the **node server target** (E7 capture), the **query client** (E8 read side), and the **React binding** (E9) are capability-complete for R1, and the **example consumer** (E10 — Fernly under `examples/`) proves new-app adoption is config-only (bar B). NOW holds the one remaining epic — **E11** (adoption audit: README interface→implementation matrix, adopt guide, bar A/B sweep + vendor-name scan) — which CLOSES the cycle. Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
 
 ## Sequencing
 
@@ -28,7 +28,7 @@ Every remaining epic is committed. `/implement-epics all` builds them in the dep
 - **[E7-NODE-server-capture](epics/done/E7-NODE-server-capture.md)** *(done)* — standalone `@analytics-kit/node` client: server-side `capture` (required `distinctId`) + `setTraits`/`setGroupTraits`, caller-suppliable `dedupeId`→wire `uuid` idempotency, in-memory batch queue (drop-oldest) + gzip (`node:zlib`) `{api_key,batch,sent_at}` delivery + 413-halving, shared `enforceAllowlist` privacy path (bar A, one code path), unkeyed whole-stack no-op (bar B), `flush()`/`shutdown()` lifecycle. Frozen-15 pin held.
 - **[E8-QRY-query-client](epics/done/E8-QRY-query-client.md)** *(done)* — neutral `AnalyticsQueryClient` (funnel / retention / trend / uniqueCount + `rawQuery(expr: string)` escape hatch, all taxonomy-typed → flat neutral `QueryResult`) in `@analytics-kit/node`; `HttpQueryAdapter` (sync + bounded async poll, Bearer personal-key auth, all wire vocab adapter-internal); `WarehouseQueryAdapter` typed stub = the bar-A proof (two adapters, one interface, seam unchanged); server-only `QueryClientConfig` distinct from ingest; unkeyed `QueryNoop` (bar B). Frozen-15 pin held.
 - **[E9-RCT-react-binding](epics/done/E9-RCT-react-binding.md)** *(done)* — optional `@analytics-kit/react` binding: SSR-safe `AnalyticsClientProvider` (synchronous create-once construction, discriminated `client` XOR `config` props, unkeyed no-op rides through), `useAnalytics<TX>()` (clean `RootAnalytics<TX>`, taxonomy through the hook, sentinel-throws outside a provider), optional router-agnostic `usePageView<TX>()` (manual `page()` on a consumer-threaded route, no history listener). Peer-dep react + browser; frozen-15 pin held; zero vendor refs.
-- **[E10-CORE-example-consumer](epics/E10-CORE-example-consumer.md)** *(active, ← E6,E7,E8,E9)* — generic example consumer (invented product) under `examples/`, proving new-app adoption is config-only (bar B).
+- **[E10-CORE-example-consumer](epics/done/E10-CORE-example-consumer.md)** *(done)* — generic example consumer (invented product **Fernly**) under `examples/`, proving new-app adoption is config-only (bar B). One consumer, one taxonomy, every surface: browser-facade merge/contexts/allowlist + node capture + query snapshots + React binding — all `examples/**`-only, zero `packages/**` (several slices needed no source change at all). `examples/fernly` is a workspace member whose `turbo typecheck`-against-`dist` gate IS the bar-B proof.
 - **[E11-CORE-adoption-audit](epics/E11-CORE-adoption-audit.md)** *(planned, ← E10)* — README interface→implementation matrix, adopt-in-a-new-app guide, and a bar A / bar B sweep including a vendor/product-name scan.
 
 ## UPCOMING
