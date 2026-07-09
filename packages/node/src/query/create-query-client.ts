@@ -1,5 +1,6 @@
 import type { DefaultTaxonomyShape, ShapeOf, Taxonomy, TaxonomyDecl } from 'analytics-kit';
 import type { QueryClientConfig } from './config';
+import { createHttpQueryAdapterFromConfig } from './http-query-adapter';
 import type { AnalyticsQueryClient } from './query-client';
 import { QueryNoop } from './query-noop';
 
@@ -26,9 +27,13 @@ export function createQueryClient(
     );
     return new QueryNoop<DefaultTaxonomyShape>();
   }
-  // Keyed + endpointed ⇒ the real HTTP query adapter. E8-S3 fills this seat in — it reads
-  // `queryEndpoint`/`personalKey`/`projectId`/`fetch` off `config` and returns an
-  // `AnalyticsQueryClient`. Until then the keyed path returns the same no-op so the
-  // factory shape is stable and S3 is a fill-in, not a reshape.
-  return new QueryNoop<DefaultTaxonomyShape>();
+  // Keyed + endpointed ⇒ the real HTTP query adapter. It reads
+  // `queryEndpoint`/`personalKey`/`projectId`/`fetch` off `config` and translates each
+  // neutral primitive into the adapter-internal wire, POSTs with Bearer personal-key auth,
+  // and normalizes the response into a neutral `QueryResult`.
+  return createHttpQueryAdapterFromConfig<DefaultTaxonomyShape>({
+    ...config,
+    queryEndpoint: config.queryEndpoint,
+    personalKey: config.personalKey,
+  });
 }

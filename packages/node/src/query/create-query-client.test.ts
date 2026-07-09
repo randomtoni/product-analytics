@@ -3,6 +3,7 @@ import { defineTaxonomy } from 'analytics-kit';
 import { afterEach, expect, expectTypeOf, test, vi } from 'vitest';
 import { createQueryClient } from './create-query-client';
 import type { QueryClientConfig } from './config';
+import { HttpQueryAdapter } from './http-query-adapter';
 import type { AnalyticsQueryClient } from './query-client';
 import { QueryNoop } from './query-noop';
 
@@ -115,11 +116,35 @@ test('keyed-but-endpointless: the safe no-op never POSTs to a host-less URL', as
   expect(fetchSpy).not.toHaveBeenCalled();
 });
 
-test('keyed WITH queryEndpoint does not warn', () => {
+test('keyed WITH queryEndpoint does not warn and returns the REAL HTTP adapter (not QueryNoop)', () => {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  createQueryClient({ personalKey: 'pk', queryEndpoint: 'https://query.example', taxonomy });
+  const client = createQueryClient({ personalKey: 'pk', queryEndpoint: 'https://query.example', taxonomy });
 
   expect(warn).not.toHaveBeenCalled();
+  expect(client).toBeInstanceOf(HttpQueryAdapter);
+  expect(client).not.toBeInstanceOf(QueryNoop);
+});
+
+test('keyed + endpointed: a query POSTs to the endpoint via the injected fetch (real adapter wired in)', async () => {
+  const fetchSpy = vi.fn(async () => ({
+    status: 200,
+    json: async () => ({ results: [], columns: [], types: [] }),
+  }));
+  const client = createQueryClient({
+    personalKey: 'pk_read',
+    queryEndpoint: 'https://query.example',
+    projectId: 'proj-7',
+    taxonomy,
+    fetch: fetchSpy as never,
+  });
+
+  await client.rawQuery('SELECT 1');
+
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+  const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, { method: string; headers: Record<string, string> }];
+  expect(url).toBe('https://query.example/api/projects/proj-7/query/');
+  expect(init.method).toBe('POST');
+  expect(init.headers['Authorization']).toBe('Bearer pk_read');
 });
 
 test('the unkeyed no-op path does not warn (nothing is ever queried)', () => {
