@@ -18,7 +18,12 @@ Every design decision is measured against these:
   from* — the library's own code, public API, type names, package names, and docs carry **zero
   `posthog`/vendor references**. Code copied from posthog-js is neutralized: PostHog naming
   stripped, vendor endpoints become configuration. (`posthogAdapter` and the like are invalid —
-  name by role, not by vendor.)
+  name by role, not by vendor.) **One exemption** (architect-locked, enforced by
+  `scripts/neutrality-scan.ts`): dev-facing `// De-branded from posthog's …` provenance comments
+  in `packages/**/src` — audit evidence that a port was *neutralized rather than copied*. They
+  never reach `dist`, are not docs, and the scan deliberately skips non-doc `//` comments for the
+  `posthog` token. Everything a consumer can observe stays vendor-free; the provenance trail is
+  dev-only.
 - **Capability-completeness.** The neutral surface must cover what a mature analytics SDK exposes
   (capture/events, identify, super-properties, groups, query primitives for KPIs — plus typed
   extension points for feature flags, session replay, …) — measured against the `posthog-js`

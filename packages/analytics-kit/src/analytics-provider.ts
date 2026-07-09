@@ -1,5 +1,6 @@
-import type { AnalyticsAdapter, ConsentState } from './adapter';
+import type { AnalyticsAdapter } from './adapter';
 import { enforceAllowlist } from './allowlist';
+import { resolveOptedOut } from './consent-policy';
 import type {
   EnrichmentProfile,
   NeutralEvent,
@@ -105,7 +106,7 @@ export class AnalyticsProviderImpl implements RootAnalytics {
   ) {
     this.liveAdapter = adapter;
     this.consentDefault = consentDefault;
-    this.optedOut = this.resolveOptedOut(adapter.getConsentState());
+    this.optedOut = resolveOptedOut(adapter.getConsentState(), this.consentDefault);
     this.resyncActiveAdapter();
     this.allowlist = allowlist === undefined ? undefined : new Set(allowlist);
     this.onViolation = onViolation ?? 'throw';
@@ -160,9 +161,11 @@ export class AnalyticsProviderImpl implements RootAnalytics {
   groupWithProfile(type: string, key: string, props: NeutralTraits | undefined): void {
     // group() routes through the adapter's group() path, not capture() — it carries no
     // per-event enrichment to vary, so no profile is threaded. It still gates and delegates
-    // to the shared core exactly like the root group().
+    // to the shared core exactly like the root group(). Routed to the LIVE adapter (like the
+    // root group): the membership super-prop is PERSISTENCE, so it must survive the opt-out
+    // no-op swap — the adapter's own captureSuppressed() drops the emitted event.
     if (!this.allowed(props)) return;
-    this.adapter.group(type, key, props);
+    this.liveAdapter.group(type, key, props);
   }
 
   installAdapter(next: AnalyticsAdapter): void {
@@ -181,21 +184,29 @@ export class AnalyticsProviderImpl implements RootAnalytics {
   }
 
   identify(id: string, traits?: NeutralTraits, traitsOnce?: NeutralTraits): void {
+    // Route to the LIVE adapter, NOT the consent-swapped no-op: identify carries
+    // persistence (the anon→identified merge flips identity state + retains the anon id,
+    // set-traits persists person traits). Under opt-out that state must survive in the
+    // adapter's memory-backed store so it promotes to durable on opt-in; the adapter's own
+    // captureSuppressed() drops the emitted merge/traits EVENT while the persistence lands.
     if (!this.allowed(traits, traitsOnce)) return;
-    this.adapter.identify(id, traits, traitsOnce);
+    this.liveAdapter.identify(id, traits, traitsOnce);
   }
 
   group(type: string, key: string, props?: NeutralTraits): void {
+    // Live adapter, mirroring identify: the group membership super-prop is persistence and
+    // must survive the opt-out swap. The adapter suppresses the group-identify EVENT itself.
     if (!this.allowed(props)) return;
-    this.adapter.group(type, key, props);
+    this.liveAdapter.group(type, key, props);
   }
 
   setTraits(traits: NeutralTraits, once?: boolean): void {
+    // Live adapter (setTraits is identify-with-traits): the person traits are persistence.
     if (!this.allowed(traits)) return;
     if (once) {
-      this.adapter.identify(this.currentDistinctId(), undefined, traits);
+      this.liveAdapter.identify(this.currentDistinctId(), undefined, traits);
     } else {
-      this.adapter.identify(this.currentDistinctId(), traits);
+      this.liveAdapter.identify(this.currentDistinctId(), traits);
     }
   }
 
@@ -263,14 +274,6 @@ export class AnalyticsProviderImpl implements RootAnalytics {
 
   private resyncActiveAdapter(): void {
     this.adapter = this.optedOut ? this.noopAdapter : this.liveAdapter;
-  }
-
-  // 'granted' captures; 'denied' opts out; 'pending' resolves against the config
-  // consent-default — unset is opt-out-by-default (the library's fail-safe).
-  private resolveOptedOut(state: ConsentState): boolean {
-    if (state === 'granted') return false;
-    if (state === 'denied') return true;
-    return this.consentDefault !== 'granted';
   }
 
   private allowed(...bags: Array<NeutralProperties | undefined>): boolean {

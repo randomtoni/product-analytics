@@ -36,7 +36,13 @@ export interface NeutralEvent {
   // so a consumer event literally named `set_traits`/`identify`/etc. (reachable under an
   // untyped taxonomy) is NOT misrecognized. Never reaches the wire (the wire-mappers pick
   // explicit fields, not a spread). No vendor token.
-  internalKind?: 'set_traits' | 'set_group_traits' | 'group_identify' | 'merge' | 'autocapture';
+  internalKind?:
+    | 'set_traits'
+    | 'set_group_traits'
+    | 'group_identify'
+    | 'merge'
+    | 'autocapture'
+    | 'pageleave';
   // Adapter-internal per-event enrichment override from a scoped context view (E6-S8).
   // Present only on events minted through `context(name).track/page/group`; absent on
   // root captures. Never reaches the wire (the wire-mapper picks explicit fields, not

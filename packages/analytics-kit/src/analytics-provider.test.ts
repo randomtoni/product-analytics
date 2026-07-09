@@ -475,14 +475,17 @@ test('while opted-out the resolver still reads the live adapter (truthful id, no
 
   analytics.optOut();
   const before = adapter.distinctIdReads;
-  // setTraits routes through currentDistinctId(); capture is inert under opt-out,
-  // but the resolver must still consult the LIVE adapter — never the no-op.
+  // setTraits routes through currentDistinctId(); the resolver must consult the LIVE adapter.
   analytics.setTraits({ plan: 'pro' });
 
   expect(adapter.distinctIdReads).toBeGreaterThan(before);
-  // Inert: nothing recorded on the live adapter (routed through the no-op),
-  // yet the live adapter's resolver — not the no-op's 'anonymous' — was consulted.
-  expect(adapter.identified).toHaveLength(0);
+  // FIX #1: setTraits is a PERSISTENCE verb — under opt-out it now routes to the LIVE adapter
+  // (not the consent-swapped no-op) so the trait persistence survives; the resolved distinct id
+  // is the live one, never the no-op's 'anonymous'. On the real BrowserAdapter the emitted
+  // traits EVENT self-suppresses; here the pure spy only records the routing.
+  expect(adapter.identified).toEqual([
+    { distinctId: 'live-actor-42', traits: { plan: 'pro' }, traitsOnce: undefined },
+  ]);
 });
 
 test('generateUuid is injectable via the facade constructor and stamps dedupeId', () => {
@@ -524,22 +527,40 @@ test('hasOptedOut() defaults to false on a fresh provider', () => {
   expect(analytics.hasOptedOut()).toBe(false);
 });
 
-test('after optOut the live spy receives zero capture/identify/group/alias calls; hasOptedOut() is true', () => {
+test('after optOut the PURE-CAPTURE verbs hit the no-op (zero captures); hasOptedOut() is true', () => {
   const adapter = new RecordingAdapter();
   const analytics = new AnalyticsProviderImpl(adapter);
 
   analytics.optOut();
   analytics.track('x');
   analytics.page('home');
-  analytics.identify('user-1', { plan: 'pro' });
-  analytics.group('company', 'acme');
-  analytics.setTraits({ plan: 'pro' });
 
+  // track/page are pure capture — they MUST be swap-suppressed under opt-out (routed to the
+  // no-op), so the live spy records nothing.
   expect(adapter.captured).toHaveLength(0);
-  expect(adapter.identified).toHaveLength(0);
-  expect(adapter.grouped).toHaveLength(0);
   expect(adapter.aliased).toHaveLength(0);
   expect(analytics.hasOptedOut()).toBe(true);
+});
+
+test('FIX #1: after optOut the PERSISTENCE verbs (identify/group/setTraits) reach the LIVE adapter, not the no-op', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  analytics.optOut();
+  analytics.identify('user-1', { plan: 'pro' });
+  analytics.group('company', 'acme');
+  analytics.setTraits({ tier: 'gold' });
+
+  // These carry persistence (identity merge / $groups membership / person traits). Under
+  // opt-out they route to the LIVE adapter so the persistence survives the opt-out swap and
+  // promotes to durable on opt-in — the data-loss bug this fix closes. On the real
+  // BrowserAdapter the emitted event self-suppresses inside captureSuppressed(); the pure spy
+  // here records only the routing (it does not model that suppression).
+  expect(adapter.identified).toEqual([
+    { distinctId: 'user-1', traits: { plan: 'pro' }, traitsOnce: undefined },
+    { distinctId: 'anonymous', traits: { tier: 'gold' }, traitsOnce: undefined },
+  ]);
+  expect(adapter.grouped).toEqual([{ type: 'company', key: 'acme', traits: undefined }]);
 });
 
 test('after optIn delegation to the live spy resumes; hasOptedOut() is false', () => {
@@ -560,7 +581,7 @@ test('after optIn delegation to the live spy resumes; hasOptedOut() is false', (
   expect(analytics.hasOptedOut()).toBe(false);
 });
 
-test('whole-stack reach: while opted-out no persistence write reaches the live adapter (forward guard)', () => {
+test('FIX #1 routing split: while opted-out capture verbs hit the no-op but persistence verbs reach the live adapter (forward guard)', () => {
   const adapter = new RecordingAdapter();
   const analytics = new AnalyticsProviderImpl(adapter);
 
@@ -569,7 +590,13 @@ test('whole-stack reach: while opted-out no persistence write reaches the live a
   analytics.identify('user-1', { plan: 'pro' });
   analytics.group('company', 'acme');
 
-  expect(adapter.persistedWrites).toHaveLength(0);
+  // The pure-capture track was routed to the no-op: nothing captured on the live spy.
+  expect(adapter.captured).toHaveLength(0);
+  // The persistence-bearing identify/group reached the LIVE adapter (data survives opt-out).
+  expect(adapter.identified).toEqual([
+    { distinctId: 'user-1', traits: { plan: 'pro' }, traitsOnce: undefined },
+  ]);
+  expect(adapter.grouped).toEqual([{ type: 'company', key: 'acme', traits: undefined }]);
 });
 
 test('optOut is idempotent and keeps routing verbs to the no-op', () => {
@@ -995,4 +1022,39 @@ test('a scoped capture while opted-out routes to the no-op, minting nothing on t
 
   // The consent-swap applies to scoped captures too — the live adapter records nothing.
   expect(adapter.captured).toHaveLength(0);
+});
+
+test('FIX #1: a scoped context(name).group() while opted-out reaches the LIVE adapter (groupWithProfile is persistence)', () => {
+  const adapter = new RecordingAdapter();
+  const analytics = createAnalytics(
+    { contexts: { marketing: { enrichment: { device: false } } } },
+    adapter
+  ) as RootAnalytics;
+
+  analytics.optOut();
+  analytics.context('marketing').group('company', 'acme', { seats: 5 });
+
+  // groupWithProfile carries the membership super-prop (persistence): under opt-out it routes
+  // to the LIVE adapter, exactly like the root group(), so the $groups membership survives the
+  // opt-out swap. (The architect flagged this scoped path; the review missed it.)
+  expect(adapter.grouped).toEqual([{ type: 'company', key: 'acme', traits: { seats: 5 } }]);
+});
+
+test('FIX #1: when GRANTED the persistence verbs are unchanged — identify/group/setTraits still reach the live adapter', () => {
+  const adapter = new RecordingAdapter();
+  adapter.consentState = 'granted';
+  const analytics = new AnalyticsProviderImpl(adapter);
+
+  // Granted ⇒ this.adapter === liveAdapter, so the routing change is a no-op here: the verbs
+  // reach the live adapter as they always did (regression guard that the fix touched only the
+  // opt-out swap, not the granted path).
+  analytics.identify('user-1', { plan: 'pro' });
+  analytics.group('company', 'acme', { seats: 3 });
+  analytics.setTraits({ tier: 'gold' });
+
+  expect(adapter.identified).toEqual([
+    { distinctId: 'user-1', traits: { plan: 'pro' }, traitsOnce: undefined },
+    { distinctId: 'anonymous', traits: { tier: 'gold' }, traitsOnce: undefined },
+  ]);
+  expect(adapter.grouped).toEqual([{ type: 'company', key: 'acme', traits: { seats: 3 } }]);
 });

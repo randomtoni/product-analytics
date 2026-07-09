@@ -9,8 +9,8 @@ export const IDENTITY_STATE_KEY = 'identity_state';
 // captured under so its lifespan equals the session id's (reset on rotation). Persisted
 // (survives a reload within the same session) but NEVER event-visible as a raw super-prop
 // — the derived `session_entry_*` keys are what ride events. De-branded from posthog's
-// CLIENT_SESSION_PROPS (persisted + `exposure: 'hidden'`); listed in RESERVED_EVENT_KEYS
-// below so the super-prop merge excludes it.
+// CLIENT_SESSION_PROPS (persisted + `exposure: 'hidden'`); classified 'hidden' via
+// internalKeyPolicy below (LEGACY_HIDDEN_KEYS) so the super-prop merge excludes it.
 export const SESSION_ENTRY_PROPS_KEY = 'session_entry_props';
 
 // The explicit neutral identity state persisted under IDENTITY_STATE_KEY. Modeled
@@ -61,11 +61,22 @@ export const GROUPS_WIRE_KEY = '$groups';
 // library toggle, never a consumer value — the neutral surface never sees this token.
 export const GEOIP_DISABLE_WIRE_KEY = '$geoip_disable';
 
-// The de-branded super-prop key holding the actor's group memberships (`{ [groupType]:
+// The reserved NEUTRAL namespace prefix for library-internal super-props that share the
+// property store with consumer-registered ones. Neutral — no vendor token (de-branded from
+// posthog's `$` sigil). Its job is to keep the internal namespace DISJOINT from the consumer
+// one: a consumer property named `groups` must not collide with the library's membership
+// super-prop, and a new internal super-prop must be structurally recognizable without a
+// hand-maintained denylist. Any key under this prefix is internal; its exposure follows the
+// per-key policy below, defaulting to hidden (fail-safe) when unclassified.
+export const RESERVED_INTERNAL_PREFIX = '__ak_';
+
+// The internal super-prop key holding the actor's group memberships (`{ [groupType]:
 // groupKey }`), registered by group() and merged onto every event via mergeSuperProperties
-// (de-branded from posthog's `$groups` super-prop). It is MEANT to ride events, so it is
-// deliberately kept OUT of RESERVED_EVENT_KEYS below. Its [WIRE] form is GROUPS_WIRE_KEY.
-export const GROUPS_KEY = 'groups';
+// (de-branded from posthog's `$groups` super-prop). Prefixed so a consumer property literally
+// named `groups` can co-exist on the SAME event uncorrupted. It is MEANT to ride events, so its
+// exposure policy is 'event' (see internalKeyPolicy) and the wire-mapper renames it to
+// GROUPS_WIRE_KEY on the way out.
+export const GROUPS_KEY = '__ak_groups';
 
 // The adapter-internal event NAME group() mints to identify a group (register memberships +
 // attach group traits), minted entirely inside the adapter — the consumer never types it
@@ -107,23 +118,54 @@ export const COOKIE_MIRRORED_KEYS: readonly string[] = [
   IDENTITY_STATE_KEY,
 ];
 
-// The library-computed / identity keys that share the property store with
-// consumer-registered super-props. They are stamped by the library (or are wire
-// state) — never consumer-supplied — so the super-prop merge-into-events must
-// exclude them. Distinct from COOKIE_MIRRORED_KEYS ("mirror to the cookie?"):
-// this answers "expose on events?", and the two lists will diverge as E6 adds
-// event-visible enrichment keys that are not cookie-mirrored.
-export const RESERVED_EVENT_KEYS: ReadonlySet<string> = new Set([
+// The exposure policy of a library-internal super-prop that shares the property store with
+// consumer-registered ones: 'event' rides events (wire-renamed by the wire-mapper), 'hidden'
+// never reaches events (identity/session/wire state, stamped elsewhere).
+export type InternalKeyExposure = 'event' | 'hidden';
+
+// The CLOSED legacy set of persisted-but-not-event-visible internal keys that predate the
+// RESERVED_INTERNAL_PREFIX convention and CANNOT be renamed to adopt it: doing so would change
+// the persisted cookie/localStorage key name and break reload identity/session continuity (a
+// reload would read the old name, miss the stored value, and re-mint). So they keep their
+// current names and are classified 'hidden' explicitly here. This set is closed for reload-compat
+// reasons — every NEW internal super-prop must instead use RESERVED_INTERNAL_PREFIX and is caught
+// structurally by internalKeyPolicy, so this list never grows stale the way a denylist would.
+const LEGACY_HIDDEN_KEYS: ReadonlySet<string> = new Set([
   DISTINCT_ID_KEY,
   DEVICE_ID_KEY,
   SESSION_ID_KEY,
   ANONYMOUS_DISTINCT_ID_KEY,
   IDENTITY_STATE_KEY,
-  // The raw session-entry snapshot: persisted (survives reload) but NOT a consumer
-  // super-prop — the derived `session_entry_*` keys are event-visible, this blob is not.
-  // First of the "will diverge" enrichment keys the comment above anticipated.
+  // The raw session-entry snapshot: persisted (survives reload, keyed by session id) but NOT a
+  // consumer super-prop — the derived `session_entry_*` keys are event-visible, this blob is not.
+  // Persisted like the identity keys, so it CANNOT be renamed either — same reload-compat reason.
   SESSION_ENTRY_PROPS_KEY,
 ]);
+
+// The explicit exposure policy for RESERVED_INTERNAL_PREFIX keys. A prefixed key NOT listed here
+// defaults to 'hidden' (the fail-safe in internalKeyPolicy) — the inverse of the old fail-OPEN
+// denylist, so a new internal super-prop added without a policy entry stays OFF the wire until
+// deliberately classified 'event'.
+const PREFIXED_KEY_EXPOSURE: ReadonlyMap<string, InternalKeyExposure> = new Map([
+  [GROUPS_KEY, 'event'],
+]);
+
+// Classify a super-prop key for the merge-into-events pass. Returns 'event' (an internal key
+// that rides events, wire-renamed), 'hidden' (an internal key stripped from events), or
+// undefined (a plain consumer key — rides as-is, untouched). This structural rule replaces the
+// hand-maintained RESERVED_EVENT_KEYS denylist: a prefixed key follows its explicit exposure,
+// defaulting to 'hidden' (fail-safe) when unclassified; a legacy identity/session key is 'hidden';
+// everything else is a consumer key. Callers: mergeSuperProperties strips iff 'hidden'; the
+// wire-mapper renames iff 'event'.
+export function internalKeyPolicy(key: string): InternalKeyExposure | undefined {
+  if (key.startsWith(RESERVED_INTERNAL_PREFIX)) {
+    return PREFIXED_KEY_EXPOSURE.get(key) ?? 'hidden';
+  }
+  if (LEGACY_HIDDEN_KEYS.has(key)) {
+    return 'hidden';
+  }
+  return undefined;
+}
 
 const STORE_NAME_PREFIX = 'analytics_kit';
 const CONSENT_STORE_PREFIX = 'analytics_kit_consent';

@@ -989,6 +989,38 @@ describe('wire-mapping seam — dedupeId → top-level uuid (S8)', () => {
     expect(wire.set_traits).toEqual({ plan: 'pro' });
     expect(wire).not.toHaveProperty('internalKind');
   });
+
+  test('FIX #2: a consumer track("pageleave") (no internalKind) reaches the wire as `pageleave`, NOT $pageleave, props intact', () => {
+    // Before the fix wireEventName matched the event NAME, silently renaming a consumer
+    // track('pageleave') to the wire $pageleave. Now it keys off internalKind, which a consumer
+    // capture never sets — so the consumer's own name + props ride through.
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const event = adapter.runCapturePipeline(
+      makeEvent({ event: RESERVED_PAGELEAVE_EVENT, properties: { x: 1 } })
+    );
+
+    const wire = adapter.toWireEvent(event);
+
+    expect(wire.event).toBe('pageleave');
+    expect(wire.event).not.toContain('$');
+    expect(wire.properties).toMatchObject({ x: 1 });
+    // The discriminant is never wire-visible even had the pipeline set it.
+    expect(wire).not.toHaveProperty('internalKind');
+    expect(JSON.stringify(wire)).not.toContain('internalKind');
+  });
+
+  test('FIX #2: the library-minted unload pageleave (internalKind: pageleave) DOES map to the wire $pageleave', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    // Mirror the mint site: the real capturePageleave sets internalKind: 'pageleave'.
+    const event = adapter.runCapturePipeline(
+      makeEvent({ event: RESERVED_PAGELEAVE_EVENT, internalKind: 'pageleave' })
+    );
+
+    const wire = adapter.toWireEvent(event);
+
+    expect(wire.event).toBe('$pageleave');
+    expect(wire).not.toHaveProperty('internalKind');
+  });
 });
 
 describe('reset — clear identity/persistence/session, keep device id (S9)', () => {
@@ -4972,6 +5004,143 @@ describe('consent-pending → grant promotes memory → durable, identity surviv
   });
 });
 
+describe('FIX #1: persistence-bearing verbs while consent is pending/denied — persistence survives, event self-suppresses', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  function durableProps(key: string): Record<string, unknown> | null {
+    const raw = localStorage.getItem(storeName(key));
+    return raw === null ? null : (JSON.parse(raw) as Record<string, unknown>);
+  }
+
+  // A transport spy: records every POST body and resolves a benign 200. Does NOT grant — these
+  // tests drive consent themselves (the whole point is capture under a non-granted decision).
+  type Recorded = { url: string; options: NeutralFetchOptions };
+  function spyTransport(adapter: BrowserAdapter): Recorded[] {
+    const calls: Recorded[] = [];
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+    return calls;
+  }
+
+  function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
+    return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
+  }
+
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  test('identify() while PENDING persists identity in memory + self-suppresses the merge event; the identity survives opt-in→reload', () => {
+    const key = freshKey();
+    // Built pending (no consentDefault) ⇒ memory-backed, and captureSuppressed() drops events.
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, compression: false, persistence: 'localStorage+cookie' });
+    expect(adapter.getConsentState()).toBe('pending');
+    const calls = spyTransport(adapter);
+
+    adapter.identify('user-1', { plan: 'pro' });
+
+    // Persistence survived: the memory-backed identity store flipped to identified under user-1.
+    expect(adapter.getDistinctId()).toBe('user-1');
+    // The merge EVENT self-suppressed at captureSuppressed() — nothing durable, nothing sent.
+    expect(durableProps(key)).toBeNull();
+
+    // Opt-in promotes the in-memory identity onto the durable backend, then a reload finds it.
+    adapter.setConsentState('granted');
+    const reloaded = new BrowserAdapter({ key, ingestHost: INGEST, compression: false, persistence: 'localStorage+cookie' });
+    expect(reloaded.getDistinctId()).toBe('user-1');
+    expect(reloaded.getPersistedProperty(IDENTITY_STATE_KEY)).toBe('identified');
+    expect(calls).toHaveLength(0);
+  });
+
+  test('the merge event minted while pending is NOT sent (transport spy sees nothing until opt-in)', async () => {
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, compression: false });
+    const calls = spyTransport(adapter);
+
+    adapter.identify('user-1', { plan: 'pro' });
+    await adapter.flush();
+    // Nothing left the app while pending — the merge event was suppressed at capture().
+    expect(calls).toHaveLength(0);
+
+    // After opt-in a fresh capture DOES send; the pre-opt-in merge event is gone (dropped, not queued).
+    adapter.setConsentState('granted');
+    adapter.capture(makeEvent({ event: 'purchase', dedupeId: 'post-grant' }));
+    await adapter.flush();
+    const uuids = calls.flatMap((c) => batchOf(c.options)).map((e) => e.uuid);
+    expect(uuids).toContain('post-grant');
+    // The suppressed merge event never rode a batch — its bags never left the app.
+    expect(JSON.stringify(calls)).not.toContain('anonymous_distinct_id');
+  });
+
+  test('anon→identified MERGE while pending does NOT re-merge after opt-in (state already identified, no spurious second merge)', () => {
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, compression: false });
+    spyTransport(adapter);
+
+    // Merge under pending: anon → user-1 (persistence lands in memory, merge event suppressed).
+    adapter.identify('user-1', { plan: 'pro' });
+    adapter.setConsentState('granted');
+
+    // A repeat identify('user-1') after opt-in is now a same-id re-identify on an ALREADY
+    // identified actor: no re-merge, no second retained-anon-id write.
+    const capture = vi.spyOn(adapter, 'capture');
+    adapter.identify('user-1');
+    // Bare same-id re-identify with no traits ⇒ a no-op: no merge/traits event minted.
+    expect(capture).not.toHaveBeenCalled();
+    expect(adapter.getDistinctId()).toBe('user-1');
+  });
+
+  test('group() while DENIED registers the membership in memory + self-suppresses the group-identify event — never durable, never sent', async () => {
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, compression: false, persistence: 'localStorage+cookie' });
+    adapter.setConsentState('denied');
+    const calls = spyTransport(adapter);
+
+    adapter.group('company', 'acme');
+    await adapter.flush();
+
+    // Membership landed in the memory store (readable), but denial never promotes to durable...
+    expect(adapter.getPersistedProperty(GROUPS_KEY)).toEqual({ company: 'acme' });
+    expect(durableProps(key)).toBeNull();
+    // ...and the group-identify event self-suppressed — nothing left the app.
+    expect(calls).toHaveLength(0);
+  });
+
+  test('a same-id traits event (the adapter call setTraits routes to) while PENDING self-suppresses (no send)', async () => {
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, compression: false });
+    const calls = spyTransport(adapter);
+
+    // The facade setTraits routes to identify(currentDistinctId, traits); at the adapter that is
+    // a same-id re-identify carrying a traits bag — the traits EVENT half is what must suppress.
+    adapter.setConsentState('granted');
+    adapter.identify('user-1'); // establish an identity first
+    adapter.setConsentState('pending');
+    const before = calls.length;
+
+    adapter.identify('user-1', { tier: 'gold' });
+    await adapter.flush();
+    // The traits event self-suppressed under pending — nothing new sent.
+    expect(calls.length).toBe(before);
+  });
+
+  test('GRANTED is unchanged: an identify() merge sends its event (regression guard the fix only touched the non-granted path)', async () => {
+    const key = freshKey();
+    const adapter = granted(new BrowserAdapter({ key, ingestHost: INGEST, compression: false }));
+    const calls = spyTransport(adapter);
+
+    adapter.identify('user-1', { plan: 'pro' });
+    await adapter.flush();
+
+    // The merge event WAS sent under granted consent — the routing/suppression change did not
+    // alter the granted path.
+    const events = calls.flatMap((c) => batchOf(c.options));
+    expect(events.some((e) => e.event === MERGE_EVENT || e.set_traits !== undefined)).toBe(true);
+  });
+});
+
 describe('group() — membership super-prop + group-identify event, reaching the wire (FIX #8)', () => {
   const INGEST = 'https://analytics.example.com';
 
@@ -5101,5 +5270,53 @@ describe('group() — membership super-prop + group-identify event, reaching the
       expect(k).not.toContain('$');
     }
     expect(GROUPS_KEY).not.toContain('$');
+  });
+
+  test('FIX #3: a consumer `groups` super-prop reaches the wire as `groups` uncorrupted, while the library membership rides as $groups on the SAME event', async () => {
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, compression: false });
+    const calls = mockFetch(adapter);
+    // The consumer registers a super-prop literally named `groups` (allowed at the facade gate;
+    // here we register directly on the granted adapter). The library also records a membership.
+    adapter.register({ groups: { consumerOwned: true } });
+    adapter.group('company', 'acme');
+
+    adapter.capture(makeEvent({ event: 'purchase', dedupeId: 'coexist' }));
+    await adapter.flush();
+
+    const events = batchOf(calls[0].options);
+    const purchase = events.find((e) => e.uuid === 'coexist');
+    const props = purchase?.properties as Record<string, unknown>;
+    // Consumer `groups` rides UNCORRUPTED under its own name (the #3 fix — no blanket rename).
+    expect(props.groups).toEqual({ consumerOwned: true });
+    // The library membership rides renamed to its [WIRE] $groups form — BOTH coexist on one event.
+    expect(props[GROUPS_WIRE_KEY]).toEqual({ company: 'acme' });
+  });
+
+  test('FIX #3 regression: the persisted identity keys still round-trip a reload (identity continuity preserved — GROUPS_KEY rename did NOT touch identity key names)', () => {
+    const key = freshKey();
+    // First session (granted ⇒ durable localStorage): identify to pin a stable distinct id +
+    // device id under the identity key names, then record a membership.
+    const first = granted(new BrowserAdapter({ key, persistence: 'localStorage+cookie' }));
+    first.identify('user-1', { plan: 'pro' });
+    const distinctId = first.getDistinctId();
+    const deviceId = first.getPersistedProperty(DEVICE_ID_KEY);
+    expect(distinctId).toBe('user-1');
+    expect(deviceId).toBeDefined();
+    // Flush the debounced durable save (mirrors an unload) before the reload reads localStorage.
+    window.dispatchEvent(new Event('beforeunload'));
+
+    // Reload: reconstruct against the same key (same localStorage). The identity keys keep their
+    // CURRENT names (never prefixed), so the reload finds the persisted id — no fresh anon mint.
+    const reloaded = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+
+    expect(reloaded.getDistinctId()).toBe('user-1');
+    expect(reloaded.getPersistedProperty(DEVICE_ID_KEY)).toBe(deviceId);
+    // The identity state persisted too — the reloaded actor is still identified.
+    expect(reloaded.getPersistedProperty(IDENTITY_STATE_KEY)).toBe('identified');
+    // And the reserved-prefixed membership persisted under its new key name.
+    expect(reloaded.getPersistedProperty(GROUPS_KEY)).toBeUndefined();
+    reloaded.group('company', 'acme');
+    expect(reloaded.getPersistedProperty(GROUPS_KEY)).toEqual({ company: 'acme' });
   });
 });

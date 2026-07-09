@@ -1,5 +1,6 @@
 import {
   RESERVED_PAGELEAVE_EVENT,
+  resolveOptedOut,
   type AnalyticsAdapter,
   type ConsentState,
   type EnrichmentConfig,
@@ -32,8 +33,8 @@ import {
   GROUP_SET_KEY,
   GROUP_TYPE_KEY,
   GROUPS_KEY,
+  internalKeyPolicy,
   MERGE_EVENT,
-  RESERVED_EVENT_KEYS,
   SESSION_ENTRY_PROPS_KEY,
   SET_TRAITS_KEY,
   SET_TRAITS_ONCE_KEY,
@@ -122,8 +123,8 @@ interface CurrentPageview {
 // `session_entry_*` props derive from, tagged with the session id it was captured under
 // so its lifespan equals that session's. Reset (re-captured) when the session rotates or
 // on first adoption. Persisted under SESSION_ENTRY_PROPS_KEY (survives a reload within
-// the session) and excluded from the super-prop merge via RESERVED_EVENT_KEYS — the raw
-// snapshot never rides events, only the derived `session_entry_*` keys do.
+// the session) and excluded from the super-prop merge via its 'hidden' internalKeyPolicy —
+// the raw snapshot never rides events, only the derived `session_entry_*` keys do.
 interface StoredSessionEntry {
   sessionId: string;
   info: EntryInfo;
@@ -555,19 +556,15 @@ export class BrowserAdapter implements AnalyticsAdapter {
     this.queue.enqueue(this.toWireEvent(enriched));
   }
 
-  // Whether capture is suppressed by consent — the INVERSE of the facade's resolveOptedOut,
-  // mirrored so a direct live-adapter caller (autocapture, the unload pageleave, identify's
-  // merge/traits events) obeys the SAME opt-out contract the facade swap enforces. 'granted'
-  // ⇒ allowed; 'denied' ⇒ suppressed; 'pending' resolves against consentDefault — captures
-  // ONLY when it is 'granted' (opt-in-by-default), else the fail-safe drop. getConsentState()
-  // already folds a DNT/GPC signal to 'denied', so a DNT client is suppressed here for free.
-  // Capture-permission ≠ cookie-permission: this can allow a pending+defaultGranted client to
-  // CAPTURE while cookie persistence (keyed off RAW 'granted') stays memory-only.
+  // Whether capture is suppressed by consent. Delegates to the seam's shared resolveOptedOut
+  // so a direct live-adapter caller (autocapture, the unload pageleave, identify's merge/traits
+  // events) obeys the SAME opt-out contract the facade swap enforces — one source of truth, no
+  // mirrored copy to drift. getConsentState() already folds a DNT/GPC signal to 'denied', so a
+  // DNT client is suppressed here for free. Capture-permission ≠ cookie-permission: this can
+  // allow a pending+defaultGranted client to CAPTURE while cookie persistence (keyed off RAW
+  // 'granted') stays memory-only.
   private captureSuppressed(): boolean {
-    const state = this.getConsentState();
-    if (state === 'granted') return false;
-    if (state === 'denied') return true;
-    return this.consentDefault !== 'granted';
+    return resolveOptedOut(this.getConsentState(), this.consentDefault);
   }
 
   private isBot(): boolean {
@@ -766,6 +763,7 @@ export class BrowserAdapter implements AnalyticsAdapter {
     const durationSeconds = (Date.now() - record.timestamp) / MS_PER_SECOND;
     this.capture({
       event: RESERVED_PAGELEAVE_EVENT,
+      internalKind: 'pageleave',
       distinctId: this.identity.getDistinctId(),
       properties: {
         [PREV_PAGEVIEW_DURATION_KEY]: durationSeconds,
@@ -788,11 +786,14 @@ export class BrowserAdapter implements AnalyticsAdapter {
   private mergeSuperProperties(event: NeutralEvent): NeutralEvent {
     // Merge registered super-props into the event, trusted (they passed the E3
     // gate at registration — no re-gate). Super-props are defaults: a per-call
-    // property of the same key wins. Library-computed / identity keys share the
-    // store, so exclude them — they are stamped elsewhere, not consumer super-props.
+    // property of the same key wins. A 'hidden'-policy key (identity/session state,
+    // or an unclassified reserved-prefix key — fail-safe) is excluded; an 'event'-policy
+    // internal key (the membership super-prop) and every plain consumer key (policy
+    // undefined) ride through. This is the #3 fix: a consumer key named `groups` is
+    // policy-undefined, so it is NO LONGER blanket-stripped/renamed.
     const superProps: NeutralProperties = {};
     for (const [key, value] of Object.entries(this.store.entries())) {
-      if (RESERVED_EVENT_KEYS.has(key)) continue;
+      if (internalKeyPolicy(key) === 'hidden') continue;
       superProps[key] = value;
     }
     if (Object.keys(superProps).length === 0) {

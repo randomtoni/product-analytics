@@ -1,10 +1,11 @@
-import { RESERVED_PAGELEAVE_EVENT, type NeutralEvent, type NeutralProperties } from 'analytics-kit';
+import type { NeutralEvent, NeutralProperties } from 'analytics-kit';
 import {
   AUTOCAPTURE_WIRE_EVENT,
   GEOIP_DISABLE_WIRE_KEY,
   GROUP_IDENTIFY_WIRE_EVENT,
   GROUPS_KEY,
   GROUPS_WIRE_KEY,
+  internalKeyPolicy,
   PAGELEAVE_WIRE_EVENT,
   PAGEVIEW_WIRE_EVENT,
   SET_TRAITS_KEY,
@@ -81,16 +82,37 @@ export function mapEventToWire(event: NeutralEvent, options?: WireMapOptions): W
   );
 }
 
-// Rename the de-branded `groups` membership super-prop to its [WIRE] form on EVERY event
-// that carries it — it rides via the super-prop merge onto all events (posthog's `$groups`),
-// so the rename lives on the pass-through chain, not the group-identify branch. A no-op when
-// the event has no groups key.
+// The reserved-prefix internal keys that ride events ('event'-policy) and their [WIRE] target
+// names. Only these are wire-renamed on the way out; a plain consumer key (policy undefined —
+// e.g. a consumer property literally named `groups`) passes through UNTOUCHED. Keeping the
+// wire-name mapping here (not on internalKeyPolicy) separates classification from wire
+// vocabulary — the policy answers "does it ride?", this map answers "renamed to what?".
+const EVENT_KEY_WIRE_NAME: ReadonlyMap<string, string> = new Map([[GROUPS_KEY, GROUPS_WIRE_KEY]]);
+
+// Rename each reserved-prefix 'event'-policy super-prop (the group memberships) to its [WIRE]
+// form on EVERY event that carries it — it rides via the super-prop merge onto all events
+// (posthog's `$groups`), so the rename lives on the pass-through chain, not the group-identify
+// branch. Structural, keyed off internalKeyPolicy: a consumer property named `groups` (no
+// reserved prefix ⇒ policy undefined) is NOT touched — that is the #3 fix. A no-op when the
+// event carries no 'event'-policy internal key.
 function renameGroupsSuperProp(wire: WireEvent): WireEvent {
-  if (wire.properties === undefined || !(GROUPS_KEY in wire.properties)) {
+  if (wire.properties === undefined) {
     return wire;
   }
-  const { [GROUPS_KEY]: groups, ...rest } = wire.properties;
-  return { ...wire, properties: { ...rest, [GROUPS_WIRE_KEY]: groups } };
+  const rest: NeutralProperties = {};
+  const renamed: NeutralProperties = {};
+  for (const [key, value] of Object.entries(wire.properties)) {
+    const wireName = internalKeyPolicy(key) === 'event' ? EVENT_KEY_WIRE_NAME.get(key) : undefined;
+    if (wireName !== undefined) {
+      renamed[wireName] = value;
+    } else {
+      rest[key] = value;
+    }
+  }
+  if (Object.keys(renamed).length === 0) {
+    return wire;
+  }
+  return { ...wire, properties: { ...rest, ...renamed } };
 }
 
 // Stamp the [WIRE] $geoip_disable property when the library toggle is on. An event with
@@ -116,16 +138,17 @@ function stampToken(wire: WireEvent, token?: string): WireEvent {
 
 // Swap the neutral event name/marker for its [WIRE] name. A pageview is recognized by
 // the neutral `isPageView` marker (its `event` name is the router path, not a fixed
-// token); the pageleave by its reserved neutral event name; the adapter-minted
-// autocapture / group-identify events by their structural `internalKind` discriminant
-// (NOT the event name — a consumer event named `autocapture`/`group_identify` keeps its
-// own name). Every other event carries its neutral name through verbatim. The `$`-prefixed
-// tokens live only here (+ their constants) — never on the neutral surface.
+// token); the adapter-minted pageleave / autocapture / group-identify events by their
+// structural `internalKind` discriminant (NOT the event name — a consumer event named
+// `pageleave`/`autocapture`/`group_identify` under an untyped taxonomy keeps its own
+// name, never misrenamed to the wire token). Every other event carries its neutral name
+// through verbatim. The `$`-prefixed tokens live only here (+ their constants) — never on
+// the neutral surface.
 function wireEventName(event: NeutralEvent): string {
   if (event.isPageView === true) {
     return PAGEVIEW_WIRE_EVENT;
   }
-  if (event.event === RESERVED_PAGELEAVE_EVENT) {
+  if (event.internalKind === 'pageleave') {
     return PAGELEAVE_WIRE_EVENT;
   }
   if (event.internalKind === 'autocapture') {

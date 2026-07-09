@@ -246,11 +246,26 @@ describe('wire-mapper — pageview / pageleave [WIRE] event names (E6-S2)', () =
     expect(wire.event).toBe('page');
   });
 
-  test('the neutral pageleave event maps to the [WIRE] $pageleave name (keyed off the reserved neutral name)', () => {
-    const wire = mapEventToWire(makeEvent({ event: RESERVED_PAGELEAVE_EVENT }));
+  test('the adapter-minted pageleave (internalKind: pageleave) maps to the [WIRE] $pageleave name (FIX #2, keyed off internalKind)', () => {
+    const wire = mapEventToWire(
+      makeEvent({ event: RESERVED_PAGELEAVE_EVENT, internalKind: 'pageleave' })
+    );
 
     expect(wire.event).toBe(PAGELEAVE_WIRE_EVENT);
     expect(wire.event).toBe('$pageleave');
+  });
+
+  test('FIX #2: a consumer event literally named "pageleave" (untyped hatch, NO internalKind) is NOT renamed to $pageleave', () => {
+    // Before the fix wireEventName matched the event NAME, so a consumer track('pageleave')
+    // was silently renamed to the wire $pageleave. Now the rename keys off internalKind, so a
+    // consumer-minted pageleave (no internalKind) keeps its own name and its props intact.
+    const wire = mapEventToWire(
+      makeEvent({ event: RESERVED_PAGELEAVE_EVENT, properties: { x: 1 } })
+    );
+
+    expect(wire.event).toBe('pageleave');
+    expect(wire.event).not.toContain('$');
+    expect(wire.properties).toMatchObject({ x: 1 });
   });
 
   test('the adapter-minted autocapture event maps to the [WIRE] $autocapture name (E6-S7, keyed off internalKind)', () => {
@@ -590,5 +605,36 @@ describe('wire-mapper — groups super-prop renamed to $groups on EVERY event (F
 
     expect(wire.properties?.[GROUPS_WIRE_KEY]).toEqual({ company: 'acme' });
     expect(wire.properties?.[TOKEN_WIRE_KEY]).toBe('k-1');
+  });
+
+  test('FIX #3: a CONSUMER property literally named `groups` (no reserved prefix) reaches the wire as `groups`, uncorrupted', () => {
+    // The internal membership key is now the reserved-prefix GROUPS_KEY ('__ak_groups'); a
+    // consumer key named `groups` has no reserved prefix ⇒ policy undefined ⇒ NOT renamed. Before
+    // the fix the blanket `groups in properties` check corrupted it to $groups.
+    const wire = mapEventToWire(
+      makeEvent({ event: 'purchase', properties: { groups: { a: 1 }, plan: 'pro' } })
+    );
+
+    // The consumer key rides UNTOUCHED under its own name.
+    expect(wire.properties?.groups).toEqual({ a: 1 });
+    // No internal wire rename happened — there was no reserved-prefix membership key.
+    expect(wire.properties).not.toHaveProperty(GROUPS_WIRE_KEY);
+    expect(wire.properties?.plan).toBe('pro');
+  });
+
+  test('FIX #3: a consumer `groups` prop and the library membership super-prop COEXIST on ONE event', () => {
+    // Both live on the same event: the reserved-prefix membership key (GROUPS_KEY = '__ak_groups')
+    // and a consumer key named `groups`. The membership renames to $groups; the consumer key stays.
+    const wire = mapEventToWire(
+      makeEvent({
+        event: 'purchase',
+        properties: { [GROUPS_KEY]: { company: 'acme' }, groups: { consumerOwned: true } },
+      })
+    );
+
+    expect(wire.properties?.[GROUPS_WIRE_KEY]).toEqual({ company: 'acme' });
+    expect(wire.properties?.groups).toEqual({ consumerOwned: true });
+    // The two are distinct keys on the wire — the consumer's is not the wire membership key.
+    expect(GROUPS_WIRE_KEY).not.toBe('groups');
   });
 });
