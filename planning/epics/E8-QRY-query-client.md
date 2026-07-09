@@ -1,11 +1,11 @@
 ---
 id: E8-QRY-query-client
-status: planned
+status: active
 area: query
 touches: [node, adapters]
 api_impact: additive
 blocked_by: [E2-CORE-provider-seam]
-updated: 2026-07-07
+updated: 2026-07-08
 ---
 
 # E8-QRY-query-client — Query client: interface + HTTP query adapter + warehouse stub
@@ -30,13 +30,13 @@ Durable KPI snapshotting needs a neutral read surface: a snapshot job asks for a
 
 ## Stories
 
-Tentative slice — story files not yet written.
+Five stories in `stories/2-ready-for-dev/`. Dependency graph: **S1 → S2 → S3 → S4**, plus **S1 → S5** (the warehouse stub runs parallel to the HTTP-adapter track once the seam exists). All ship in `@analytics-kit/node`; `QueryResult`/`QueryColumn` land in the `analytics-kit` seam package.
 
-- **S1 — neutral query seam.** `AnalyticsQueryClient` interface + the neutral snapshot-shaped result types (rows + metadata), business primitives only, `rawQuery(expr)` typed as an adapter-specific passthrough. Establishes the query substrate; no adapter yet.
-- **S2 — query config + no-op stub.** `query: { endpoint, apiKey, projectId? }` config, server-only personal-key handling (kept distinct from the ingest key/host), and a silent stub client when unkeyed.
-- **S3 — HTTP adapter, sync path.** Map funnel/retention/trend/uniqueCount → kind-discriminated body (`HogQLQuery`/`TrendsQuery`/`FunnelsQuery`/`RetentionQuery`), POST with Bearer auth, normalize the sync `{results, columns, types, is_cached}` envelope → neutral result; `rawQuery(expr)` delivers HogQL through the same path.
-- **S4 — HTTP adapter, async execution.** Refresh/poll the async `{query_status: { id, complete }}` envelope for long-running queries, still returning the same neutral result shape.
-- **S5 — warehouse adapter stub.** Interface-satisfying typed stub with the intended per-method SQL mapping documented (fill-in-the-blanks for a future SQL-over-consumer-warehouse adapter).
+- **[E8-S1](../stories/2-ready-for-dev/E8-S1-query-client-seam.md)** *(additive, no deps)* — neutral `AnalyticsQueryClient<TX>` interface (five members: funnel/retention/trend/uniqueCount + `rawQuery`), taxonomy-typed spec types, and the single flat neutral `QueryResult` (rows + columns + generatedAt + fromCache?) in the seam package; own `keyof` pin. Establishes the query substrate — no adapter.
+- **[E8-S2](../stories/2-ready-for-dev/E8-S2-query-config-noop.md)** *(additive, depends on S1)* — `QueryClientConfig` (server-only `personalKey` + `queryEndpoint` + `projectId`, distinct from the ingest key/host), an overloaded `createQueryClient` factory, and a `QueryNoop` null-object client returning empty `QueryResult` when unkeyed (bar B).
+- **[E8-S3](../stories/2-ready-for-dev/E8-S3-http-query-adapter-sync.md)** *(additive, depends on S2)* — role-named `HttpQueryAdapter`: map each primitive + `rawQuery` → kind-discriminated wire body, POST with Bearer personal-key auth, normalize the sync `{results, columns, types, is_cached}` envelope → neutral `QueryResult`. Wires the S2 keyed branch.
+- **[E8-S4](../stories/2-ready-for-dev/E8-S4-http-query-adapter-async.md)** *(additive, depends on S3)* — bounded refresh/poll of the async `{query_status: {id, complete}}` envelope for long-running queries, returning the identical neutral `QueryResult`; async stays adapter-internal.
+- **[E8-S5](../stories/2-ready-for-dev/E8-S5-warehouse-adapter-stub.md)** *(additive, depends on S1)* — role-named `WarehouseQueryAdapter` typed stub satisfying `AnalyticsQueryClient<TX>` unchanged (the release's bar-A proof), with the intended per-method SQL-over-typed-view mapping documented for a future fill-in.
 
 ## Out of scope
 
