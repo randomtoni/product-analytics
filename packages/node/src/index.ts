@@ -13,3 +13,5 @@ export type {
   Granularity,
   Aggregation,
 } from './query/query-client';
+export { createQueryClient } from './query/create-query-client';
+export type { QueryClientConfig } from './query/config';

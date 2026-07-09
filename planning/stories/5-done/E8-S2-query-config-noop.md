@@ -61,3 +61,18 @@ Gives the query client its own server-only config surface (endpoint + personal k
 - **Keyed branch is deliberately a fill-in for S3.** Do not build the HTTP adapter here; leave the keyed path returning the no-op (or a clearly-marked placeholder) so S3 slots the real adapter in without reshaping the factory. — PM (sequencing).
 
 ## Shipped
+- > Reviewer note (2026-07-08, for S3): when S3 lands the real `HttpQueryAdapter`, upgrade the keyed+endpointed "does not warn" test to assert the REAL adapter is returned (not `QueryNoop`) — else the placeholder could survive undetected.
+- > Reviewer note (2026-07-08): the `{ key: '...' } as QueryClientConfig` runtime test complements (not replaces) the `@ts-expect-error` type-level pin — don't "clean up" the cast and collapse the two concerns.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files added (node/query):** `config.ts` (`QueryClientConfig` — server-only `queryEndpoint?`/`personalKey?`/`projectId?`/`taxonomy?`/`fetch?`; NO `key`/`ingestHost` — DISTINCT from `NodeAnalyticsConfig`), `query-noop.ts` (`QueryNoop<TX>` implements narrow `AnalyticsQueryClient` — every method → fresh empty `{rows:[],columns:[],generatedAt:<ISO>}`, never throws/networks; mirrors `NodeNoop`), `create-query-client.ts` (overload triple mirroring `createAnalytics:7-13`; `personalKey===undefined`→`QueryNoop`, keyed-endpointless→one `console.warn`+safe-noop-never-host-less-POST, keyed+endpointed→comment-marked S3 fill-in)
+- **Files changed:** node `index.ts` (+`createQueryClient` value + `QueryClientConfig` type)
+- **New public API:** `@analytics-kit/node` `createQueryClient(config)` (taxonomy overload→`AnalyticsQueryClient<ShapeOf<T>>`, bare→`DefaultTaxonomyShape`) + `QueryClientConfig`. Personal key SERVER-ONLY (never browser). S1 keyof pin + frozen-15 hold.
+- **Security crux (type-level boundary):** `key`/`ingestHost` structurally ABSENT from `QueryClientConfig` — the ingest write key CANNOT be aliased into the query path (verified `@ts-expect-error` pins genuinely fire). Warn-then-NOOP (not warn-then-proceed) — safer read-client posture, never a host-less POST.
+- **Tests added:** node +12 (unkeyed→QueryNoop empty-result + fetch-spy-zero bar B; distinct config personalKey≠ingest-key + `@ts-expect-error` no-ingest-fields; keyed-endpointless warn-once+safe + no-host-less-POST; keyed+endpointed no-warn; taxonomy overload `expectTypeOf` + declared-spec + undeclared `@ts-expect-error`; QueryNoop implements-clause) → 136; seam 172 unchanged
+- **Commit:** `E8-S2-query-config-noop — Query config + factory + unkeyed no-op query client` on `core-cycle`
+- **Reviewer notes:** SHIPS — 0 critical, 2 forward notes (S3 assert-real-adapter; ingest-key cast test)
+- **Cross-story seams exposed:** **S3** `HttpQueryAdapter` slots into the SINGLE keyed+endpointed branch (`create-query-client.ts:29-33`, comment-marked) reading `config.queryEndpoint`(host)+`personalKey`(Bearer)+`projectId`(path)+`fetch`(default global) — impl-signature erasure already correct, NO factory reshape; upgrade the no-warn test to assert the real adapter. **S4** extends S3's internal poll (no factory/config change). **S5** parallel `implements AnalyticsQueryClient<TX>` stub (reuse the `QueryNoop` implements-clause as reference).
