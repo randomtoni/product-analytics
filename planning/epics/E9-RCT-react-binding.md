@@ -1,11 +1,11 @@
 ---
 id: E9-RCT-react-binding
-status: planned
+status: active
 area: react
 touches: [browser]
 api_impact: additive
 blocked_by: [E6-CAP-capture-enrichment]
-updated: 2026-07-07
+updated: 2026-07-08
 ---
 
 # E9-RCT-react-binding — React / Next binding
@@ -24,10 +24,12 @@ Optional `@analytics-kit/react` binding so React/Next consumers get the client f
 
 ## Stories
 
-- SSR-safe `AnalyticsProvider` component + context: discriminated-union props (client XOR config), `useEffect` init (never render/useMemo), StrictMode double-invoke guard, client-wins-with-warning.
-- `useAnalytics()` hook reading the neutral client from context (loud/typed failure when used outside a provider).
-- Optional `usePageView()` router helper — a single thin hook that calls `page()` on route change (Next-style history-change), opt-in, delegating to manual `page()`; no auto-capture baked into the provider and no App-Router/Pages-Router adapter layer this release (that stays deferred — see ## Expansion path).
-- `@analytics-kit/react` package scaffold: `react` and `@analytics-kit/browser` as peer dependencies (single shared client instance, consumer-controlled versions), SSR + StrictMode test harness, four gates green.
+Drafted to `stories/2-ready-for-dev/`. Dependency chain (topo order): **S1 → S2 → S3 → S4** — a strict line (scaffold gates the provider, which gates the hook, which gates the router helper).
+
+- **[E9-S1](../stories/2-ready-for-dev/E9-S1-react-package-scaffold.md)** *(additive, no deps)* — `@analytics-kit/react` scaffold: `react` + `@analytics-kit/browser` as **peer deps** (single shared client, consumer-controlled versions), `jsx: react-jsx` + `DOM` lib in tsconfig, jsdom + `@testing-library/react` harness, four gates green on a smoke test.
+- **[E9-S2](../stories/2-ready-for-dev/E9-S2-analytics-client-provider.md)** *(additive, depends on S1)* — SSR-safe **`AnalyticsClientProvider`** + `AnalyticsClientContext`: discriminated-union props (`client` XOR `config`), effect-only init (never render/useMemo), StrictMode double-invoke guard, client-wins-with-warning, no auto-pageview, unkeyed no-op rides through.
+- **[E9-S3](../stories/2-ready-for-dev/E9-S3-use-analytics-hook.md)** *(additive, depends on S2)* — **`useAnalytics<TX>()`** hook returning the neutral `RootAnalytics<TX>` (taxonomy flows through; `context()` preserved), with a loud/typed throw when used outside a provider.
+- **[E9-S4](../stories/2-ready-for-dev/E9-S4-use-pageview-router-hook.md)** *(additive, depends on S3)* — optional router-agnostic **`usePageView()`** helper: fires manual `page()` on a consumer-threaded route change (Next app/pages router, React Router), opt-in, no history listener; no framework-specific router adapter this release (deferred — see ## Expansion path).
 
 ## Out of scope
 
