@@ -257,3 +257,48 @@ describe('unload flush', () => {
     expect(backend.writes).toHaveLength(writesAfterClear);
   });
 });
+
+describe('promoteBackend — migrate in-memory props to a new durable backend (FIX #6)', () => {
+  test('swaps the backend and flushes the WHOLE current props blob onto it in one write', () => {
+    const memory = createMemoryBackend();
+    const store = new PersistenceStore({ backend: memory, name: 's' });
+    store.register({ distinct_id: 'x', plan: 'pro', country: 'US' });
+
+    const durable = recordingBackend();
+    store.promoteBackend(durable);
+
+    // One write carrying the ENTIRE blob (identity + super-prop + country) migrated at once.
+    expect(durable.writes).toHaveLength(1);
+    expect(durable.writes[0]).toEqual({ distinct_id: 'x', plan: 'pro', country: 'US' });
+  });
+
+  test('subsequent writes land on the NEW backend, not the old one', () => {
+    const memory = createMemoryBackend();
+    const store = new PersistenceStore({ backend: memory, name: 's' });
+
+    const durable = recordingBackend();
+    store.promoteBackend(durable);
+    durable.writes.length = 0; // ignore the promotion write
+
+    store.register({ later: 1 });
+
+    expect(durable.writes).toHaveLength(1);
+    expect(durable.writes[0]).toMatchObject({ later: 1 });
+  });
+
+  test('cancels a pending debounced write so it cannot fire a redundant second write across the swap', () => {
+    vi.useFakeTimers();
+    const memory = createMemoryBackend();
+    const store = new PersistenceStore({ backend: memory, name: 's', saveDebounceMs: 250 });
+    store.register({ a: 1 }); // schedules a pending debounced write against the OLD backend
+
+    const durable = recordingBackend();
+    store.promoteBackend(durable);
+    // The promotion wrote once, immediately.
+    expect(durable.writes).toHaveLength(1);
+
+    // The previously-pending timer must NOT fire a second write after the swap.
+    vi.advanceTimersByTime(250);
+    expect(durable.writes).toHaveLength(1);
+  });
+});

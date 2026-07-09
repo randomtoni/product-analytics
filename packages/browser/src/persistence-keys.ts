@@ -45,11 +45,41 @@ export const PAGELEAVE_WIRE_EVENT = '$pageleave';
 // neutral AUTOCAPTURE_EVENT name. Never on the neutral surface.
 export const AUTOCAPTURE_WIRE_EVENT = '$autocapture';
 
+// The [WIRE] event name for a group-identify — the ONLY place this `$`-prefixed vendor
+// token lives. The wire-mapper emits it for an event carrying the neutral
+// GROUP_IDENTIFY_EVENT name. Never on the neutral surface.
+export const GROUP_IDENTIFY_WIRE_EVENT = '$groupidentify';
+
+// The [WIRE] property name the `groups` super-prop is renamed to on the way out (de-branded
+// source: posthog's `$groups`). The wire-mapper swaps GROUPS_KEY → this on every event that
+// carries the membership super-prop. The ONLY place this `$`-prefixed token lives.
+export const GROUPS_WIRE_KEY = '$groups';
+
 // The [WIRE] property name that signals the backend to skip its server-side GeoIP
 // (de-branded from posthog-core's $geoip_disable). Stamped into the wire event's
 // properties by the wire-mapper when the library-set disableGeoip toggle is on. A
 // library toggle, never a consumer value — the neutral surface never sees this token.
 export const GEOIP_DISABLE_WIRE_KEY = '$geoip_disable';
+
+// The de-branded super-prop key holding the actor's group memberships (`{ [groupType]:
+// groupKey }`), registered by group() and merged onto every event via mergeSuperProperties
+// (de-branded from posthog's `$groups` super-prop). It is MEANT to ride events, so it is
+// deliberately kept OUT of RESERVED_EVENT_KEYS below. Its [WIRE] form is GROUPS_WIRE_KEY.
+export const GROUPS_KEY = 'groups';
+
+// The adapter-internal event NAME group() mints to identify a group (register memberships +
+// attach group traits), minted entirely inside the adapter — the consumer never types it
+// (same posture as MERGE_EVENT / AUTOCAPTURE_EVENT). The wire-mapper maps it to
+// GROUP_IDENTIFY_WIRE_EVENT. De-branded from posthog's `$groupidentify` — no `$`-prefix.
+export const GROUP_IDENTIFY_EVENT = 'group_identify';
+
+// The de-branded [WIRE] property key names carried on the group-identify event's properties
+// (de-branded from posthog's `$group_type`/`$group_key`/`$group_set`). Matches node's
+// wire-mapper group-key names for cross-target wire consistency. Nested inside `properties`
+// on the browser wire (like posthog's $groupidentify), never lifted to a top-level field.
+export const GROUP_TYPE_KEY = 'group_type';
+export const GROUP_KEY_KEY = 'group_key';
+export const GROUP_SET_KEY = 'group_set';
 
 // The [WIRE] property name carrying the ingest auth key on EVERY event. The batch
 // endpoint reads the key off each event's properties (de-branded from posthog-core,

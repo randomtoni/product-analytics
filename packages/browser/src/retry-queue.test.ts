@@ -360,3 +360,45 @@ describe('RetryQueue — drain / snapshot entry points (S6 + S9 seam)', () => {
     expect(sends).toHaveLength(0);
   });
 });
+
+describe('RetryQueue — clear (opt-out discard, FIX #3)', () => {
+  test('clear DISCARDS every held batch — the queue empties and no batch is returned', () => {
+    vi.useFakeTimers();
+    const { queue } = makeQueue();
+    queue.scheduleRetry(['a'], 0);
+    queue.scheduleRetry(['b'], 0);
+    expect(queue.length).toBe(2);
+
+    const result = queue.clear();
+
+    // clear returns void (drop, not take): the held batches are gone, not handed back.
+    expect(result).toBeUndefined();
+    expect(queue.length).toBe(0);
+  });
+
+  test('clear stops the poller — no re-send fires after the discard (the opt-out backstop)', () => {
+    vi.useFakeTimers();
+    const { queue, sends } = makeQueue();
+    queue.scheduleRetry(['a'], 0);
+
+    queue.clear();
+    // Advance well past every poll tick / backoff window — a purged queue must fire nothing.
+    vi.advanceTimersByTime(60 * 60 * 1000);
+
+    expect(sends).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test('clear unbinds the online/offline listeners — a later reconnect resurrects nothing', () => {
+    vi.useFakeTimers();
+    let online = false;
+    const { queue, sends } = makeQueue({ isOnline: () => online });
+    queue.scheduleRetry(['a'], 0);
+
+    queue.clear();
+
+    online = true;
+    window.dispatchEvent(new Event('online'));
+    expect(sends).toHaveLength(0);
+  });
+});

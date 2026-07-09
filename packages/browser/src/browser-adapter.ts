@@ -27,6 +27,11 @@ import {
   ANONYMOUS_DISTINCT_ID_KEY,
   ANONYMOUS_IDENTITY_STATE,
   AUTOCAPTURE_EVENT,
+  GROUP_IDENTIFY_EVENT,
+  GROUP_KEY_KEY,
+  GROUP_SET_KEY,
+  GROUP_TYPE_KEY,
+  GROUPS_KEY,
   MERGE_EVENT,
   RESERVED_EVENT_KEYS,
   SESSION_ENTRY_PROPS_KEY,
@@ -278,6 +283,14 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // wire-mapper so the batch endpoint authenticates each event. The KEY VALUE is config;
   // it never surfaces on the neutral seam — it rides only the [WIRE] token property.
   private readonly apiKey: string;
+  // The RAW configured persistence mode + cookie options, stored so a runtime grant can
+  // rebuild the durable props backend with the SAME buildPropsBackend call the constructor
+  // uses when consent is granted. The construction-time effectiveMode collapses to memory
+  // under a non-granted decision; these hold the un-collapsed config so promotion targets
+  // the real durable backend.
+  private readonly persistenceMode: PersistenceMode;
+  private readonly cookieDomain: string | undefined;
+  private readonly crossSubdomainCookie: boolean | undefined;
 
   constructor(options: BrowserAdapterOptions) {
     this.apiKey = options.key;
@@ -305,6 +318,9 @@ export class BrowserAdapter implements AnalyticsAdapter {
     });
 
     const mode = options.persistence ?? DEFAULT_PERSISTENCE_MODE;
+    this.persistenceMode = mode;
+    this.cookieDomain = options.cookieDomain;
+    this.crossSubdomainCookie = options.crossSubdomainCookie;
     // One memory backend per client, shared by the consent read and the property
     // store so a pre-store read and later writes see the same instance.
     this.memoryBackend = createMemoryBackend();
@@ -410,6 +426,11 @@ export class BrowserAdapter implements AnalyticsAdapter {
     const onVisibilityChange = (): void => {
       if (doc?.visibilityState === 'hidden') {
         this.unload();
+      } else if (doc?.visibilityState === 'visible') {
+        // Returning to the tab re-arms the one-shot unload latch: without this, the first
+        // tab switch would set unloadDrained permanently, and no later hide would ever
+        // drain or mint a pageleave again.
+        this.unloadDrained = false;
       }
     };
     win.addEventListener('pagehide', onPageHide);
@@ -782,25 +803,32 @@ export class BrowserAdapter implements AnalyticsAdapter {
     // Client-side anon→identified merge guard (de-branded). Merge ONLY when the id
     // differs AND the actor is still anonymous: the identity store retains the prior
     // anon id and flips state to identified, and we emit a merge event carrying that
-    // retained id as the [WIRE] link. A same-id re-identify, or a new id while
-    // already identified, does NOT merge — it only carries the trait bags.
+    // retained id as the [WIRE] link.
     const priorDistinctId = this.identity.getDistinctId();
-    const shouldMerge =
-      distinctId !== priorDistinctId &&
-      this.identity.getIdentityState() === ANONYMOUS_IDENTITY_STATE;
+    const idChanged = distinctId !== priorDistinctId;
+    const isAnonymous = this.identity.getIdentityState() === ANONYMOUS_IDENTITY_STATE;
 
-    if (shouldMerge) {
+    if (idChanged && isAnonymous) {
       const retainedAnonId = this.identity.merge(distinctId);
       this.capture(this.buildMergeEvent(distinctId, retainedAnonId, traits, traitsOnce));
       return;
     }
 
-    // No merge (same id, or a new id while already identified): update traits only.
-    // Nothing to do when the caller supplied no traits — a bare re-identify is a
-    // no-op (the traits-only path fires only when traits are present).
+    // A new id while ALREADY identified adopts the new id (posthog registers the new id on
+    // any change; only the merge is anon-gated) — no anon link, no re-merge. This adoption
+    // fires even with no traits, so a subsequent capture and the traits event below both
+    // attribute under the NEW id, never the prior one.
+    if (idChanged) {
+      this.identity.setDistinctId(distinctId);
+    }
+
+    // Nothing more to do when the caller supplied no traits — a bare same-id re-identify is
+    // a no-op, and a bare id-switch only adopted the id above.
     if (traits === undefined && traitsOnce === undefined) {
       return;
     }
+    // Read the distinct id AFTER any adoption so the traits event is attributed under the
+    // newly-adopted id, not the prior one.
     this.capture(this.buildTraitsEvent(this.identity.getDistinctId(), traits, traitsOnce));
   }
 
@@ -860,7 +888,29 @@ export class BrowserAdapter implements AnalyticsAdapter {
     return this.identity.getDistinctId();
   }
 
-  group(): void {}
+  group(groupType: string, groupKey: string, traits?: NeutralTraits): void {
+    // Register the membership into the `groups` super-prop so every subsequent event carries
+    // it (merged via mergeSuperProperties). Merge into the existing memberships rather than
+    // replacing — a client can belong to one group per type across several group() calls.
+    const existing = this.store.getProperty<NeutralProperties>(GROUPS_KEY) ?? {};
+    this.register({ [GROUPS_KEY]: { ...existing, [groupType]: groupKey } });
+
+    // Mint a group-identify event through capture() so it inherits the consent / bot / rate
+    // gates and the [WIRE] token stamp. The group type/key/traits ride INSIDE properties
+    // (posthog's $groupidentify nests them — the wire-mapper renames the keys, no top-level
+    // lift). An absent traits bag emits no set key.
+    this.capture({
+      event: GROUP_IDENTIFY_EVENT,
+      distinctId: this.identity.getDistinctId(),
+      properties: {
+        [GROUP_TYPE_KEY]: groupType,
+        [GROUP_KEY_KEY]: groupKey,
+        ...(traits !== undefined ? { [GROUP_SET_KEY]: { ...traits } } : {}),
+      },
+      timestamp: new Date(),
+      dedupeId: generateUuidV7(),
+    });
+  }
 
   alias(): void {}
 
@@ -927,6 +977,12 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // encode + its [WIRE] Content-Type/query params live below this method, in
   // encodeBatch() / postEncoded() — never on the neutral surface.
   private async postBatch(batch: WireEvent[]): Promise<PostBatchResult> {
+    // Consent backstop: a retry-queue poller wake racing a denial must not POST. The
+    // same consent+consentDefault gate capture() uses is re-checked here at the wire
+    // boundary, so a batch already held before the opt-out never leaves the app.
+    if (this.captureSuppressed()) {
+      return undefined;
+    }
     const url = this.ingestUrl();
     if (url === undefined || batch.length === 0) {
       return undefined;
@@ -1031,16 +1087,43 @@ export class BrowserAdapter implements AnalyticsAdapter {
   }
 
   setConsentState(state: ConsentState): void {
+    // Snapshot the prior decision BEFORE the durable write so the grant path below can
+    // fire the memory→durable promotion exactly once (only on a real transition INTO
+    // granted).
+    const prior = this.consent.get();
     // Opt-out contract (E4-S3): a denial DROPS the unsent buffer without flushing —
     // events captured before the opt-out must not leave the app. optIn ('granted')
     // does NOT drop. The drop is additive to the durable consent write below. It
     // also drops the persisted offline queue, so events captured before the opt-out
-    // cannot rehydrate and re-send after a reload.
+    // cannot rehydrate and re-send after a reload, and DISCARDS the in-memory retry
+    // queue (with its poller) so a held batch can't be re-POSTed after the denial.
     if (state === 'denied') {
       this.queue.drop();
       this.offlineQueue.drop();
+      this.retryQueue.clear();
     }
     this.consent.set(state);
+    // Consent-pending → grant must survive a reload: a client built before an explicit
+    // grant is memory-backed (identity/super-props/session/country live only in memory),
+    // so promote that in-memory state onto the durable backend the moment consent is
+    // granted. Fires once (guarded on the prior decision) — a client constructed granted
+    // already built the durable backend, and a repeat grant is a no-op.
+    if (state === 'granted' && prior !== 'granted') {
+      this.promoteToDurable();
+    }
+  }
+
+  // Build the durable props backend from the RAW configured mode (NOT the memory-collapsed
+  // effectiveMode) with the same cookie options the constructor used, and hand it to the
+  // store, which flushes its in-memory props onto it in one write. Only reached on a real
+  // transition into granted; a memory-mode client rebuilds the (still-memory) backend
+  // harmlessly.
+  private promoteToDurable(): void {
+    const durable = buildPropsBackend(this.persistenceMode, this.memoryBackend, {
+      cookieDomain: this.cookieDomain,
+      crossSubdomainCookie: this.crossSubdomainCookie,
+    });
+    this.store.promoteBackend(durable);
   }
 
   async fetch(url: string, options: NeutralFetchOptions): Promise<NeutralFetchResponse> {

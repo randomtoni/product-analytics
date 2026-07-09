@@ -147,6 +147,46 @@ describe('merge (S6 — anon→identified)', () => {
   });
 });
 
+describe('setDistinctId — adopt a new id while already identified (FIX #4)', () => {
+  test('updates the cached + persisted distinct id and re-affirms identified — WITHOUT an anon link', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+    identity.merge('user-1'); // now identified, with a retained anon id
+    const retainedAnon = store.getProperty(ANONYMOUS_DISTINCT_ID_KEY);
+
+    identity.setDistinctId('user-2');
+
+    expect(identity.getDistinctId()).toBe('user-2');
+    expect(store.getProperty(DISTINCT_ID_KEY)).toBe('user-2');
+    expect(identity.getIdentityState()).toBe('identified');
+    // No NEW anon-merge link is written — the original retained anon id is untouched.
+    expect(store.getProperty(ANONYMOUS_DISTINCT_ID_KEY)).toBe(retainedAnon);
+  });
+
+  test('does NOT clear the store — super-props and device id survive the id adoption', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+    const deviceId = store.getProperty(DEVICE_ID_KEY);
+    store.register({ plan: 'pro' });
+
+    identity.setDistinctId('user-2');
+
+    expect(store.getProperty('plan')).toBe('pro');
+    expect(store.getProperty(DEVICE_ID_KEY)).toBe(deviceId);
+  });
+
+  test('the adopted id survives a reconstruct (persisted, not just cached)', () => {
+    const store = freshStore();
+    const identity = new IdentityStore({ store });
+    identity.setDistinctId('user-2');
+
+    const reloaded = new IdentityStore({ store });
+
+    expect(reloaded.getDistinctId()).toBe('user-2');
+    expect(reloaded.getIdentityState()).toBe('identified');
+  });
+});
+
 describe('reset (S9 — re-anonymize on logout)', () => {
   test('mints a NEW anonymous distinct id and flips state back to anonymous', () => {
     const store = freshStore();

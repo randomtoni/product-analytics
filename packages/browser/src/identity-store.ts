@@ -98,6 +98,21 @@ export class IdentityStore {
     return priorDistinctId;
   }
 
+  // Adopt a new distinct id on a re-identify while ALREADY identified (posthog registers
+  // the new id on ANY change; only the anon→identified merge is anon-gated). Updates the
+  // cached + persisted distinct id in lockstep and re-affirms the identified state, WITHOUT
+  // writing an anon-merge link and WITHOUT clearing the store — distinct from merge() (no
+  // prior anon id to retain here) and from reset() (no re-anonymization). Mirrors merge()'s
+  // persistence writes minus the ANONYMOUS_DISTINCT_ID_KEY link.
+  setDistinctId(distinctId: string): void {
+    this.distinctId = distinctId;
+    this.store.register({
+      [DISTINCT_ID_KEY]: distinctId,
+      [IDENTITY_STATE_KEY]: IDENTIFIED_IDENTITY_STATE,
+    });
+    this.state = IDENTIFIED_IDENTITY_STATE;
+  }
+
   // Re-anonymize on logout: mint a fresh anonymous distinct id, clear the whole
   // persistence blob (identity + retained anon id + super-props + session tuple),
   // flip state back to anonymous, and update the cache in lockstep. The device id

@@ -6,6 +6,13 @@ import {
   ANONYMOUS_DISTINCT_ID_KEY,
   AUTOCAPTURE_EVENT,
   AUTOCAPTURE_WIRE_EVENT,
+  GROUP_IDENTIFY_EVENT,
+  GROUP_IDENTIFY_WIRE_EVENT,
+  GROUP_KEY_KEY,
+  GROUP_SET_KEY,
+  GROUP_TYPE_KEY,
+  GROUPS_KEY,
+  GROUPS_WIRE_KEY,
   MERGE_EVENT,
   PAGELEAVE_WIRE_EVENT,
   PAGEVIEW_WIRE_EVENT,
@@ -433,5 +440,78 @@ describe('wire-mapper — disableGeoip stamps the [WIRE] $geoip_disable property
       $geoip_disable: true,
     });
     expect(wire.properties ?? {}).not.toHaveProperty(SET_TRAITS_KEY);
+  });
+});
+
+describe('wire-mapper — group-identify event name + nested group keys (FIX #8)', () => {
+  test('maps GROUP_IDENTIFY_EVENT to the [WIRE] $groupidentify name', () => {
+    const wire = mapEventToWire(makeEvent({ event: GROUP_IDENTIFY_EVENT }));
+
+    expect(wire.event).toBe(GROUP_IDENTIFY_WIRE_EVENT);
+    expect(wire.event).toBe('$groupidentify');
+    // The neutral event name carries no vendor `$`-prefix.
+    expect(GROUP_IDENTIFY_EVENT).not.toContain('$');
+  });
+
+  test('the group type/key/set stay NESTED in properties — not lifted to top-level (unlike set_traits)', () => {
+    const wire = mapEventToWire(
+      makeEvent({
+        event: GROUP_IDENTIFY_EVENT,
+        properties: {
+          [GROUP_TYPE_KEY]: 'company',
+          [GROUP_KEY_KEY]: 'acme',
+          [GROUP_SET_KEY]: { plan: 'pro' },
+        },
+        dedupeId: 'gi-1',
+      })
+    );
+
+    expect(wire.properties).toMatchObject({
+      [GROUP_TYPE_KEY]: 'company',
+      [GROUP_KEY_KEY]: 'acme',
+      [GROUP_SET_KEY]: { plan: 'pro' },
+    });
+    // Nested, never top-level fields on the wire event.
+    expect(wire).not.toHaveProperty(GROUP_TYPE_KEY);
+    expect(wire).not.toHaveProperty(GROUP_KEY_KEY);
+    expect(wire.uuid).toBe('gi-1');
+  });
+});
+
+describe('wire-mapper — groups super-prop renamed to $groups on EVERY event (FIX #8)', () => {
+  test('renames the neutral `groups` super-prop to its [WIRE] $groups form in properties', () => {
+    const wire = mapEventToWire(
+      makeEvent({ event: 'purchase', properties: { [GROUPS_KEY]: { company: 'acme' }, plan: 'pro' } })
+    );
+
+    expect(wire.properties?.[GROUPS_WIRE_KEY]).toEqual({ company: 'acme' });
+    // The neutral key is gone (renamed), the co-resident prop untouched.
+    expect(wire.properties).not.toHaveProperty(GROUPS_KEY);
+    expect(wire.properties?.plan).toBe('pro');
+  });
+
+  test('the rename runs on a PLAIN event (pass-through path), not only group-identify', () => {
+    const wire = mapEventToWire(
+      makeEvent({ event: 'any_event', properties: { [GROUPS_KEY]: { workspace: 'w1' } } })
+    );
+
+    expect(wire.properties?.[GROUPS_WIRE_KEY]).toEqual({ workspace: 'w1' });
+  });
+
+  test('an event WITHOUT the groups super-prop is untouched (no $groups minted)', () => {
+    const wire = mapEventToWire(makeEvent({ event: 'purchase', properties: { plan: 'pro' } }));
+
+    expect(wire.properties ?? {}).not.toHaveProperty(GROUPS_WIRE_KEY);
+    expect(wire.properties ?? {}).not.toHaveProperty(GROUPS_KEY);
+  });
+
+  test('groups rename + token compose on the same event', () => {
+    const wire = mapEventToWire(
+      makeEvent({ properties: { [GROUPS_KEY]: { company: 'acme' } } }),
+      { token: 'k-1' }
+    );
+
+    expect(wire.properties?.[GROUPS_WIRE_KEY]).toEqual({ company: 'acme' });
+    expect(wire.properties?.[TOKEN_WIRE_KEY]).toBe('k-1');
   });
 });

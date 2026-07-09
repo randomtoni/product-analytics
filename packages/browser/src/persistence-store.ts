@@ -31,7 +31,7 @@ function detachValue(value: unknown): unknown {
 // source of truth for reads and is updated synchronously on every write; the
 // backend write is coalesced through a save-debounce and forced out on unload.
 export class PersistenceStore {
-  private readonly backend: StorageBackend;
+  private backend: StorageBackend;
   private readonly name: string;
   private readonly saveDebounceMs: number;
   private props: StorageEntry = {};
@@ -137,6 +137,21 @@ export class PersistenceStore {
     }
     this.backend.remove(this.name);
     this.props = {};
+  }
+
+  // Swap the backing store and migrate the current in-memory props onto it in one write.
+  // The consent-grant path calls this to promote a memory-backed client to durable
+  // storage: the in-memory `props` is already the whole source of truth, so a single
+  // writeNow() against the new backend lands identity + super-props + session + country
+  // together. Cancel any pending debounced write first so its callback can't fire a
+  // redundant second write across the swap.
+  promoteBackend(backend: StorageBackend): void {
+    this.backend = backend;
+    if (this.pendingSaveTimer !== undefined) {
+      clearTimeout(this.pendingSaveTimer);
+      this.pendingSaveTimer = undefined;
+    }
+    this.writeNow();
   }
 
   private writeNow(): void {

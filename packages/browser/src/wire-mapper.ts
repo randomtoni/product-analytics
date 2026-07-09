@@ -3,6 +3,10 @@ import {
   AUTOCAPTURE_EVENT,
   AUTOCAPTURE_WIRE_EVENT,
   GEOIP_DISABLE_WIRE_KEY,
+  GROUP_IDENTIFY_EVENT,
+  GROUP_IDENTIFY_WIRE_EVENT,
+  GROUPS_KEY,
+  GROUPS_WIRE_KEY,
   MERGE_EVENT,
   PAGELEAVE_WIRE_EVENT,
   PAGEVIEW_WIRE_EVENT,
@@ -72,7 +76,22 @@ export function mapEventToWire(event: NeutralEvent, options?: WireMapOptions): W
       ? base
       : normalizeMergeEvent(base, event.properties);
 
-  return stampToken(stampGeoipDisable(mapped, options?.disableGeoip), options?.token);
+  return stampToken(
+    stampGeoipDisable(renameGroupsSuperProp(mapped), options?.disableGeoip),
+    options?.token
+  );
+}
+
+// Rename the de-branded `groups` membership super-prop to its [WIRE] form on EVERY event
+// that carries it — it rides via the super-prop merge onto all events (posthog's `$groups`),
+// so the rename lives on the pass-through chain, not the group-identify branch. A no-op when
+// the event has no groups key.
+function renameGroupsSuperProp(wire: WireEvent): WireEvent {
+  if (wire.properties === undefined || !(GROUPS_KEY in wire.properties)) {
+    return wire;
+  }
+  const { [GROUPS_KEY]: groups, ...rest } = wire.properties;
+  return { ...wire, properties: { ...rest, [GROUPS_WIRE_KEY]: groups } };
 }
 
 // Stamp the [WIRE] $geoip_disable property when the library toggle is on. An event with
@@ -110,6 +129,9 @@ function wireEventName(event: NeutralEvent): string {
   }
   if (event.event === AUTOCAPTURE_EVENT) {
     return AUTOCAPTURE_WIRE_EVENT;
+  }
+  if (event.event === GROUP_IDENTIFY_EVENT) {
+    return GROUP_IDENTIFY_WIRE_EVENT;
   }
   return event.event;
 }

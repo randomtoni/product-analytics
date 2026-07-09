@@ -16,10 +16,18 @@ import {
   AUTOCAPTURE_WIRE_EVENT,
   DEVICE_ID_KEY,
   DISTINCT_ID_KEY,
+  GROUP_IDENTIFY_EVENT,
+  GROUP_IDENTIFY_WIRE_EVENT,
+  GROUP_KEY_KEY,
+  GROUP_SET_KEY,
+  GROUP_TYPE_KEY,
+  GROUPS_KEY,
+  GROUPS_WIRE_KEY,
   IDENTITY_STATE_KEY,
   MERGE_EVENT,
   SET_TRAITS_KEY,
   SET_TRAITS_ONCE_KEY,
+  TOKEN_WIRE_KEY,
   queueStoreName,
   storeName,
 } from './persistence-keys';
@@ -243,6 +251,10 @@ test('a platform DNT signal resolves getConsentState() to denied — no DNT conc
 test('a DNT signal at construction gates the property store to memory — zero cookies', () => {
   const key = freshKey();
   new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('granted');
+  // The setup grant now legitimately promotes that first adapter's in-memory identity onto
+  // the durable cookie (FIX #6). Clear this key's cookie so the assertion below isolates the
+  // DNT-at-construction adapter's OWN writes — which must be zero.
+  document.cookie = `${storeName(key)}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
 
   Object.defineProperty(window.navigator, 'doNotTrack', { value: '1', configurable: true });
   try {
@@ -708,7 +720,10 @@ describe('identify — client-side anon→identified merge (S6)', () => {
     expect(capture).not.toHaveBeenCalled();
   });
 
-  test('a NEW id while ALREADY identified does NOT merge client-side', () => {
+  test('a NEW id while ALREADY identified ADOPTS the new id (no merge) — traits attribute to B, not A (FIX #4)', () => {
+    // FLIPPED: the prior test asserted the distinct id STAYED 'user-1' (B's traits emitted
+    // under A) — a data-corruption defect. posthog registers the new id on ANY change; only
+    // the anon→identified merge is anon-gated. So identify('B') while identified adopts B.
     const adapter = new BrowserAdapter({ key: freshKey() });
     adapter.identify('user-1');
     const retainedAnon = adapter.getPersistedProperty(ANONYMOUS_DISTINCT_ID_KEY);
@@ -716,13 +731,65 @@ describe('identify — client-side anon→identified merge (S6)', () => {
 
     adapter.identify('user-2', { plan: 'pro' });
 
-    // The client-side distinct id does NOT switch to user-2 (no second merge), and
-    // the retained anon id is not re-pointed.
-    expect(adapter.getDistinctId()).toBe('user-1');
+    // The distinct id switched to B (cache + persisted), with NO re-merge / anon re-point.
+    expect(adapter.getDistinctId()).toBe('user-2');
+    expect(adapter.getPersistedProperty(DISTINCT_ID_KEY)).toBe('user-2');
+    expect(adapter.getPersistedProperty(IDENTITY_STATE_KEY)).toBe('identified');
+    // The retained anon id from the ORIGINAL merge is untouched (not re-pointed to B).
     expect(adapter.getPersistedProperty(ANONYMOUS_DISTINCT_ID_KEY)).toBe(retainedAnon);
-    // The traits-only event that fires carries no merge-link property.
+    // The traits event fires exactly once, attributed to B, carrying NO merge-link property
+    // (a traits-only event shares the MERGE_EVENT name; the ABSENCE of the anon link — not
+    // the name — is what marks it as a non-merge).
+    expect(capture).toHaveBeenCalledTimes(1);
+    const evt = capture.mock.calls[0][0];
+    expect(evt.distinctId).toBe('user-2');
+    expect(evt.properties).not.toHaveProperty(ANONYMOUS_DISTINCT_ID_KEY);
+    expect(evt.properties?.[SET_TRAITS_KEY]).toEqual({ plan: 'pro' });
+  });
+
+  test('a NEW id while ALREADY identified with NO traits still adopts B — next capture is under B (FIX #4)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.identify('user-1');
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-2');
+
+    // No event for a bare id-switch, but the id genuinely adopted B...
+    expect(capture).not.toHaveBeenCalled();
+    expect(adapter.getDistinctId()).toBe('user-2');
+    expect(adapter.getPersistedProperty(DISTINCT_ID_KEY)).toBe('user-2');
+    // ...so a subsequent capture is attributed under B, never A.
+    const captured = adapter.runCapturePipeline(makeEvent({ distinctId: adapter.getDistinctId() }));
+    expect(captured.distinctId).toBe('user-2');
+  });
+
+  test('regression guard: anonymous identify(B) still emits ONE merge event (anon→identified path intact)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const anonId = adapter.getDistinctId();
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-b');
+
+    expect(capture).toHaveBeenCalledTimes(1);
+    const merge = capture.mock.calls[0][0];
+    expect(merge.event).toBe(MERGE_EVENT);
+    expect(merge.distinctId).toBe('user-b');
+    expect(merge.properties?.[ANONYMOUS_DISTINCT_ID_KEY]).toBe(anonId);
+    expect(adapter.getDistinctId()).toBe('user-b');
+  });
+
+  test('regression guard: same-id re-identify with traits emits traits only, no merge', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.identify('user-1');
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.identify('user-1', { plan: 'pro' });
+
+    expect(capture).toHaveBeenCalledTimes(1);
     const evt = capture.mock.calls[0][0];
     expect(evt.properties).not.toHaveProperty(ANONYMOUS_DISTINCT_ID_KEY);
+    expect(evt.properties?.[SET_TRAITS_KEY]).toEqual({ plan: 'pro' });
+    expect(adapter.getDistinctId()).toBe('user-1');
   });
 
   test('traits (mutable) ride set_traits; traitsOnce (first-touch) ride set_traits_once', () => {
@@ -1547,6 +1614,62 @@ describe('retry queue with backoff (S3)', () => {
     for (const key of adapterKeys) {
       expect(typeof adapter[key]).toBe('function');
     }
+  });
+
+  test('opt-out (denied) PURGES the in-memory retry queue immediately — held batches are discarded (FIX #3)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    // A transient 503 forces the batch into the retry queue.
+    mockFetchStatuses(adapter, [503]);
+
+    adapter.capture(makeEvent({ dedupeId: 'held-then-denied' }));
+    await adapter.flush();
+
+    const retryQueue = (adapter as unknown as { retryQueue: { length: number } }).retryQueue;
+    expect(retryQueue.length).toBeGreaterThan(0); // the failed batch is held for retry
+
+    adapter.setConsentState('denied');
+
+    // (a) The held batch is discarded synchronously on denial.
+    expect(retryQueue.length).toBe(0);
+  });
+
+  test('after opt-out the retry poller fires ZERO further POSTs — the poller wake cannot re-send a held batch (FIX #3)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const calls = mockFetchStatuses(adapter, [503]);
+
+    adapter.capture(makeEvent({ dedupeId: 'poller-race' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1); // the initial failing POST
+
+    adapter.setConsentState('denied');
+
+    // (b) Advance far past every poll tick + backoff window — the purged poller re-POSTs nothing.
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('a batch reaching postBatch AFTER denial does not POST — the consent backstop at the wire boundary (FIX #3)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const calls = mockFetchStatuses(adapter, [503]);
+
+    adapter.capture(makeEvent({ dedupeId: 'race-into-postBatch' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1);
+
+    // Deny, then drive a batch straight into postBatch (bypassing the queue purge) to prove
+    // the TOP-of-postBatch consent gate blocks the POST even on a racing poller wake.
+    adapter.setConsentState('denied');
+    const postBatch = (adapter as unknown as {
+      postBatch: (b: unknown[]) => Promise<unknown>;
+    }).postBatch.bind(adapter);
+    const result = await postBatch([{ event: 'x', distinct_id: 'a', uuid: 'u' }]);
+
+    // (c) No POST fired, and the wire-boundary gate returned the no-send sentinel (undefined).
+    expect(result).toBeUndefined();
+    expect(calls).toHaveLength(1);
   });
 
   function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
@@ -2515,6 +2638,31 @@ describe('transport selection + keepalive + unload drain (S6)', () => {
 
     // The page is still visible — no drain, so this adapter's event was not beaconed.
     expect(beaconedUuids(beacons).has('still-visible')).toBe(false);
+
+    vi.restoreAllMocks();
+  });
+
+  test('a return to VISIBLE re-arms the unload latch — a SECOND hide drains AGAIN (FIX #7)', () => {
+    // The defect: the unloadDrained one-shot latch was set on the first hide and never reset,
+    // so after ONE tab switch no later hide would ever drain/pageleave again.
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    // First hide → the buffered event drains.
+    adapter.capture(makeEvent({ dedupeId: 'hide-1' }));
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(beaconedUuids(beacons).has('hide-1')).toBe(true);
+
+    // Return to visible → the latch re-arms (no drain on visible itself).
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    // Second hide → drains AGAIN (would be permanently disabled without the latch reset).
+    adapter.capture(makeEvent({ dedupeId: 'hide-2' }));
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(beaconedUuids(beacons).has('hide-2')).toBe(true);
 
     vi.restoreAllMocks();
   });
@@ -4563,5 +4711,242 @@ describe('consent gating at capture() — the direct-caller choke point (FIX A)'
     await adapter.flush();
 
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('consent-pending → grant promotes memory → durable, identity survives reload (FIX #6 + #11)', () => {
+  // Read the durable localStorage blob directly to prove the in-memory state was flushed onto
+  // the durable backend on grant (the store name is where the props blob lives).
+  function durableProps(key: string): Record<string, unknown> | null {
+    const raw = localStorage.getItem(storeName(key));
+    return raw === null ? null : (JSON.parse(raw) as Record<string, unknown>);
+  }
+
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  test('a pending client that grants at runtime FLUSHES identity + super-prop + country onto the durable backend (FIX #6 + #11)', () => {
+    const key = freshKey();
+    // Built under pending (no consentDefault) ⇒ memory-backed at construction.
+    const adapter = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+    expect(adapter.getConsentState()).toBe('pending');
+    const mintedId = adapter.getDistinctId();
+
+    // Register a consumer super-prop AND a country super-prop (the #11 init-time write that
+    // used to be lost) — both land in the in-memory store while pending.
+    adapter.register({ plan: 'pro' });
+    adapter.register({ country: 'US' });
+    // Nothing durable yet — memory mode writes no localStorage blob.
+    expect(durableProps(key)).toBeNull();
+
+    adapter.setConsentState('granted');
+
+    // The grant promotion flushed the whole in-memory blob to the durable backend in one write.
+    const durable = durableProps(key);
+    expect(durable).not.toBeNull();
+    expect(durable?.[DISTINCT_ID_KEY]).toBe(mintedId);
+    expect(durable?.[IDENTITY_STATE_KEY]).toBe('anonymous');
+    expect(durable?.plan).toBe('pro');
+    expect(durable?.country).toBe('US'); // #11: the country key survived pending → grant
+  });
+
+  test('after the grant, a reload sim (fresh adapter over the same storage, granted) SURVIVES the identity — no fresh anon id minted (FIX #6)', () => {
+    const key = freshKey();
+    const writer = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+    const mintedId = writer.getDistinctId();
+    writer.register({ plan: 'pro' });
+    writer.register({ country: 'US' });
+    writer.setConsentState('granted');
+    window.dispatchEvent(new Event('beforeunload'));
+
+    // A fresh adapter over the SAME durable storage, consent already granted, models a reload.
+    const reloaded = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+
+    // Identity SURVIVED — the exact same distinct id, NOT a newly-minted anon id.
+    expect(reloaded.getDistinctId()).toBe(mintedId);
+    expect(reloaded.getConsentState()).toBe('granted');
+    // Super-prop + the #11 country key both survived the reload.
+    expect(reloaded.getPersistedProperty('plan')).toBe('pro');
+    expect(reloaded.getPersistedProperty('country')).toBe('US');
+  });
+
+  test('#11: a country super-prop written into memory while pending is MIGRATED on grant and survives reload', () => {
+    // #11 is subsumed by the FIX #6 promotion: the country VALUE is a super-prop that lands
+    // in the in-memory store, and promoteBackend's flush migrates it on grant — no separate
+    // re-registration. This isolates that country-specific migration at the adapter layer.
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+    adapter.register({ country: 'DE' }); // in memory while pending
+    expect(durableProps(key)).toBeNull(); // nothing durable yet
+
+    adapter.setConsentState('granted');
+    window.dispatchEvent(new Event('beforeunload'));
+
+    // Migrated on grant, and a reload sim re-reads it — the country key was not lost.
+    expect(durableProps(key)?.country).toBe('DE');
+    const reloaded = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+    expect(reloaded.getPersistedProperty('country')).toBe('DE');
+  });
+
+  test('regression: a denied client persists NOTHING durably (no promotion on denial)', () => {
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+    adapter.register({ plan: 'pro' });
+
+    adapter.setConsentState('denied');
+    window.dispatchEvent(new Event('beforeunload'));
+
+    // Denial never promotes — the durable backend stays empty.
+    expect(durableProps(key)).toBeNull();
+  });
+
+  test('regression: a client CONSTRUCTED granted is unaffected — it wrote durably from the start, grant→grant is a no-op', () => {
+    const key = freshKey();
+    // Durably grant, then a fresh adapter reads 'granted' at construction and builds durable.
+    new BrowserAdapter({ key, persistence: 'localStorage+cookie' }).setConsentState('granted');
+    const adapter = new BrowserAdapter({ key, persistence: 'localStorage+cookie' });
+    const mintedId = adapter.getDistinctId();
+    adapter.register({ plan: 'pro' });
+    window.dispatchEvent(new Event('beforeunload'));
+
+    // A repeat grant is a no-op (guarded on the prior 'granted' decision) — no double write,
+    // and the durably-built store already holds the identity + super-prop.
+    adapter.setConsentState('granted');
+    const durable = durableProps(key);
+    expect(durable?.[DISTINCT_ID_KEY]).toBe(mintedId);
+    expect(durable?.plan).toBe('pro');
+  });
+});
+
+describe('group() — membership super-prop + group-identify event, reaching the wire (FIX #8)', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  type Recorded = { url: string; options: NeutralFetchOptions };
+  function mockFetch(adapter: BrowserAdapter): Recorded[] {
+    granted(adapter);
+    const calls: Recorded[] = [];
+    vi.spyOn(adapter, 'fetch').mockImplementation(async (url, options) => {
+      calls.push({ url, options });
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+    return calls;
+  }
+
+  function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
+    return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
+  }
+
+  test('group() is no longer a no-op — it mints a group-identify event (FLIP of the silent no-op)', () => {
+    const adapter = granted(new BrowserAdapter({ key: freshKey() }));
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.group('company', 'acme', { plan: 'pro' });
+
+    expect(capture).toHaveBeenCalledTimes(1);
+    const evt = capture.mock.calls[0][0];
+    expect(evt.event).toBe(GROUP_IDENTIFY_EVENT);
+    expect(evt.distinctId).toBe(adapter.getDistinctId());
+    // The group type/key/set ride INSIDE properties (nested, not lifted).
+    expect(evt.properties?.[GROUP_TYPE_KEY]).toBe('company');
+    expect(evt.properties?.[GROUP_KEY_KEY]).toBe('acme');
+    expect(evt.properties?.[GROUP_SET_KEY]).toEqual({ plan: 'pro' });
+  });
+
+  test('group() registers the membership super-prop so a SUBSEQUENT event carries it', () => {
+    const adapter = granted(new BrowserAdapter({ key: freshKey() }));
+
+    adapter.group('company', 'acme');
+
+    // Persisted as the de-branded `groups` super-prop.
+    expect(adapter.getPersistedProperty(GROUPS_KEY)).toEqual({ company: 'acme' });
+    // ...and merged onto a later captured event's properties (via mergeSuperProperties).
+    const captured = adapter.runCapturePipeline(makeEvent());
+    expect(captured.properties?.[GROUPS_KEY]).toEqual({ company: 'acme' });
+  });
+
+  test('multiple group() calls MERGE memberships across types (one group per type)', () => {
+    const adapter = granted(new BrowserAdapter({ key: freshKey() }));
+
+    adapter.group('company', 'acme');
+    adapter.group('workspace', 'ws-1');
+
+    expect(adapter.getPersistedProperty(GROUPS_KEY)).toEqual({ company: 'acme', workspace: 'ws-1' });
+  });
+
+  test('group() with NO traits emits no group_set key', () => {
+    const adapter = granted(new BrowserAdapter({ key: freshKey() }));
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.group('company', 'acme');
+
+    const evt = capture.mock.calls[0][0];
+    expect(evt.properties).not.toHaveProperty(GROUP_SET_KEY);
+    expect(evt.properties?.[GROUP_TYPE_KEY]).toBe('company');
+  });
+
+  test('the group-identify event REACHES THE WIRE: $groupidentify name + nested group keys + token (FIX #1 + #8)', async () => {
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, compression: false });
+    const calls = mockFetch(adapter);
+
+    adapter.group('company', 'acme', { plan: 'pro' });
+    await adapter.flush();
+
+    const [wire] = batchOf(calls[0].options);
+    // The neutral group-identify name is swapped to the [WIRE] $groupidentify token.
+    expect(wire.event).toBe(GROUP_IDENTIFY_WIRE_EVENT);
+    expect(wire.event).toBe('$groupidentify');
+    const props = wire.properties as Record<string, unknown>;
+    // Group keys stay nested in properties (not lifted to top-level).
+    expect(props[GROUP_TYPE_KEY]).toBe('company');
+    expect(props[GROUP_KEY_KEY]).toBe('acme');
+    expect(props[GROUP_SET_KEY]).toEqual({ plan: 'pro' });
+    // The token (#1) still stamps the group-identify event.
+    expect(props[TOKEN_WIRE_KEY]).toBe(key);
+  });
+
+  test('a SUBSEQUENT captured event carries the groups super-prop on the WIRE under $groups (FIX #8)', async () => {
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, compression: false });
+    const calls = mockFetch(adapter);
+
+    adapter.group('company', 'acme');
+    adapter.capture(makeEvent({ event: 'purchase', dedupeId: 'after-group' }));
+    await adapter.flush();
+
+    const events = batchOf(calls[0].options);
+    const purchase = events.find((e) => e.uuid === 'after-group');
+    const props = purchase?.properties as Record<string, unknown>;
+    // The membership rode the event, renamed to its [WIRE] form on the way out.
+    expect(props[GROUPS_WIRE_KEY]).toEqual({ company: 'acme' });
+    // The neutral `groups` key never appears on the wire (renamed).
+    expect(props).not.toHaveProperty(GROUPS_KEY);
+    // Token still stamps this event too (#1).
+    expect(props[TOKEN_WIRE_KEY]).toBe(key);
+  });
+
+  test('group-identify inherits the consent gate — a denied client mints nothing', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    adapter.setConsentState('denied');
+    const pipeline = vi.spyOn(adapter, 'runCapturePipeline');
+
+    adapter.group('company', 'acme', { plan: 'pro' });
+
+    expect(pipeline).not.toHaveBeenCalled();
+  });
+
+  test('neutral-surface hygiene: the neutral group-identify event + keys carry no $-prefix', () => {
+    const adapter = granted(new BrowserAdapter({ key: freshKey() }));
+    const capture = vi.spyOn(adapter, 'capture');
+
+    adapter.group('company', 'acme', { plan: 'pro' });
+
+    const evt = capture.mock.calls[0][0];
+    expect(evt.event).not.toContain('$');
+    for (const k of Object.keys(evt.properties ?? {})) {
+      expect(k).not.toContain('$');
+    }
+    expect(GROUPS_KEY).not.toContain('$');
   });
 });

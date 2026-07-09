@@ -171,6 +171,15 @@ export class RetryQueue<T> {
     return drained;
   }
 
+  // DISCARD every held batch and tear the queue down — same teardown as drain() but
+  // WITHOUT returning the batches: the opt-out path calls this so held batches are
+  // dropped (never re-POSTed) and the poller can't wake to re-send after a denial.
+  clear(): void {
+    this.queue = [];
+    this.stopPolling();
+    this.unbindListeners();
+  }
+
   private startPolling(): void {
     if (this.polling) {
       return;
