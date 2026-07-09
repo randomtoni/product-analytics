@@ -1,11 +1,11 @@
 ---
 id: E10-CORE-example-consumer
-status: planned
+status: active
 area: core
 touches: [identify, capture, browser, node, react, query, privacy]
 api_impact: additive
 blocked_by: [E6-CAP-capture-enrichment, E7-NODE-server-capture, E8-QRY-query-client, E9-RCT-react-binding]
-updated: 2026-07-07
+updated: 2026-07-08
 ---
 
 # E10-CORE-example-consumer — Generic example consumer (proves bar B)
@@ -31,16 +31,18 @@ The example is an invented, fictional B2B product — **Fernly**, a team documen
 
 ## Stories
 
-Tentative slice (story files not yet written):
+The whole harness adopts at the **seam** `createAnalytics(config, recordingAdapter, deps)` — its public second-param injectable `AnalyticsAdapter` — with Fernly's own in-memory recording adapter (shape (A), architect-ruled 2026-07-08). No slice instantiates `BrowserAdapter`. `examples/fernly` is a real pnpm workspace member exposing `typecheck` + `test` (no `build`), enrolled in `turbo run typecheck` against the real packages' built `dist/*.d.ts` — that gate IS the bar-B proof. All 8 stories live in [`stories/2-ready-for-dev/`](../stories/2-ready-for-dev/).
 
-- **E10-S1** — scaffold `examples/fernly/` wired to a mock/in-memory adapter; headless no-op with no key (E2).
-- **E10-S2** — Fernly taxonomy via `defineTaxonomy<T>()` + identity mapping (reviewer/workspace/team/role) onto `identify`/`group`/`setTraits` (E3, identify).
-- **E10-S3** — cross-subdomain cookie config + a simulated `marketing → app` anonymous→identified merge journey; `reset()` clears identity (E4).
-- **E10-S4** — named contexts + capture profiles (`marketing` vs `app`), sharing identity/session/transport (E6).
-- **E10-S5** — allowlist contents + the deliberate off-list-key loud-failure assertion (E3, privacy).
-- **E10-S6** — node-side server capture of `plan_upgraded` keyed on the same distinct id, with a dedupe/insert id (E7).
-- **E10-S7** — KPI/snapshot definitions calling `funnel`/`retention`/`trend`/`uniqueCount`/`rawQuery`, each returning the snapshot shape (E8).
-- **E10-S8** — React/Next wiring: `<AnalyticsProvider>` + `useAnalytics()` + manual router-driven `page()` (E9).
+- **[E10-S1](../stories/2-ready-for-dev/E10-S1-fernly-scaffold-recording-adapter.md)** *(additive, no deps)* — scaffold `examples/fernly/` as a workspace member + the in-memory recording `AnalyticsAdapter` (models the anon→identified merge state machine) + headless no-op with no key. The harness spine.
+- **[E10-S2](../stories/2-ready-for-dev/E10-S2-fernly-taxonomy-identity-mapping.md)** *(additive, ← S1)* — Fernly taxonomy via `defineTaxonomy<T>()` (7 events + traits + `workspace`/`team` groups) + identity mapping (reviewer/workspace/team/role) onto `identify`/`group`/`setTraits`. The one taxonomy every later slice types off.
+- **[E10-S3](../stories/2-ready-for-dev/E10-S3-cross-subdomain-merge-reset.md)** *(additive, ← S1,S2)* — `cookieDomain: '.fernly.example'` config + a simulated `marketing → app` anon→identified merge preserving the id + `reset()` clears identity, proven at the seam (E4).
+- **[E10-S4](../stories/2-ready-for-dev/E10-S4-named-contexts-capture-profiles.md)** *(additive, ← S1,S2)* — named contexts + capture profiles (`marketing` vs `app`) sharing one identity/session/transport, asserted on the stream (E6).
+- **[E10-S5](../stories/2-ready-for-dev/E10-S5-allowlist-loud-failure.md)** *(additive, ← S1,S2)* — explicit `allowlist` + the deliberate off-list-key loud-failure assertion (throw default; drop-and-error-log branch), executable (E3, privacy).
+- **[E10-S6](../stories/2-ready-for-dev/E10-S6-node-server-capture.md)** *(additive, ← S2)* — node `capture(distinctId, 'plan_upgraded', props, {dedupeId})` on the same distinct id + `await shutdown()` in a signal handler; browser + node shown as SIBLINGS (E7).
+- **[E10-S7](../stories/2-ready-for-dev/E10-S7-kpi-snapshot-query-methods.md)** *(additive, ← S2)* — KPI/snapshot defs via `createQueryClient` calling `funnel`/`retention`/`trend`/`uniqueCount`/`rawQuery`, each returning the neutral `QueryResult` snapshot shape (E8).
+- **[E10-S8](../stories/2-ready-for-dev/E10-S8-react-wiring.md)** *(additive, ← S1,S2)* — React binding: `AnalyticsClientProvider` (config-branch shown + client-branch fed the seam+mock) + `useAnalytics<TX>()` + `usePageView` on a consumer-threaded route value; typecheck-only `.tsx` + jsdom test (E9).
+
+Dependency graph: **S1 → S2**; then S2 fans out to **{S3, S4, S5, S8}** (each also ← S1) and **{S6, S7}** (← S2 only, no harness-adapter dep). No cycles. A valid topo order: S1 → S2 → S3 → S4 → S5 → S6 → S7 → S8.
 
 ## Out of scope
 
