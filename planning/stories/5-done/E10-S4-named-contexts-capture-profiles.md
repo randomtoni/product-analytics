@@ -44,3 +44,16 @@ Exercises E6's per-context capture profiles at the seam: the consumer defines na
 - **Runs against the mock (shape A).** All of this is facade behavior — it runs against the recording adapter injected through the seam factory. No `BrowserAdapter`.
 
 ## Shipped
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-09. Exercises E6-S8 per-context capture profiles at the neutral seam (bar-B proof).
+
+- **Files added (examples ONLY — bar B):** `named-contexts-capture-profiles.test.ts` (7 tests) — NO source change; the E6-S8 seam accepts `config.contexts`/`defaultContext` config-only + the recorder already stores the full `NeutralEvent` (so `enrichmentProfile` is inspectable).
+- **New public API:** none — example-only. ZERO `packages/**` edits (bar B).
+- **Shared-core / funnel-stitching (crux):** `context('marketing')` + `context('app')` scoped views BOTH stamp the SAME distinct id (`new Set(distinctIds).size === 1`) — the scoped view holds no identity/session (delegates to the shared impl via `currentDistinctId`→`liveAdapter.getDistinctId`). **Strongest evidence:** the post-`identify` variant — identity is a ROOT verb (absent from `ScopedAnalytics`), so both contexts inherit `reviewer-42` after a root identify (stitch survives an identity transition).
+- **Per-context enrichment (the enrichment-drives-it pin):** each context carries a DISTINCT `enrichment` block (`marketing:{page:true,utm:true}` vs `app:{page:false,utm:false}`); the resolved `enrichmentProfile` on the minted `NeutralEvent` DIFFERS per context (`.toEqual`-expected + `.not.toEqual`-each-other, on `track` AND `page`). **Enrichment-driven, NOT autocapture** — `resolveEnrichmentProfile` reads ONLY `contexts[name].enrichment`; the `bare`-context edge (absent `enrichment`) → `undefined` actively proves autocapture doesn't drive the profile. Regression pin: a ROOT `track` → `enrichmentProfile === undefined` (scoped override never bleeds onto root).
+- **Tests added:** fernly +7 (config-only construct, same-distinct-id both-contexts, same-id-post-identify, enrichmentProfile-differs on track + page, root-undefined regression, bare-context→undefined edge) → 49; turbo typecheck+test green; bar-B holds
+- **Commit:** `E10-S4-named-contexts-capture-profiles — Named contexts + capture profiles sharing identity/session/transport` on `core-cycle`
+- **Reviewer notes:** ship-ready — 0 critical, 0 suggestions
+- **Cross-story seams exposed (S5):** allowlist loud-failure is a DIFFERENT slice — supplies an explicit `allowlist` config + asserts an off-list key (raw-PII e.g. `ssn`) triggers the loud failure. The loud path routes through the facade `enforceAllowlist` gate; `register({ssn})` (`NeutralProperties`) hits it at RUNTIME (an off-list key on a taxonomy-typed props bag is a COMPILE error first — route via `register`). Config-only, independent of context wiring.
