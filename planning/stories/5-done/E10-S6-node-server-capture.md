@@ -48,3 +48,21 @@ Exercises E7: a node-side handler captures a server-truth event (`plan_upgraded`
 - **Same taxonomy, every surface.** Import the S2 `defineTaxonomy` object; `plan_upgraded` and its props type-check identically through node `capture` as through browser `track`.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-09, improvement-pass candidate): `ShapeOfFernly` is derived indirectly via `ReturnType<typeof createAnalytics<...>> extends NodeAnalytics<infer TX>` — the seam exports `ShapeOf`, so `NodeAnalytics<ShapeOf<FernlyTaxonomy['decl']>>` would express intent directly. Cosmetic.
+- > Reviewer suggestion (2026-07-09): the mock `fetch` is cast `as unknown as FetchLike` because `FetchLike = typeof fetch` is wider than node's transport uses — inherent to the public seam type, not the test; if node ever exports a narrower fetch contract the cast could drop.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-09. Exercises E7 node server capture as a SIBLING of the browser client (bar B).
+
+- **Files added (examples ONLY — bar B):** `server/plan-upgrade-handler.ts` (`createFernlyServerAnalytics`, `handlePlanUpgrade` = `capture(distinctId,'plan_upgraded',props,{dedupeId})` + `setTraits` + `setGroupTraits('workspace',…)`, `createShutdownHandler` testable async fn awaiting `shutdown()`, `registerShutdownHandler` SIGTERM/SIGINT via `process.once`) + `.test.ts`
+- **Files changed (examples):** `index.ts` (barrel exports the server handler symbols)
+- **New public API:** none — example-only. ZERO `packages/**` edits (bar B). Same `fernlyTaxonomy` types node `capture` identically to browser `track` (one taxonomy every surface).
+- **Node = SIBLING, not the facade (crux, E7 watch-item):** narrow `capture(distinctId,'plan_upgraded',props,{dedupeId})` with REQUIRED positional distinctId — NO `track`, no unified wrapper (grep-confirmed). The distinct signature IS the proof.
+- **Delivery + idempotency (rigorous):** node BATCHES → injected `config.fetch` fires only after a flush trigger; test `capture` → `await flush()` → gunzips the default-gzipped body (off the real `Content-Encoding` header) → asserts `events[i].uuid === dedupeId` (NOT a `dedupeId` field; `+ not.toHaveProperty('dedupeId')`). Idempotency BOTH directions: duplicate dedupeId → `[dedupeId, dedupeId]` (client does NOT drop — backend dedupes on the shared uuid); no-dedupeId → two distinct minted uuids. Mock transport via `config.fetch` (node has no injectable adapter), never a real endpoint.
+- **await `shutdown()` drains + resolves-not-rejects:** the test buffers WITHOUT flushing, asserts empty deliveries, then the shutdown handler resolves AND the drain delivered the buffered event (drain window genuinely used, with teeth). Unkeyed → `NodeNoop` no-op (bar B — fetch never called).
+- **Non-partial trait/group bags = contract not gap:** `setTraits` needs full `TX['traits']`, `setGroupTraits('workspace')` full group — API working as designed (full-shape sets); no bar-B bug filed.
+- **Tests added:** fernly +7 (dedupeId→wire-uuid, whole-handler same-distinct-id + set_traits nesting, duplicate→same-uuid-twice, no-dedupeId-mints-distinct, await-shutdown-drains-resolves, unkeyed-no-op, SIGTERM/SIGINT registration) → 63; turbo typecheck+test green; bar-B holds
+- **Commit:** `E10-S6-node-server-capture — Node-side server capture of plan_upgraded on the same distinct id` on `core-cycle`
+- **Reviewer notes:** ship-ready — 0 critical, 2 cosmetic suggestions
+- **Cross-story seams exposed (S7):** query is a SEPARATE node surface — `createQueryClient(config)` → `AnalyticsQueryClient` (`funnel`/`retention`/`trend`/`uniqueCount`/`rawQuery`); config uses `personalKey` (query READ key) NOT this story's ingest write `key`; imports the SAME `fernlyTaxonomy`; lands under `examples/fernly/src/` (e.g. `queries/`, sibling to `server/`); does NOT touch this handler.
