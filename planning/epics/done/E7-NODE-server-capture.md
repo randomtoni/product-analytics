@@ -1,6 +1,6 @@
 ---
 id: E7-NODE-server-capture
-status: active
+status: done
 area: node
 touches: [adapters]
 api_impact: additive
@@ -26,16 +26,16 @@ Completes the capture surface with server-truth events: `@analytics-kit/node` ca
 
 ## Stories
 
-Six stories in `stories/2-ready-for-dev/`. Idempotency (caller `dedupeId`) is folded into S2 (the neutral options seat) + S4 (the `dedupeId → wire uuid` mapping) rather than a standalone story — it's a thin cross-cut, not a slice. **Shape (A)** — architect (2026-07-08): node is a STANDALONE client (not an `AnalyticsAdapter`, not driven by `AnalyticsProviderImpl`), reusing the seam only for taxonomy typing + the (S1-hoisted) allowlist guard; the frozen-15 `AnalyticsProvider` pin is untouched. Node re-implements its OWN wire-mapper (the seam defines no canonical wire format). Server-side bot filtering is OUT of R1 node (the bot-denylist hoist is DEFERRED — see Notes).
+All six shipped to `stories/5-done/`. Idempotency (caller `dedupeId`) is folded into S2 (the neutral options seat) + S4 (the `dedupeId → wire uuid` mapping). **Shape (A)**: node is a STANDALONE `NodeAnalytics` client (not an `AnalyticsAdapter`, not driven by `AnalyticsProviderImpl`), reusing the seam only for taxonomy typing + the (S1-hoisted) `enforceAllowlist` guard; the frozen-15 `AnalyticsProvider` pin held. Node re-implements its OWN wire-mapper + gzip (`node:zlib`) + queue (the seam defines no canonical wire format). Server-side bot filtering was OUT of R1 (the bot-denylist hoist stays DEFERRED — no server UA signal — see Notes).
 
-- **[E7-S1](../stories/2-ready-for-dev/E7-S1-hoist-allowlist-guard.md)** *(additive, no deps)* — hoist the allowlist guard out of the private `AnalyticsProviderImpl.allowed()` into an exported neutral seam function; browser delegates to it, node reuses it — one privacy contract, one code path (bar A). Behavior-preserving; existing guard tests stay green. `touches: [core, privacy]`.
-- **[E7-S2](../stories/2-ready-for-dev/E7-S2-node-client-capture.md)** *(additive, depends on E7-S1)* — standalone `NodeAnalytics` client + config-selected factory + taxonomy-typed `capture(distinctId, event, props?, { dedupeId }?)` (distinctId REQUIRED, no persisted anon identity); off-list props fail loudly via the hoisted guard; mints an internal `NeutralEvent` carrying the caller `dedupeId` (or a minted fallback).
-- **[E7-S3](../stories/2-ready-for-dev/E7-S3-server-batch-queue.md)** *(additive, depends on E7-S2)* — in-memory server batch queue with locked defaults (`flushAt=20`/`flushInterval=10000ms`/`maxBatchSize=100`/`maxQueueSize=1000`), size + interval flush triggers, drop-oldest on overflow. No browser transport.
-- **[E7-S4](../stories/2-ready-for-dev/E7-S4-batch-delivery-wire.md)** *(additive, depends on E7-S3)* — node-internal wire-mapper (`dedupeId → top-level uuid`, NOT `$insert_id`) + gzipped `{api_key, batch, sent_at}` envelope POSTed to the config-supplied endpoint via injectable `fetch`; 413 halves the batch and retries; transient-failure retry. `touches: [adapters]`.
-- **[E7-S5](../stories/2-ready-for-dev/E7-S5-server-trait-updates.md)** *(additive, depends on E7-S2)* — `setTraits(distinctId, traits, once?)` + `setGroupTraits(groupType, groupKey, traits)`, taxonomy-typed, allowlist-gated, routed through the same queue/wire; adds the trait-event / group-identify wire mapping to S4's mapper. `touches: [adapters]`.
-- **[E7-S6](../stories/2-ready-for-dev/E7-S6-noop-and-lifecycle.md)** *(additive, depends on E7-S3 + E7-S4)* — whole-stack silent no-op when unkeyed (bar B); real `flush()` (force-drain) + `shutdown()` (drain within a configurable `shutdownTimeoutMs`, quiesce). `touches: [adapters]`.
+- **[E7-S1](../stories/5-done/E7-S1-hoist-allowlist-guard.md)** *(done — `3f3fb2f`)* — hoisted the private `allowed()` into exported `enforceAllowlist` (variadic, both policy branches verbatim, keys-only) + exported `PropsParam`; browser delegates, node reuses — **bar A is literally one privacy code path**. `touches: [core, privacy]`.
+- **[E7-S2](../stories/5-done/E7-S2-node-client-capture.md)** *(done — `2c7e429`)* — standalone `NodeAnalytics` client + config-selected factory + settled two-overload taxonomy-typed `capture(distinctId, event, props?, { dedupeId }?)` (distinctId REQUIRED); off-list fails loudly via the shared guard; mints a `NeutralEvent` with `node:crypto` `dedupeId` fallback. Own `keyof` pin.
+- **[E7-S3](../stories/5-done/E7-S3-server-batch-queue.md)** *(done — `05ed33b`)* — node's own `BatchQueue<T>` (locked defaults 20/10000/100/1000, size+interval earlier-of triggers, `maxBatchSize` slicing, drop-oldest, injected `send`). No browser transport.
+- **[E7-S4](../stories/5-done/E7-S4-batch-delivery-wire.md)** *(done — `efcd87b`)* — node wire-mapper (`dedupeId → top-level uuid`, NO `$insert_id`) + gzip (`node:zlib`) `{api_key, batch, sent_at}` envelope POSTed to the config endpoint via injectable `fetch`; per-delivery 413-halving + fixed-delay transient retry (resolves on give-up). `touches: [adapters]`.
+- **[E7-S5](../stories/5-done/E7-S5-server-trait-updates.md)** *(done — `b57177a`)* — `setTraits(distinctId, traits, once?)` + `setGroupTraits(...)`, taxonomy-typed + gated, node's `$set`/`$groupidentify` NESTED-in-`properties` wire shape (not browser's top-level lift), keyed off reserved event names. `touches: [adapters]`.
+- **[E7-S6](../stories/5-done/E7-S6-noop-and-lifecycle.md)** *(done — `b1e0524`)* — `NodeNoop` null-object (unkeyed whole-stack no-op, bar B); real `flush()` force-drain + `shutdown()` loop-drain within configurable `shutdownTimeoutMs` (resolve-on-timeout) + quiesce (no post-shutdown re-arm). `touches: [adapters]`.
 
-Dependency graph: `E7-S1 → E7-S2 → { E7-S3 → E7-S4 → E7-S6 ; E7-S5 }`. E7-S5 depends only on E7-S2 (adds trait verbs; its wire mapping lands on top of E7-S4's mapper, so build E7-S5 after E7-S4 in practice even though the hard dep is E7-S2). E7-S6 needs both the queue (E7-S3) and delivery (E7-S4).
+Built topo order: `E7-S1 → E7-S2 → E7-S3 → E7-S4 → E7-S5 → E7-S6`. Deferred cross-adapter follow-up (from S5 review): replace name-based reserved-event recognition (`MERGE_EVENT`/`AUTOCAPTURE_EVENT`/`set_traits`/`set_group_traits`) with a structural `NeutralEvent` discriminant — a SEAM change retiring the untyped-hatch collision across browser + node at once.
 
 ## Out of scope
 
