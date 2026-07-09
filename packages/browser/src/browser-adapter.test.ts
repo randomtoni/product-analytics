@@ -1741,9 +1741,23 @@ describe('fetch REJECTION is normalized to status-0 → re-held + persisted, nev
     return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
   }
 
+  // The offline queue namespaces its durable key per tab (`${queueStoreName(key)}__${tabId}`),
+  // so scan every localStorage key under the shared prefix and union their batches — the
+  // multi-tab-safe read the reap logic requires. Returns null when no tab has persisted.
   function persistedEnvelope(key: string): { batches: Record<string, unknown>[][] } | null {
-    const raw = localStorage.getItem(queueStoreName(key));
-    return raw === null ? null : (JSON.parse(raw) as { batches: Record<string, unknown>[][] });
+    const prefix = `${queueStoreName(key)}__`;
+    const batches: Record<string, unknown>[][] = [];
+    let found = false;
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const name = localStorage.key(i);
+      if (name === null || !name.startsWith(prefix)) continue;
+      found = true;
+      const raw = localStorage.getItem(name);
+      if (raw === null) continue;
+      const envelope = JSON.parse(raw) as { batches: Record<string, unknown>[][] };
+      batches.push(...envelope.batches);
+    }
+    return found ? { batches } : null;
   }
 
   test('sendBatchWithRetry does NOT throw/reject when fetch REJECTS (browser fetch rejects on network failure)', async () => {
@@ -1997,11 +2011,19 @@ describe('client rate limiter + neutralized back-pressure (S4)', () => {
 
   // Read the durable offline-queue envelope straight off storage. The cool-off re-hold
   // mirrors the retry-queue snapshot here, so a batch held during a cool-off is visible.
+  // The key is namespaced per tab, so scan every key under the shared prefix and union.
   function persistedUuids(key: string): string[] {
-    const raw = localStorage.getItem(queueStoreName(key));
-    if (raw === null) return [];
-    const { batches } = JSON.parse(raw) as { batches: Record<string, unknown>[][] };
-    return batches.flat().map((e) => e.uuid as string);
+    const prefix = `${queueStoreName(key)}__`;
+    const uuids: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const name = localStorage.key(i);
+      if (name === null || !name.startsWith(prefix)) continue;
+      const raw = localStorage.getItem(name);
+      if (raw === null) continue;
+      const { batches } = JSON.parse(raw) as { batches: Record<string, unknown>[][] };
+      uuids.push(...batches.flat().map((e) => e.uuid as string));
+    }
+    return uuids;
   }
 
   test('a batch caught by a server cool-off is RE-HELD, not dropped — it survives the window and re-delivers (fake timers)', async () => {
@@ -3130,10 +3152,39 @@ describe('offline queue persistence — survives a reload (S9, NEW WORK)', () =>
     return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
   }
 
-  // Read the persisted envelope straight off durable storage for a given key.
+  // Read the persisted envelope straight off durable storage for a given key. The offline
+  // queue namespaces its key per tab (`${queueStoreName(key)}__${tabId}`), so scan every
+  // key under the shared prefix and union their batches — the multi-tab-safe read.
   function persistedEnvelope(key: string): { batches: unknown[] } | null {
-    const raw = localStorage.getItem(queueStoreName(key));
-    return raw === null ? null : (JSON.parse(raw) as { batches: unknown[] });
+    const prefix = `${queueStoreName(key)}__`;
+    const batches: unknown[] = [];
+    let found = false;
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const name = localStorage.key(i);
+      if (name === null || !name.startsWith(prefix)) continue;
+      found = true;
+      const raw = localStorage.getItem(name);
+      if (raw === null) continue;
+      batches.push(...(JSON.parse(raw) as { batches: unknown[] }).batches);
+    }
+    return found ? { batches } : null;
+  }
+
+  // The single per-tab namespaced key this run wrote (exactly one adapter ⇒ one key).
+  function soleQueueKey(key: string): string | null {
+    const prefix = `${queueStoreName(key)}__`;
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const name = localStorage.key(i);
+      if (name !== null && name.startsWith(prefix)) return name;
+    }
+    return null;
+  }
+
+  // Every uuid mirrored across ALL tabs' namespaced keys (the multi-tab union view).
+  function persistedUuids(key: string): string[] {
+    const envelope = persistedEnvelope(key);
+    if (envelope === null) return [];
+    return (envelope.batches as Record<string, unknown>[][]).flat().map((e) => e.uuid as string);
   }
 
   // THE headline reload test.
@@ -3270,6 +3321,63 @@ describe('offline queue persistence — survives a reload (S9, NEW WORK)', () =>
     expect(reloadedCalls).toHaveLength(0);
   });
 
+  test('a second tab does NOT clobber a first tab\'s persisted queue (multi-tab defect #9)', async () => {
+    const key = freshKey();
+    granted(makeAdapter({ key, persistence: 'localStorage+cookie' }));
+
+    // --- tab A: captures offline, so its undelivered batch is mirrored to disk. ---
+    const tabA = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    mockFetchStatuses(tabA, [0]);
+    tabA.capture(makeEvent({ dedupeId: 'tab-A-offline' }));
+    await tabA.flush();
+    // Quiesce tab A so it does not re-send on the shared window while tab B constructs.
+    (tabA as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    (tabA as unknown as { retryQueue: { drain: () => void } }).retryQueue.drain();
+    expect(persistedUuids(key)).toContain('tab-A-offline');
+
+    // --- tab B: a fresh adapter over the SAME storage, EMPTY retry queue. Its first send
+    // outcome mirrors an empty snapshot → persist([]) → remove(tab B's key). Under the old
+    // shared-key design this DELETED tab A's mirrored batch (the clobber). ---
+    const tabB = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    mockFetchStatuses(tabB, [200]); // tab B delivers cleanly ⇒ persists an empty snapshot
+    tabB.capture(makeEvent({ dedupeId: 'tab-B-online' }));
+    await tabB.flush();
+
+    // Tab A's batch SURVIVES — tab B removed only its OWN (empty) namespaced key.
+    expect(persistedUuids(key)).toContain('tab-A-offline');
+  });
+
+  test('a reload UNIONS every tab\'s persisted batches and re-sends them all, then clears every key', async () => {
+    vi.useFakeTimers();
+    const key = freshKey();
+    granted(makeAdapter({ key, persistence: 'localStorage+cookie' }));
+
+    // Two independent tabs each strand an undelivered batch offline.
+    for (const uuid of ['from-tab-A', 'from-tab-B']) {
+      const tab = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+      mockFetchStatuses(tab, [0]);
+      tab.capture(makeEvent({ dedupeId: uuid }));
+      await tab.flush();
+      (tab as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+      (tab as unknown as { retryQueue: { drain: () => void } }).retryQueue.drain();
+    }
+    // Both tabs' batches sit under distinct namespaced keys.
+    expect(persistedUuids(key).sort()).toEqual(['from-tab-A', 'from-tab-B']);
+
+    // A reload (fresh tab) scans + unions BOTH keys and re-sends every stranded batch.
+    const reloaded = makeAdapter({ key, persistence: 'localStorage+cookie', ingestHost: INGEST, compression: false });
+    const reloadedCalls = mockFetchStatuses(reloaded, [200]);
+    await vi.advanceTimersByTimeAsync(6000);
+
+    const delivered = reloadedCalls.flatMap((c) => batchOf(c.options).map((e) => e.uuid as string));
+    expect(delivered).toContain('from-tab-A');
+    expect(delivered).toContain('from-tab-B');
+    // Delivered ⇒ every namespaced key is pruned (ownership taken + orphans reaped).
+    expect(persistedEnvelope(key)).toBeNull();
+
+    vi.useRealTimers();
+  });
+
   test('the persisted queue lives under its OWN store name — it does not pollute the property store', async () => {
     const key = freshKey();
     // Grant consent in a prior instance so the reloaded adapter builds a localStorage-
@@ -3283,13 +3391,16 @@ describe('offline queue persistence — survives a reload (S9, NEW WORK)', () =>
     adapter.capture(makeEvent({ dedupeId: 'own-store' }));
     await adapter.flush();
 
-    // The two stores are distinct top-level keys — the queue is NOT the property store.
+    // The two stores are distinct top-level keys — the per-tab queue key is prefixed by the
+    // queue base name, never the property-store name.
     expect(queueStoreName(key)).not.toBe(storeName(key));
-    expect(localStorage.getItem(queueStoreName(key))).not.toBeNull();
+    const queueKey = soleQueueKey(key);
+    expect(queueKey).not.toBeNull();
+    expect(queueKey!.startsWith(`${queueStoreName(key)}__`)).toBe(true);
 
     // The transport batch envelope lives ONLY under the queue key: it holds `batches`
     // and carries none of the identity/super-prop vocabulary the property store owns.
-    const queueEntry = JSON.parse(localStorage.getItem(queueStoreName(key)) as string) as Record<string, unknown>;
+    const queueEntry = JSON.parse(localStorage.getItem(queueKey!) as string) as Record<string, unknown>;
     expect(queueEntry).toHaveProperty('batches');
     expect(queueEntry).not.toHaveProperty('plan');
 
@@ -3311,7 +3422,7 @@ describe('offline queue persistence — survives a reload (S9, NEW WORK)', () =>
     adapter.capture(makeEvent({ dedupeId: 'envelope' }));
     await adapter.flush();
 
-    const raw = JSON.parse(localStorage.getItem(queueStoreName(key)) as string) as Record<string, unknown>;
+    const raw = JSON.parse(localStorage.getItem(soleQueueKey(key) as string) as string) as Record<string, unknown>;
     // An object envelope (room for a version/metadata field), readable via parse()?.batches.
     expect(Array.isArray(raw)).toBe(false);
     expect(raw).toHaveProperty('batches');

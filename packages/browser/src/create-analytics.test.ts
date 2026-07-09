@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { NoopAdapter } from 'analytics-kit';
 import { createAnalytics, cryptoRandomId, resolveAdapter } from './create-analytics';
 import { BrowserAdapter } from './browser-adapter';
+import { storeName } from './persistence-keys';
 
 const V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -579,5 +580,175 @@ describe('per-context capture profiles — named contexts applied by config only
     const detach = (adapter as unknown as { detachAutocaptureListeners?: () => void })
       .detachAutocaptureListeners;
     expect(typeof detach).toBe('function');
+  });
+});
+
+// --- Defect #11: a super-prop registered while opted-out survives opt-in + reload ---
+// Generalizes to ANY consumer register() while opted-out, not just the config country prop:
+// the facade routes register() to the LIVE adapter (like reset), so under pending the value
+// lands in the memory-backed store — retained, never persisted/sent — and promoteToDurable
+// flushes it durable on optIn(). Country is exercised alongside a bare consumer register().
+describe('super-prop registered while opted-out survives opt-in + reload (defect #11)', () => {
+  let keySeq = 0;
+  function freshKey(): string {
+    keySeq += 1;
+    return `optout-register-${keySeq}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  afterEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  // Read the super-props merged onto a captured event by running an event through the SAME
+  // adapter's pipeline. Reserved/identity keys are excluded by mergeSuperProperties, so what
+  // survives here are the consumer super-props (country, plan) stamped as event defaults.
+  function eventProps(adapter: BrowserAdapter): Record<string, unknown> {
+    return adapter.runCapturePipeline({
+      event: 'probe',
+      distinctId: adapter.getDistinctId(),
+      dedupeId: 'd',
+      timestamp: new Date(),
+    }).properties as Record<string, unknown>;
+  }
+
+  test("country+plan-survive-opt-in→reload: pending register lands in MEMORY only, promotes durable on optIn, survives reload and stamps a captured event", () => {
+    const key = freshKey();
+    // consentDefault unset ⇒ pending resolves to opted-out (fail-safe). A config country
+    // source AND a bare consumer register() both flow through the facade register() gate.
+    const registerSpy = vi.spyOn(BrowserAdapter.prototype, 'register');
+    const analytics = createAnalytics({
+      key,
+      allowlist: ['country', 'plan'],
+      enrichment: { country: { countrySource: 'US' } },
+    });
+    expect(analytics.hasOptedOut()).toBe(true);
+    analytics.register({ plan: 'pro' });
+
+    // (a) WHILE PENDING — both reached the LIVE adapter's store (memory-backed): they are
+    // present as super-props in memory but NOT written to the durable localStorage backend.
+    const live = registerSpy.mock.instances[0] as unknown as BrowserAdapter;
+    const memProps = eventProps(live);
+    expect(memProps.country).toBe('US');
+    expect(memProps.plan).toBe('pro');
+
+    // The durable backend holds nothing yet — the pending client never persisted the props.
+    const durableRaw = localStorage.getItem(storeName(key));
+    if (durableRaw !== null) {
+      const durable = JSON.parse(durableRaw) as Record<string, unknown>;
+      expect(durable).not.toHaveProperty('country');
+      expect(durable).not.toHaveProperty('plan');
+    }
+
+    // ...and a track while pending does NOT emit (capture gated at the facade AND the adapter).
+    const pipeline = vi.spyOn(BrowserAdapter.prototype, 'runCapturePipeline');
+    analytics.track('purchase');
+    expect(pipeline).not.toHaveBeenCalled();
+    pipeline.mockRestore();
+
+    // (b) AFTER optIn — promoteToDurable flushes memory→durable synchronously, so the
+    // durable backend now holds both super-props.
+    analytics.optIn();
+    const promotedRaw = localStorage.getItem(storeName(key));
+    expect(promotedRaw).not.toBeNull();
+    const promoted = JSON.parse(promotedRaw as string) as Record<string, unknown>;
+    expect(promoted.country).toBe('US');
+    expect(promoted.plan).toBe('pro');
+
+    // ...and a SIMULATED RELOAD — a fresh client over the SAME durable backend — recovers
+    // BOTH super-props and stamps them onto a captured event.
+    const reloaded = resolveAdapter({
+      key,
+      allowlist: ['country', 'plan'],
+    } as Parameters<typeof resolveAdapter>[0]) as BrowserAdapter;
+    const reloadedProps = eventProps(reloaded);
+    expect(reloadedProps.country).toBe('US');
+    expect(reloadedProps.plan).toBe('pro');
+  });
+
+  test('allowlist-still-gates-on-pending: an off-list country register throws while opted-out (gate not bypassed by the live route)', () => {
+    // Allowlist EXCLUDES country; onViolation defaults to throw. The register gate fires on
+    // the pending path exactly as on the granted path — the live route does not bypass it.
+    expect(() =>
+      createAnalytics({
+        key: freshKey(),
+        allowlist: ['plan'],
+        enrichment: { country: { countrySource: 'US' } },
+      })
+    ).toThrow(/country.*allowlist/);
+  });
+
+  test("allowlist-still-gates-on-pending (drop): an off-list pending register drops and never persists", () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const key = freshKey();
+
+    createAnalytics({
+      key,
+      allowlist: ['plan'],
+      onViolation: 'drop-and-error-log',
+      enrichment: { country: { countrySource: 'US' } },
+    });
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('country'));
+    // Dropped at the gate ⇒ never stored ⇒ not in memory nor durable.
+    const adapter = resolveAdapter({ key } as Parameters<typeof resolveAdapter>[0]) as BrowserAdapter;
+    expect(eventProps(adapter)).not.toHaveProperty('country');
+  });
+
+  test('denied-never-sent: a DENIED client register never writes durable, the transport spy sees nothing, and no super-prop survives reload', async () => {
+    const key = freshKey();
+    // A real POST/beacon must never carry the registered super-prop under denial. Spy the
+    // wire transports so any send is observable. jsdom's navigator has no sendBeacon, so
+    // define a spy-able stub before spying (the beacon path reads navigator.sendBeacon).
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true}', { status: 200 })
+    );
+    const beacon = vi.fn((): boolean => true);
+    const priorBeacon = (navigator as unknown as { sendBeacon?: unknown }).sendBeacon;
+    Object.defineProperty(navigator, 'sendBeacon', {
+      value: beacon,
+      configurable: true,
+      writable: true,
+    });
+
+    // consentDefault unset (pending) then an explicit optOut → durable 'denied'.
+    const analytics = createAnalytics({
+      key,
+      allowlist: ['plan'],
+      ingestHost: 'https://ingest.example.com',
+    });
+    analytics.optOut();
+    expect(analytics.hasOptedOut()).toBe(true);
+
+    analytics.register({ plan: 'pro' });
+    analytics.track('purchase');
+    await analytics.flush();
+    window.dispatchEvent(new Event('beforeunload'));
+
+    // Retain-in-memory is fine; SENT or PERSISTED is the failure. Nothing on the wire.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(beacon).not.toHaveBeenCalled();
+
+    // The durable backend was never written while denied.
+    const durableRaw = localStorage.getItem(storeName(key));
+    if (durableRaw !== null) {
+      const durable = JSON.parse(durableRaw) as Record<string, unknown>;
+      expect(durable).not.toHaveProperty('plan');
+    }
+
+    // After a reload (fresh client over the same backend) the super-prop is NOT present —
+    // it lived only in the prior client's memory and was never persisted.
+    const reloaded = resolveAdapter({ key } as Parameters<typeof resolveAdapter>[0]) as BrowserAdapter;
+    expect(eventProps(reloaded)).not.toHaveProperty('plan');
+
+    if (priorBeacon === undefined) {
+      delete (navigator as unknown as { sendBeacon?: unknown }).sendBeacon;
+    } else {
+      Object.defineProperty(navigator, 'sendBeacon', {
+        value: priorBeacon,
+        configurable: true,
+        writable: true,
+      });
+    }
   });
 });

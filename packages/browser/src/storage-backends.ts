@@ -20,6 +20,14 @@ export interface StorageBackend {
   remove(name: string): void;
 }
 
+// A backend that can ENUMERATE its stored keys by prefix — the extra capability the
+// multi-tab offline queue needs to scan every tab's namespaced entry. Kept OFF the base
+// StorageBackend contract: only the localStorage backend can honestly enumerate (a cookie
+// backend cannot), and only the offline queue consumes it, on the localStorage-backed path.
+export interface EnumerableBackend {
+  listKeysByPrefix(prefix: string): string[];
+}
+
 const COOKIE_EXPIRY_DAYS = 365;
 
 function parseJson(raw: string | null): StorageEntry | null {
@@ -101,7 +109,7 @@ export function createCookieBackend(options: CookieBackendOptions = {}): Storage
 // never cross-subdomain) and the existing storage tests use this instance.
 export const cookieBackend: StorageBackend = createCookieBackend();
 
-export const localStorageBackend: StorageBackend = {
+export const localStorageBackend: StorageBackend & EnumerableBackend = {
   isSupported() {
     if (!hasLocalStorage()) {
       return false;
@@ -150,13 +158,31 @@ export const localStorageBackend: StorageBackend = {
       // storage removal is best-effort; a failure here is non-fatal
     }
   },
+
+  listKeysByPrefix(prefix) {
+    try {
+      if (!hasLocalStorage()) {
+        return [];
+      }
+      const keys: string[] = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key !== null && key.startsWith(prefix)) {
+          keys.push(key);
+        }
+      }
+      return keys;
+    } catch {
+      return [];
+    }
+  },
 };
 
 // Owns its own map, so a fresh instance starts empty (a real reload is a fresh
 // page ⇒ fresh instance) and two clients never cross-contaminate. One instance
 // per client must be shared between the property store and any raw pre-store
 // read so writes on one are visible to the other.
-export function createMemoryBackend(): StorageBackend {
+export function createMemoryBackend(): StorageBackend & EnumerableBackend {
   const entries = new Map<string, unknown>();
   return {
     isSupported: () => true,
@@ -172,6 +198,15 @@ export function createMemoryBackend(): StorageBackend {
     },
     remove(name) {
       entries.delete(name);
+    },
+    listKeysByPrefix(prefix) {
+      const keys: string[] = [];
+      for (const key of entries.keys()) {
+        if (key.startsWith(prefix)) {
+          keys.push(key);
+        }
+      }
+      return keys;
     },
   };
 }

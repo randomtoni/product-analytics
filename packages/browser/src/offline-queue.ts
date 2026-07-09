@@ -11,8 +11,15 @@
 // storage for free — whatever the retry queue currently holds IS exactly what
 // should survive a reload. Persistence is gated on granted consent, and rides the
 // E4 StorageBackend graceful-fallback machinery under its own store name.
+//
+// MULTI-TAB SAFETY: the durable store is namespaced PER TAB. Each adapter instance owns
+// a unique per-tab key (`${scanPrefix}${tabId}`); persist/drop touch ONLY that key, so a
+// second tab constructing with an empty retry queue can never overwrite (clobber) a first
+// tab's mirrored batches. rehydrate() instead SCANS every tab's key under the shared
+// `scanPrefix`, unions their batches, then clears all scanned keys — taking ownership into
+// this tab's in-memory retry queue and reaping keys orphaned by crashed/closed tabs.
 
-import type { StorageBackend } from './storage-backends';
+import type { StorageBackend, EnumerableBackend } from './storage-backends';
 
 // The durable envelope. An OBJECT (not a bare array) so `StorageBackend.parse` —
 // which returns a Record, not an array — round-trips it on the typed path, and so a
@@ -28,8 +35,17 @@ interface QueueEnvelope<T> {
 export const DEFAULT_MAX_PERSISTED_BATCHES = 100;
 
 export interface OfflineQueueStoreOptions {
-  backend: StorageBackend;
+  // An enumerable backend: rehydrate() must scan sibling tabs' keys, so the offline queue
+  // requires the localStorage-backed EnumerableBackend, not any StorageBackend. A cookie
+  // backend cannot enumerate and never backs this store (see browser-adapter).
+  backend: StorageBackend & EnumerableBackend;
+  // This tab's OWN namespaced key — persist/drop operate only here, so a second tab's
+  // empty snapshot removes only its own (empty) key, never another tab's batches.
   name: string;
+  // The shared base prefix every tab's key starts with (`name` === `${scanPrefix}${tabId}`).
+  // rehydrate() scans all keys under this prefix to union batches across tabs and reap
+  // orphaned keys. Defaults to `name` when absent (single-key legacy behavior).
+  scanPrefix?: string;
   // Whether persistence is currently permitted. An opted-out client (consent not
   // granted) persists NOTHING and any existing persisted queue is dropped — the
   // E4-S3 / S2 drop-not-flush contract, extended across a reload.
@@ -38,14 +54,16 @@ export interface OfflineQueueStoreOptions {
 }
 
 export class OfflineQueueStore<T> {
-  private readonly backend: StorageBackend;
+  private readonly backend: StorageBackend & EnumerableBackend;
   private readonly name: string;
+  private readonly scanPrefix: string;
   private readonly isPersistenceAllowed: () => boolean;
   private readonly maxBatches: number;
 
   constructor(options: OfflineQueueStoreOptions) {
     this.backend = options.backend;
     this.name = options.name;
+    this.scanPrefix = options.scanPrefix ?? options.name;
     this.isPersistenceAllowed = options.isPersistenceAllowed;
     this.maxBatches = options.maxBatches ?? DEFAULT_MAX_PERSISTED_BATCHES;
   }
@@ -71,25 +89,40 @@ export class OfflineQueueStore<T> {
     this.backend.set(this.name, envelope);
   }
 
-  // Read-then-clear: take ownership of the persisted batches into the caller (a
-  // durable analogue of RetryQueue.drain()), clearing the durable entry so a
-  // persistently-failing batch does not rehydrate forever — the normal mirror
-  // re-persists only what is still undelivered after the first send cycle. An
-  // opted-out client rehydrates nothing and its persisted queue is dropped. A
-  // corrupt / unexpected-shape entry fails closed to "nothing to rehydrate".
+  // Read-then-clear across ALL tabs: scan every namespaced key under the shared prefix
+  // (this tab's own key plus any left by sibling / crashed / closed tabs), UNION their
+  // batches in scan order, then REMOVE every scanned key. This takes ownership of the whole
+  // cross-tab undelivered set into the caller (a durable, multi-tab analogue of
+  // RetryQueue.drain()) and reaps orphaned keys, so a persistently-failing batch does not
+  // rehydrate forever — the normal per-tab mirror re-persists only what is still undelivered
+  // after the first send cycle. The union is capped after merge (oldest dropped past the
+  // cap). uuid dedupe upstream makes any double-send from a still-live sibling tab harmless.
+  // An opted-out client rehydrates nothing and drops every namespaced key. A corrupt /
+  // unexpected-shape entry contributes no batch (fails closed).
   rehydrate(): ReadonlyArray<ReadonlyArray<T>> {
     if (!this.isPersistenceAllowed()) {
       this.drop();
       return [];
     }
-    const entry = this.backend.parse(this.name);
-    this.backend.remove(this.name);
-    return this.readBatches(entry);
+    const keys = this.backend.listKeysByPrefix(this.scanPrefix);
+    const merged: ReadonlyArray<T>[] = [];
+    for (const key of keys) {
+      const entry = this.backend.parse(key);
+      this.backend.remove(key);
+      merged.push(...this.readBatches(entry));
+    }
+    return this.capOldest(merged);
   }
 
-  // Drop the durable queue outright (opt-out): remove the entry, persist nothing.
+  // Drop the durable queue outright (opt-out): remove EVERY namespaced key under the shared
+  // prefix — this tab's and every sibling tab's — so a denial leaves nothing that could
+  // rehydrate and re-send after a reload (the E4-S3 drop-not-flush contract, extended across
+  // tabs). Scanning here mirrors rehydrate: a consent denial in one tab must reap all tabs'
+  // mirrored batches, not only its own.
   drop(): void {
-    this.backend.remove(this.name);
+    for (const key of this.backend.listKeysByPrefix(this.scanPrefix)) {
+      this.backend.remove(key);
+    }
   }
 
   private capOldest(

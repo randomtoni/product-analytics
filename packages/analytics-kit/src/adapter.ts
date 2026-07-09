@@ -29,6 +29,8 @@ export interface AnalyticsAdapter {
   // keeps the first value. `unregister` removes a single key. The stored super-props
   // are merged into every captured event downstream, trusted — the facade gated them
   // at registration, so the merge never re-gates.
+  // Invariant: register/unregister must not persist or transmit while consent is not
+  // granted — a value registered under a non-granted decision stays in memory only.
   register(props: NeutralProperties, options?: RegisterOptions): void;
   unregister(key: string): void;
   // Re-anonymize: regenerate the anonymous distinct id and clear identity /

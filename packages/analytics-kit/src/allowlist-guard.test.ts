@@ -203,10 +203,14 @@ test('the register gate fires even after optOut — a super-prop violation surfa
 
   analytics.optOut();
 
+  // The E3 gate still fires on an off-list key while opted out.
   expect(() => analytics.register({ secret: 1 })).toThrow(/secret/);
-  // an on-list super-prop while opted out is swallowed by the no-op — no throw, no register
+  // An on-list super-prop passes the gate and reaches the LIVE adapter (register is a
+  // persistence op, routed like reset) — retained in memory under opt-out to survive a
+  // later opt-in promotion, NOT discarded by the consent swap. The live adapter's own
+  // consent posture keeps it memory-only (never persisted/sent) while opted out.
   expect(() => analytics.register({ plan: 'pro' })).not.toThrow();
-  expect(adapter.registered).toHaveLength(0);
+  expect(adapter.registered).toEqual([{ props: { plan: 'pro' }, options: undefined }]);
 });
 
 test('an undefined allowlist leaves register ungated — any super-prop passes', () => {

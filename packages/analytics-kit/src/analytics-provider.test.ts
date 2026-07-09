@@ -284,19 +284,88 @@ test('unregister delegates the single key to adapter.unregister', () => {
   expect(adapter.unregistered).toEqual(['plan']);
 });
 
-test('under opt-out register/unregister route to the no-op — the live adapter records nothing', () => {
+test('register-while-pending-hits-liveAdapter: an opted-out register/unregister reaches the LIVE adapter, not the no-op', () => {
   const adapter = new RecordingAdapter();
+  // Resolve OPTED-OUT: pending consent with no consentDefault 'granted' ⇒ fail-safe opt-out.
+  adapter.consentState = 'pending';
   const analytics = new AnalyticsProviderImpl(adapter);
+  expect(analytics.hasOptedOut()).toBe(true);
 
-  analytics.optOut();
   analytics.register({ plan: 'pro' });
   analytics.register({ firstSeen: 1 }, { once: true });
   analytics.unregister('plan');
 
+  // Registration is a persistence op, not a capture op: it routes to the LIVE adapter
+  // (like reset), so the value reaches its store — under pending that store is memory-
+  // backed, retained in memory to survive a later opt-in promotion. The no-op-swap never
+  // discarded it.
+  expect(adapter.registered).toEqual([
+    { props: { plan: 'pro' }, options: undefined },
+    { props: { firstSeen: 1 }, options: { once: true } },
+  ]);
+  expect(adapter.unregistered).toEqual(['plan']);
+});
+
+test('a DENIED client register reaches the LIVE adapter (retained in memory) yet the facade emits/captures nothing', () => {
+  const adapter = new RecordingAdapter();
+  adapter.consentState = 'denied';
+  const analytics = new AnalyticsProviderImpl(adapter);
+  expect(analytics.hasOptedOut()).toBe(true);
+
+  analytics.register({ plan: 'pro' });
+  analytics.track('x');
+  analytics.page('home');
+
+  // Denied: register still reaches the live adapter (memory-retained; the adapter's own
+  // consent posture keeps it from persisting/transmitting) — but no capture is emitted.
+  expect(adapter.registered).toEqual([{ props: { plan: 'pro' }, options: undefined }]);
+  expect(adapter.captured).toHaveLength(0);
+});
+
+test('the allowlist gate STILL fires on the pending register path — an off-list key throws (not bypassed by the live route)', () => {
+  const adapter = new RecordingAdapter();
+  adapter.consentState = 'pending';
+  const analytics = new AnalyticsProviderImpl(adapter, ['plan'], 'throw');
+  expect(analytics.hasOptedOut()).toBe(true);
+
+  // The E3 allowlist gate sits ABOVE the live route: an off-list super-prop is rejected
+  // on the pending path exactly as on the granted path — the live route does not bypass it.
+  expect(() => analytics.register({ country: 'US' })).toThrow(/allowlist/);
+  expect(() => analytics.unregister('country')).toThrow(/allowlist/);
   expect(adapter.registered).toHaveLength(0);
   expect(adapter.unregistered).toHaveLength(0);
-  // No persistence write reaches the live adapter while opted out.
-  expect(adapter.persistedWrites).toHaveLength(0);
+});
+
+test("an off-list pending register under 'drop-and-error-log' drops without reaching the live adapter", () => {
+  const adapter = new RecordingAdapter();
+  adapter.consentState = 'pending';
+  const errors: unknown[][] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]): void => {
+    errors.push(args);
+  };
+  try {
+    const analytics = new AnalyticsProviderImpl(adapter, ['plan'], 'drop-and-error-log');
+
+    analytics.register({ country: 'US' });
+
+    // Dropped at the gate ⇒ never reaches the live adapter's store, even though the route
+    // is now the live adapter.
+    expect(adapter.registered).toHaveLength(0);
+    expect(errors.length).toBeGreaterThan(0);
+  } finally {
+    console.error = original;
+  }
+});
+
+test('an on-allowlist pending register reaches the live adapter (gate passes, then the live route stores it)', () => {
+  const adapter = new RecordingAdapter();
+  adapter.consentState = 'pending';
+  const analytics = new AnalyticsProviderImpl(adapter, ['country'], 'throw');
+
+  analytics.register({ country: 'US' });
+
+  expect(adapter.registered).toEqual([{ props: { country: 'US' }, options: undefined }]);
 });
 
 test('flush delegates to adapter.flush and resolves', async () => {

@@ -205,18 +205,25 @@ export class AnalyticsProviderImpl implements RootAnalytics {
     // drop/throw semantics verbatim. Stored super-props are trusted at merge time
     // because they crossed the gate here.
     if (!this.allowed(props)) return;
-    this.adapter.register(props, options);
+    // Route to the LIVE adapter, NOT the consent-swapped one — registration is a
+    // persistence op, not a capture op (exactly like reset()). Under pending/denied
+    // the live adapter's store is memory-backed, so the value is retained in memory,
+    // never persisted, never sent (capture stays gated at the facade swap AND the
+    // adapter's own suppression). On optIn() the adapter promotes memory→durable, so a
+    // config/consumer super-prop registered while opted-out survives the grant + reload.
+    this.liveAdapter.register(props, options);
   }
 
   unregister(key: string): void {
     // Gate consistently with register: a key not on the allowlist behaves like an
-    // off-list track key (throw / drop-and-error-log). Routing the removal through
-    // the consent-swappable adapter keeps it inert under opt-out.
+    // off-list track key (throw / drop-and-error-log).
     // The `undefined` sentinel is sound ONLY because allowed() inspects Object.keys
     // and never the values — if allowed() ever starts inspecting values, pass a real
     // presence sentinel here instead.
     if (!this.allowed({ [key]: undefined })) return;
-    this.adapter.unregister(key);
+    // Live adapter, mirroring register() and reset(): a removal is a persistence op.
+    // Under opt-out the live store stays memory-backed, so no durable write occurs.
+    this.liveAdapter.unregister(key);
   }
 
   reset(options?: { resetDevice?: boolean }): void {

@@ -341,11 +341,24 @@ export class BrowserAdapter implements AnalyticsAdapter {
     // instead gated explicitly on live consent here, so an opted-out client persists
     // nothing without entangling the transport buffer in the identity store's
     // memory-swap machinery. It lives under its own store name (transport state, not
-    // identity/super-props). Rehydrate now: read-then-clear any persisted undelivered
-    // batches and hand them to the retry queue to re-send on this load.
+    // identity/super-props).
+    //
+    // MULTI-TAB: the durable key is namespaced with a per-INSTANCE tab id (a fresh uuid
+    // per tab/load), so persist/drop touch only THIS tab's key and a second tab's empty
+    // snapshot can never clobber this tab's mirrored batches. All a project's tab keys
+    // share the `queueStoreName(options.key)` base prefix so rehydrate can scan them.
+    // Rehydrate now: read-then-clear EVERY tab's persisted undelivered batches (own key +
+    // orphans from closed tabs), union them, and hand them to the retry queue to re-send.
+    // A fresh uuid per instance — NOT deviceIdGenerator (that mints the STABLE device
+    // identity, shared across tabs/reloads); the tab id must be unique per tab/load so
+    // two tabs never share a key. generateUuidV7 is the same fresh-per-call minter the
+    // adapter uses for pageview / dedupe ids.
+    const queuePrefix = `${queueStoreName(options.key)}__`;
+    const tabId = generateUuidV7();
     this.offlineQueue = new OfflineQueueStore<WireEvent>({
       backend: localStorageBackend,
-      name: queueStoreName(options.key),
+      name: `${queuePrefix}${tabId}`,
+      scanPrefix: queuePrefix,
       isPersistenceAllowed: () => this.getConsentState() === 'granted',
     });
     for (const batch of this.offlineQueue.rehydrate()) {
