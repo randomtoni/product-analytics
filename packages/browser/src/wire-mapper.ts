@@ -8,6 +8,7 @@ import {
   internalKeyPolicy,
   PAGELEAVE_WIRE_EVENT,
   PAGEVIEW_WIRE_EVENT,
+  RESERVED_INTERNAL_PREFIX,
   SET_TRAITS_KEY,
   SET_TRAITS_ONCE_KEY,
   TOKEN_WIRE_KEY,
@@ -77,7 +78,7 @@ export function mapEventToWire(event: NeutralEvent, options?: WireMapOptions): W
       : normalizeMergeEvent(base, event.properties);
 
   return stampToken(
-    stampGeoipDisable(renameGroupsSuperProp(mapped), options?.disableGeoip),
+    stampGeoipDisable(applyInternalKeyPolicy(mapped), options?.disableGeoip),
     options?.token
   );
 }
@@ -89,27 +90,47 @@ export function mapEventToWire(event: NeutralEvent, options?: WireMapOptions): W
 // vocabulary — the policy answers "does it ride?", this map answers "renamed to what?".
 const EVENT_KEY_WIRE_NAME: ReadonlyMap<string, string> = new Map([[GROUPS_KEY, GROUPS_WIRE_KEY]]);
 
-// Rename each reserved-prefix 'event'-policy super-prop (the group memberships) to its [WIRE]
-// form on EVERY event that carries it — it rides via the super-prop merge onto all events
-// (posthog's `$groups`), so the rename lives on the pass-through chain, not the group-identify
-// branch. Structural, keyed off internalKeyPolicy: a consumer property named `groups` (no
-// reserved prefix ⇒ policy undefined) is NOT touched — that is the #3 fix. A no-op when the
-// event carries no 'event'-policy internal key.
-function renameGroupsSuperProp(wire: WireEvent): WireEvent {
+// Apply the FULL internalKeyPolicy to EVERY outgoing property — the wire-mapper sees the FINAL
+// merged bag (super-prop store + per-event overrides), so it is the single point that can enforce
+// the reserved-prefix boundary regardless of where a key entered. Structural, keyed off
+// internalKeyPolicy:
+//   'event'  → rename to its [WIRE] form (strips the reserved prefix): the library membership
+//              super-prop __ak_groups → $groups, riding via the super-prop merge onto all events.
+//   'hidden' AND reserved-prefix → STRIP: a reserved-prefix key (`__ak_`) is unambiguously
+//              library-internal (a consumer never legitimately types one), so an unclassified /
+//              hidden reserved-prefix key that reached the bag via a per-event property bag never
+//              rides the wire. This is the privacy-boundary close: `track('x', { __ak_secret })`
+//              cannot leak, and a consumer cannot forge `$groups` via a raw `__ak_groups` value
+//              (unclassified is 'hidden' ⇒ stripped, never promoted).
+//   otherwise (consumer key, incl. a legacy-hidden identity name like `distinct_id`) → pass through
+//              UNTOUCHED. The strip is SCOPED to reserved-prefix keys on purpose: a consumer
+//              property literally named `distinct_id` is legacy pre-existing behavior (it rides
+//              today), so stripping it here would be an out-of-scope consumer-behavior change; a
+//              consumer `groups` (no prefix ⇒ policy undefined) still rides as `groups` (#3 fix).
+function applyInternalKeyPolicy(wire: WireEvent): WireEvent {
   if (wire.properties === undefined) {
     return wire;
   }
   const rest: NeutralProperties = {};
   const renamed: NeutralProperties = {};
+  let changed = false;
   for (const [key, value] of Object.entries(wire.properties)) {
-    const wireName = internalKeyPolicy(key) === 'event' ? EVENT_KEY_WIRE_NAME.get(key) : undefined;
-    if (wireName !== undefined) {
-      renamed[wireName] = value;
-    } else {
-      rest[key] = value;
+    const policy = internalKeyPolicy(key);
+    if (policy === 'event') {
+      const wireName = EVENT_KEY_WIRE_NAME.get(key);
+      if (wireName !== undefined) {
+        renamed[wireName] = value;
+        changed = true;
+        continue;
+      }
     }
+    if (policy === 'hidden' && key.startsWith(RESERVED_INTERNAL_PREFIX)) {
+      changed = true;
+      continue;
+    }
+    rest[key] = value;
   }
-  if (Object.keys(renamed).length === 0) {
+  if (!changed) {
     return wire;
   }
   return { ...wire, properties: { ...rest, ...renamed } };

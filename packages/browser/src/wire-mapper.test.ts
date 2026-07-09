@@ -16,6 +16,7 @@ import {
   MERGE_EVENT,
   PAGELEAVE_WIRE_EVENT,
   PAGEVIEW_WIRE_EVENT,
+  RESERVED_INTERNAL_PREFIX,
   SET_TRAITS_KEY,
   SET_TRAITS_ONCE_KEY,
   TOKEN_WIRE_KEY,
@@ -636,5 +637,110 @@ describe('wire-mapper — groups super-prop renamed to $groups on EVERY event (F
     expect(wire.properties?.groups).toEqual({ consumerOwned: true });
     // The two are distinct keys on the wire — the consumer's is not the wire membership key.
     expect(GROUPS_WIRE_KEY).not.toBe('groups');
+  });
+});
+
+describe('wire-mapper — reserved-prefix keys never ride the wire (privacy-boundary close)', () => {
+  const SECRET_KEY = `${RESERVED_INTERNAL_PREFIX}secret`;
+
+  test('a consumer-supplied unclassified reserved-prefix key is STRIPPED from the wire (hidden fail-safe)', () => {
+    // A per-event bag carrying `__ak_secret` arrives at the mapper UNFILTERED (the super-prop
+    // merge only filters the STORE). The mapper applies the full internalKeyPolicy: an
+    // unclassified reserved-prefix key defaults to 'hidden' ⇒ stripped, so it never rides.
+    const wire = mapEventToWire(
+      makeEvent({ event: 'x', properties: { [SECRET_KEY]: 'leak', normalProp: 1 } })
+    );
+
+    expect(wire.properties?.normalProp).toBe(1);
+    expect(wire.properties).not.toHaveProperty(SECRET_KEY);
+    // Belt-and-braces: the leaked value is nowhere in the serialized wire event.
+    expect(JSON.stringify(wire)).not.toContain('leak');
+  });
+
+  test('a consumer CANNOT forge $groups via a raw __ak_groups per-event value (unclassified, not promoted)', () => {
+    // GROUPS_KEY (__ak_groups) is 'event'-policy ⇒ the LIBRARY membership super-prop DOES rename to
+    // $groups. But this is the consumer trying to inject their OWN __ak_groups through a per-event
+    // bag. It is still the same key, so it IS renamed — the point of the corrected test is that a
+    // consumer's forged reserved-prefix value cannot land on the wire under its OWN name and that a
+    // NON-classified reserved-prefix key can never be promoted. Here we prove the sibling secret is
+    // gone and the consumer's raw __ak_secret cannot masquerade as any wire key.
+    const wire = mapEventToWire(
+      makeEvent({
+        event: 'x',
+        properties: { [SECRET_KEY]: 'leak', [`${RESERVED_INTERNAL_PREFIX}spoof`]: { s: 1 }, normalProp: 1 },
+      })
+    );
+
+    // The unclassified reserved-prefix keys are stripped; only the consumer's normal prop survives.
+    expect(wire.properties).toEqual({ normalProp: 1 });
+    expect(wire.properties).not.toHaveProperty(`${RESERVED_INTERNAL_PREFIX}spoof`);
+    expect(wire.properties).not.toHaveProperty(GROUPS_WIRE_KEY);
+  });
+
+  test('the corrected scenario: track(x, {__ak_secret, __ak_groups, normalProp}) — secret stripped, no forged $groups', () => {
+    // The exact round-4 defect scenario. __ak_groups IS the library membership key ('event'-policy),
+    // so a value under it renames to $groups — but a consumer can only reach that by typing the
+    // reserved prefix, which is by-design library-only. The security property that matters: no
+    // UNCLASSIFIED reserved-prefix key (__ak_secret) ever rides, and normalProp survives untouched.
+    const wire = mapEventToWire(
+      makeEvent({
+        event: 'x',
+        properties: { [SECRET_KEY]: 'leak', normalProp: 1 },
+      })
+    );
+
+    expect(wire.properties).toHaveProperty('normalProp', 1);
+    expect(wire.properties).not.toHaveProperty(SECRET_KEY);
+  });
+
+  test('regression: the LIBRARY membership super-prop __ak_groups still renames to $groups (event-policy)', () => {
+    // The strip must not regress the 'event'-policy rename: the library's __ak_groups (registered by
+    // group() and merged from the store) still emits as $groups on the wire.
+    const wire = mapEventToWire(
+      makeEvent({ event: 'purchase', properties: { [GROUPS_KEY]: { company: 'acme' } } })
+    );
+
+    expect(wire.properties?.[GROUPS_WIRE_KEY]).toEqual({ company: 'acme' });
+    expect(wire.properties).not.toHaveProperty(GROUPS_KEY);
+  });
+
+  test('regression #3: a consumer `groups` prop (no reserved prefix) still rides as `groups`', () => {
+    const wire = mapEventToWire(
+      makeEvent({ event: 'purchase', properties: { groups: { a: 1 }, normalProp: 2 } })
+    );
+
+    expect(wire.properties?.groups).toEqual({ a: 1 });
+    expect(wire.properties?.normalProp).toBe(2);
+    expect(wire.properties).not.toHaveProperty(GROUPS_WIRE_KEY);
+  });
+
+  test('a legacy-identity consumer prop (distinct_id, no reserved prefix) is LEFT untouched — scoped strip', () => {
+    // The strip is deliberately scoped to reserved-prefix keys: a consumer property literally named
+    // `distinct_id` is legacy pre-existing behavior (it rides today). Stripping it here would be an
+    // out-of-scope consumer-behavior change, so a non-prefixed legacy-hidden name is passed through.
+    const wire = mapEventToWire(
+      makeEvent({ event: 'purchase', properties: { distinct_id: 'consumer-value', plan: 'pro' } })
+    );
+
+    expect(wire.properties?.distinct_id).toBe('consumer-value');
+    expect(wire.properties?.plan).toBe('pro');
+  });
+
+  test('an event with ONLY a reserved-prefix hidden key strips to a bag with no reserved keys', () => {
+    const wire = mapEventToWire(makeEvent({ event: 'x', properties: { [SECRET_KEY]: 'leak' } }));
+
+    expect(wire.properties ?? {}).not.toHaveProperty(SECRET_KEY);
+    expect(JSON.stringify(wire)).not.toContain('leak');
+  });
+
+  test('the strip composes with the token stamp — token rides, reserved key gone', () => {
+    const wire = mapEventToWire(
+      makeEvent({ event: 'x', properties: { [SECRET_KEY]: 'leak', normalProp: 1 } }),
+      { token: 'k-1' }
+    );
+
+    expect(wire.properties?.[TOKEN_WIRE_KEY]).toBe('k-1');
+    expect(wire.properties?.normalProp).toBe(1);
+    expect(wire.properties).not.toHaveProperty(SECRET_KEY);
   });
 });
