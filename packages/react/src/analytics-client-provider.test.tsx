@@ -94,18 +94,28 @@ describe('AnalyticsClientProvider — config branch', () => {
     }
   });
 
-  test('shuts down the owned client on unmount', async () => {
-    const recording = createRecordingClient();
-    const spy = vi.spyOn(browser, 'createAnalytics').mockReturnValue(recording);
-    const { unmount } = render(
-      <AnalyticsClientProvider config={keyedConfig}>
-        <span>child</span>
-      </AnalyticsClientProvider>
-    );
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(recording.shutdown).not.toHaveBeenCalled();
-    unmount();
-    expect(recording.shutdown).toHaveBeenCalledTimes(1);
+  test('shuts down the owned client on unmount', () => {
+    vi.useFakeTimers();
+    try {
+      const recording = createRecordingClient();
+      const spy = vi.spyOn(browser, 'createAnalytics').mockReturnValue(recording);
+      const { unmount } = render(
+        <AnalyticsClientProvider config={keyedConfig}>
+          <span>child</span>
+        </AnalyticsClientProvider>
+      );
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(recording.shutdown).not.toHaveBeenCalled();
+      act(() => {
+        unmount();
+      });
+      act(() => {
+        vi.runAllTimers();
+      });
+      expect(recording.shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('unkeyed config still renders and provides a no-op-backed client (bar B)', () => {
@@ -145,23 +155,65 @@ describe('AnalyticsClientProvider — StrictMode', () => {
     }
   });
 
-  // StrictMode simulates unmount/remount, so an owned client's cleanup runs on the
-  // simulated unmount and again on the real unmount (construct→shutdown→reconstruct —
-  // acceptable per the story). The invariant is that ownership cleanup fires for the
-  // owned client and never for a caller-owned one.
-  test('the config-branch owned (committed) client is shut down on unmount under StrictMode', () => {
-    vi.spyOn(browser, 'createAnalytics').mockImplementation(() => createRecordingClient());
-    const seen: AnalyticsClientContextValue[] = [];
-    const { unmount } = render(
-      <StrictMode>
-        <AnalyticsClientProvider config={keyedConfig}>
-          <ClientProbe onClient={(v) => seen.push(v)} />
-        </AnalyticsClientProvider>
-      </StrictMode>
-    );
-    const committed = seen[seen.length - 1] as ReturnType<typeof createRecordingClient>;
-    unmount();
-    expect(committed.shutdown).toHaveBeenCalled();
+  // StrictMode's dev unmount→remount is synchronous within a tick: the owned client's
+  // cleanup only SCHEDULES a deferred shutdown, and the immediately-following remount's
+  // effect cancels it before the 0-delay timer can fire. The committed client therefore
+  // survives the dev cycle with its listeners intact — it is NOT shut down. Regression
+  // guard for defect #12 (StrictMode detaching the live client's DOM listeners).
+  test('the config-branch owned client survives the StrictMode dev cycle without being shut down', () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(browser, 'createAnalytics').mockImplementation(() => createRecordingClient());
+      const seen: AnalyticsClientContextValue[] = [];
+      render(
+        <StrictMode>
+          <AnalyticsClientProvider config={keyedConfig}>
+            <ClientProbe onClient={(v) => seen.push(v)} />
+          </AnalyticsClientProvider>
+        </StrictMode>
+      );
+      const committed = seen[seen.length - 1] as ReturnType<typeof createRecordingClient>;
+
+      // The deferred shutdown scheduled by the dev unmount was cancelled synchronously by
+      // the remount, so flushing every pending timer fires no shutdown.
+      act(() => {
+        vi.runAllTimers();
+      });
+      expect(committed.shutdown).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A real unmount (no remount) has nothing to cancel the deferred shutdown, so once the
+  // 0-delay timer runs the owned client IS drained. Keeps the E9 ownership contract:
+  // config-branch owns → shuts down on real unmount.
+  test('the config-branch owned client is shut down on a real unmount under StrictMode', () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(browser, 'createAnalytics').mockImplementation(() => createRecordingClient());
+      const seen: AnalyticsClientContextValue[] = [];
+      const { unmount } = render(
+        <StrictMode>
+          <AnalyticsClientProvider config={keyedConfig}>
+            <ClientProbe onClient={(v) => seen.push(v)} />
+          </AnalyticsClientProvider>
+        </StrictMode>
+      );
+      const committed = seen[seen.length - 1] as ReturnType<typeof createRecordingClient>;
+
+      act(() => {
+        unmount();
+      });
+      expect(committed.shutdown).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.runAllTimers();
+      });
+      expect(committed.shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('a caller-owned client is never shut down under StrictMode', () => {

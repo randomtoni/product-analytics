@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createAnalytics } from '@analytics-kit/browser';
 import type { AnalyticsConfig, RootAnalytics } from '@analytics-kit/browser';
 import { AnalyticsClientContext } from './analytics-client-context';
@@ -38,11 +38,21 @@ function OwnedAnalyticsProvider({
   children?: ReactNode;
 }): ReactNode {
   const [client] = useState<RootAnalytics>(() => createAnalytics(config));
+  const pendingShutdown = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
+    // StrictMode's dev unmount→remount is synchronous within a tick; deferring shutdown
+    // lets the immediately-following remount cancel it, so the client's DOM listeners stay
+    // attached in dev. A real unmount has no remount to cancel it, so the shutdown fires.
+    if (pendingShutdown.current !== undefined) {
+      clearTimeout(pendingShutdown.current);
+      pendingShutdown.current = undefined;
+    }
     // Under SSR (renderToString) effects never run, so this owned client is never shutdown()-drained here — it's GC'd, harmless (no transport/DOM work happens before an effect commits).
     return () => {
-      void client.shutdown();
+      pendingShutdown.current = setTimeout(() => {
+        void client.shutdown();
+      }, 0);
     };
   }, [client]);
 

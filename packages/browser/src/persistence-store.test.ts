@@ -118,6 +118,51 @@ describe('object-valued super-props are detached on store (FIX E — no caller a
     expect(store.getProperty('on')).toBe(true);
   });
 
+  test('a non-cloneable value (a function-bearing object) does NOT throw — register succeeds, key retrievable (FIX #13)', () => {
+    // structuredClone throws DataCloneError on a function; a bare call would break register().
+    // detachValue catches it and stores the value as-is (never dropping the key).
+    const store = new PersistenceStore({ backend: createMemoryBackend(), name: 's' });
+    const fn = (): number => 42;
+
+    expect(() => store.register({ handler: { fn } })).not.toThrow();
+
+    // The key is retrievable — it was stored, not dropped on the clone failure.
+    const stored = store.getProperty<{ fn: () => number }>('handler');
+    expect(stored).toBeDefined();
+    expect(stored?.fn()).toBe(42);
+  });
+
+  test('a top-level function value is stored as-is, not dropped, when it cannot be cloned (FIX #13)', () => {
+    const store = new PersistenceStore({ backend: createMemoryBackend(), name: 's' });
+    const fn = (): string => 'ok';
+
+    expect(() => store.register({ cb: fn })).not.toThrow();
+    // A function is `typeof 'function'` (not 'object'), so it skips the clone path entirely
+    // and is stored by reference — the key must be present.
+    expect(store.getProperty('cb')).toBe(fn);
+  });
+
+  test('a symbol-holding object survives register — the clone failure falls back to store-as-is (FIX #13)', () => {
+    // A symbol value is non-cloneable, so structuredClone throws; the fallback stores the
+    // original object so the registration is not lost.
+    const store = new PersistenceStore({ backend: createMemoryBackend(), name: 's' });
+    const sym = Symbol('marker');
+    const value = { tag: sym, label: 'x' };
+
+    expect(() => store.register({ meta: value })).not.toThrow();
+    const stored = store.getProperty<{ tag: symbol; label: string }>('meta');
+    expect(stored?.tag).toBe(sym);
+    expect(stored?.label).toBe('x');
+  });
+
+  test('registerOnce also survives a non-cloneable value (FIX #13 — both write paths guarded)', () => {
+    const store = new PersistenceStore({ backend: createMemoryBackend(), name: 's' });
+    const fn = (): void => {};
+
+    expect(() => store.registerOnce({ once: { fn } })).not.toThrow();
+    expect(store.getProperty('once')).toBeDefined();
+  });
+
   test('a non-JSON value (Date) is deep-copied structurally, NOT flattened to a string (no fallback divergence)', () => {
     // The old JSON round-trip fallback would coerce a Date to a string; structuredClone (the
     // single copy path) preserves it as a Date, so the stored shape is environment-independent.

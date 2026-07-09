@@ -1147,6 +1147,45 @@ describe('batch queue + real delivery (S2)', () => {
     expect(data.map((e) => e.uuid)).toEqual(['d-1', 'd-2']);
   });
 
+  test('EVERY POSTed data[] element carries properties.token === the ingest key — the endpoint can authenticate it (FIX #1)', async () => {
+    // The whole defect: the browser envelope carried no auth key, so the endpoint rejected
+    // every POST and zero events were ingested. The key rides in-body on each event's
+    // properties (never a URL/header/top-level field), decoded here off the uncompressed
+    // JSON body.
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, compression: false });
+    const calls = mockFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 'auth-1' }));
+    adapter.capture(makeEvent({ dedupeId: 'auth-2' }));
+    await adapter.flush();
+
+    const data = batchOf(calls[0].options);
+    expect(data).toHaveLength(2);
+    for (const event of data) {
+      expect((event.properties as Record<string, unknown>).token).toBe(key);
+    }
+    // Belt-and-braces: the key is NOT on the envelope top level or the URL.
+    const envelope = JSON.parse(calls[0].options.body as string) as Record<string, unknown>;
+    expect(envelope).not.toHaveProperty('token');
+    expect(envelope).not.toHaveProperty('api_key');
+    expect(calls[0].url).not.toContain(key);
+  });
+
+  test('a merge (identify) event also carries properties.token in the POSTed body (FIX #1)', async () => {
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST, compression: false });
+    const calls = mockFetch(adapter);
+
+    adapter.identify('user-1', { plan: 'pro' });
+    await adapter.flush();
+
+    const [merge] = batchOf(calls[0].options);
+    // The auth key rides inside properties (with the merge link), not the lifted trait bag.
+    expect((merge.properties as Record<string, unknown>).token).toBe(key);
+    expect(merge.set_traits).not.toHaveProperty('token');
+  });
+
   test('each wired event carries an offset (not an absolute timestamp) in the envelope', async () => {
     const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
     const calls = mockFetch(adapter);
@@ -1362,13 +1401,65 @@ describe('retry queue with backoff (S3)', () => {
     expect(calls).toHaveLength(1);
   });
 
-  test('a 429 (rate-limit, a 4xx) is NOT retried by S3 — rate-limiting is S4, not retry', async () => {
+  test('a 429 (rate-limit) IS retried by S3 — a transient rate-limit is recoverable, not a permanent drop', async () => {
+    // CORRECTED: the old test asserted a 429 was NEVER retried (calls stayed at 1), which
+    // locked in the inverted classification that DROPPED a recoverable rate-limit. A 429 is
+    // transient (mirrors node isTransientStatus): the batch re-enqueues and re-sends. (The
+    // S4 body-borne cool-off is a separate mechanism; here the response body is empty, so
+    // only the retry path is exercised.)
     vi.useFakeTimers();
     const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
-    const calls = mockFetchStatuses(adapter, [429]);
+    // First POST 429, then 200 on the retry.
+    const calls = mockFetchStatuses(adapter, [429, 200]);
 
     adapter.capture(makeEvent({ dedupeId: 'rl' }));
     await adapter.flush();
+    expect(calls).toHaveLength(1); // the initial POST got the 429
+
+    // Two poll ticks so the first retry (up to 3750ms with jitter) is due.
+    await vi.advanceTimersByTimeAsync(6000);
+
+    // The 429 batch re-sent — a second POST fired carrying the SAME uuid.
+    expect(calls).toHaveLength(2);
+    expect(batchOf(calls[1].options).map((e) => e.uuid)).toEqual(['rl']);
+  });
+
+  test('a 408 (request timeout) IS retried by S3 — transient, not a permanent 4xx drop', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const calls = mockFetchStatuses(adapter, [408, 200]);
+
+    adapter.capture(makeEvent({ dedupeId: 'timeout' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(calls).toHaveLength(2);
+  });
+
+  test('a 3xx is NOT retried — a redirect is terminal, never a duplicate re-send', async () => {
+    // Regression pin against the inverted split, which treated a 3xx as retryable and
+    // re-sent an event that was not a transient failure.
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const calls = mockFetchStatuses(adapter, [301]);
+
+    adapter.capture(makeEvent({ dedupeId: 'redirect' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('a 2xx-non-200 (204) is NOT retried — a delivered batch must never be re-sent (no dupe)', async () => {
+    vi.useFakeTimers();
+    const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const calls = mockFetchStatuses(adapter, [204]);
+
+    adapter.capture(makeEvent({ dedupeId: 'accepted' }));
+    await adapter.flush();
+    expect(calls).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
     expect(calls).toHaveLength(1);
@@ -1461,6 +1552,179 @@ describe('retry queue with backoff (S3)', () => {
   function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
     return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
   }
+});
+
+describe('fetch REJECTION is normalized to status-0 → re-held + persisted, never lost (FIX #2)', () => {
+  const INGEST = 'https://analytics.example.com';
+
+  const liveAdapters: BrowserAdapter[] = [];
+  function makeAdapter(options: BrowserAdapterOptions): BrowserAdapter {
+    const adapter = granted(new BrowserAdapter(options));
+    liveAdapters.push(adapter);
+    return adapter;
+  }
+
+  afterEach(() => {
+    for (const adapter of liveAdapters.splice(0)) {
+      (adapter as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    }
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  function batchOf(options: NeutralFetchOptions): Record<string, unknown>[] {
+    return (JSON.parse(options.body as string) as { data: Record<string, unknown>[] }).data;
+  }
+
+  function persistedEnvelope(key: string): { batches: Record<string, unknown>[][] } | null {
+    const raw = localStorage.getItem(queueStoreName(key));
+    return raw === null ? null : (JSON.parse(raw) as { batches: Record<string, unknown>[][] });
+  }
+
+  test('sendBatchWithRetry does NOT throw/reject when fetch REJECTS (browser fetch rejects on network failure)', async () => {
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    // A browser fetch REJECTS on a network failure — it does NOT resolve status 0. The
+    // rejection must be normalized at the transport boundary, not escape the send.
+    vi.spyOn(adapter, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+
+    adapter.capture(makeEvent({ dedupeId: 'rejected' }));
+
+    // flush() awaits the send it fires — if the rejection escaped postEncoded it would
+    // surface here; safeFetch normalizing to status-0 keeps the send from rejecting.
+    await expect(adapter.flush()).resolves.toBeUndefined();
+  });
+
+  test('a rejected fetch RE-HOLDS the batch in the retry queue (scheduleRetry, not lost)', async () => {
+    vi.useFakeTimers();
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    vi.spyOn(adapter, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+    const retryQueue = (adapter as unknown as { retryQueue: { length: number } }).retryQueue;
+    const scheduleSpy = vi.spyOn(
+      (adapter as unknown as { retryQueue: { scheduleRetry: (b: unknown, a: number) => void } })
+        .retryQueue,
+      'scheduleRetry'
+    );
+
+    adapter.capture(makeEvent({ dedupeId: 'net-fail' }));
+    await adapter.flush();
+
+    // status-0 is retryable ⇒ the batch was re-enqueued rather than swallowed.
+    expect(scheduleSpy).toHaveBeenCalled();
+    expect(retryQueue.length).toBeGreaterThan(0);
+
+    vi.useRealTimers();
+  });
+
+  test('a rejected fetch mirrors a NON-EMPTY snapshot to durable storage (offlineQueue.persist)', async () => {
+    const key = freshKey();
+    const adapter = makeAdapter({
+      key,
+      persistence: 'localStorage+cookie',
+      ingestHost: INGEST,
+      compression: false,
+    });
+    vi.spyOn(adapter, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+    const persistSpy = vi.spyOn(
+      (adapter as unknown as { offlineQueue: { persist: (s: unknown) => void } }).offlineQueue,
+      'persist'
+    );
+
+    adapter.capture(makeEvent({ dedupeId: 'to-disk' }));
+    await adapter.flush();
+
+    // persist was called with a non-empty snapshot (the held batch), and the durable
+    // envelope on disk carries the event's uuid.
+    expect(persistSpy).toHaveBeenCalled();
+    const lastSnapshot = persistSpy.mock.calls.at(-1)?.[0] as unknown[];
+    expect(lastSnapshot.length).toBeGreaterThan(0);
+    const envelope = persistedEnvelope(key);
+    expect(envelope).not.toBeNull();
+    expect(envelope!.batches[0][0].uuid).toBe('to-disk');
+  });
+
+  test('a batch lost to a rejected fetch REHYDRATES on reload — a fresh adapter over the same storage re-sends it', async () => {
+    vi.useFakeTimers();
+    const key = freshKey();
+
+    // --- load 1: fetch REJECTS (offline) → the batch is held + mirrored to disk ---
+    const writer = makeAdapter({
+      key,
+      persistence: 'localStorage+cookie',
+      ingestHost: INGEST,
+      compression: false,
+    });
+    vi.spyOn(writer, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+    writer.capture(makeEvent({ dedupeId: 'survives-reload' }));
+    await writer.flush();
+    expect(persistedEnvelope(key)!.batches[0][0].uuid).toBe('survives-reload');
+
+    // Quiesce load-1 so it does not re-send on the shared window during the reload sim.
+    (writer as unknown as { detachUnloadListeners?: () => void }).detachUnloadListeners?.();
+    (writer as unknown as { retryQueue: { drain: () => void } }).retryQueue.drain();
+
+    // --- load 2: a FRESH adapter over the SAME storage, now delivering (200) ---
+    const reloaded = makeAdapter({
+      key,
+      persistence: 'localStorage+cookie',
+      ingestHost: INGEST,
+      compression: false,
+    });
+    const reloadedCalls: { url: string; options: NeutralFetchOptions }[] = [];
+    vi.spyOn(reloaded, 'fetch').mockImplementation(async (url, options) => {
+      reloadedCalls.push({ url, options });
+      return { status: 200, text: async () => '', json: async () => ({}) };
+    });
+
+    // The rehydrated batch is re-scheduled on construction; the poller re-sends it.
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(reloadedCalls.length).toBeGreaterThanOrEqual(1);
+    expect(batchOf(reloadedCalls[0].options)[0].uuid).toBe('survives-reload');
+    // Delivered ⇒ the durable mirror is pruned.
+    expect(persistedEnvelope(key)).toBeNull();
+
+    vi.useRealTimers();
+  });
+
+  test('the XHR fallback still RESOLVES status-0 on a network failure (belt-and-braces alongside the fetch-rejection fix)', async () => {
+    // Unlike fetch, XHR resolves status 0 (via postViaXhr). Stub fetch out so the transport
+    // falls to XHR, whose network failure surfaces as a resolved status-0 that flows into
+    // the SAME retryable path — no rejection to normalize on this branch.
+    vi.useFakeTimers();
+    class FailingXhr {
+      status = 0;
+      readyState = 0;
+      responseText = '';
+      onreadystatechange: (() => void) | null = null;
+      open(): void {}
+      setRequestHeader(): void {}
+      send(): void {
+        // A network-level failure: readyState 4, status stays 0 (no HTTP response).
+        this.status = 0;
+        this.readyState = 4;
+        this.onreadystatechange?.();
+      }
+    }
+    vi.stubGlobal('fetch', undefined);
+    vi.stubGlobal('XMLHttpRequest', FailingXhr);
+
+    const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false });
+    const scheduleSpy = vi.spyOn(
+      (adapter as unknown as { retryQueue: { scheduleRetry: (b: unknown, a: number) => void } })
+        .retryQueue,
+      'scheduleRetry'
+    );
+
+    adapter.capture(makeEvent({ dedupeId: 'xhr-net-0' }));
+    await expect(adapter.flush()).resolves.toBeUndefined();
+
+    // The resolved status-0 is retryable ⇒ the batch is re-held, exactly like the
+    // normalized fetch-rejection path.
+    expect(scheduleSpy).toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
 });
 
 describe('client rate limiter + neutralized back-pressure (S4)', () => {
@@ -1834,6 +2098,27 @@ describe('gzip compression (S5)', () => {
     expect(JSON.parse(json).data[0].uuid).toBe('gz-native');
   });
 
+  test('the token survives gzip — every event in the GUNZIPPED body carries properties.token (FIX #1)', async () => {
+    // The auth key rides in-body (inside properties), so it must survive compression on the
+    // normal binary POST. Gunzip the shipped bytes and assert the key is present per event.
+    const key = freshKey();
+    const adapter = new BrowserAdapter({ key, ingestHost: INGEST });
+    const domCalls = spyDomFetch(adapter);
+
+    adapter.capture(makeEvent({ dedupeId: 'gz-auth-1' }));
+    adapter.capture(makeEvent({ dedupeId: 'gz-auth-2' }));
+    await adapter.flush();
+
+    const bytes = bodyBytes(domCalls[0]);
+    expect([bytes[0], bytes[1]]).toEqual(GZIP_MAGIC);
+    const data = (JSON.parse(strFromU8(gunzipSync(bytes))) as { data: Record<string, unknown>[] })
+      .data;
+    expect(data).toHaveLength(2);
+    for (const event of data) {
+      expect((event.properties as Record<string, unknown>).token).toBe(key);
+    }
+  });
+
   test('the gzipped POST sets Content-Type text/plain and the [WIRE] compression/ver/_ query params', async () => {
     const adapter = new BrowserAdapter({ key: freshKey(), ingestHost: INGEST });
     const domCalls = spyDomFetch(adapter);
@@ -2166,6 +2451,27 @@ describe('transport selection + keepalive + unload drain (S6)', () => {
     expect(beacons[0].url).toBe('https://analytics.example.com/batch/');
     const data = eventsInBeaconCall(beacons[0]);
     expect(data.map((e) => e.uuid)).toEqual(['leave-1', 'leave-2']);
+
+    vi.restoreAllMocks();
+  });
+
+  test('every event in the unload BEACON body carries properties.token — the key survives the beacon path too (FIX #1)', async () => {
+    const key = freshKey();
+    const adapter = makeAdapter({ key, ingestHost: INGEST, compression: false });
+    const beacons = spyBeacon();
+
+    adapter.capture(makeEvent({ dedupeId: 'beacon-auth-1' }));
+    adapter.capture(makeEvent({ dedupeId: 'beacon-auth-2' }));
+    adapter.unload();
+
+    expect(beacons).toHaveLength(1);
+    const data = eventsInBeaconCall(beacons[0]);
+    expect(data).toHaveLength(2);
+    for (const event of data) {
+      expect((event.properties as Record<string, unknown>).token).toBe(key);
+    }
+    // In-body, not on the beacon URL.
+    expect(beacons[0].url).not.toContain(key);
 
     vi.restoreAllMocks();
   });
@@ -4112,11 +4418,17 @@ describe('consent gating at capture() — the direct-caller choke point (FIX A)'
   test('after a runtime opt-out (denied) a click AND a page-unload produce ZERO delivered/enqueued events', async () => {
     const adapter = makeAdapter({ key: freshKey(), ingestHost: INGEST, compression: false, autocapture: true });
     adapter.setConsentState('granted');
+    // Deliver the pre-opt-out page event with a resolving (200) fetch so it genuinely lands
+    // and leaves the retry queue EMPTY. Without a spy, the real jsdom fetch REJECTS, which —
+    // correctly, per FIX #2 — re-holds the batch in the retry queue, and the later unload
+    // would then beacon-drain it. This test isolates the CONSENT gate, so the pre-opt-out
+    // send must succeed and not leave a held batch behind.
+    spyFetch(adapter);
     // Capture a page so a pageview record exists — the unload pageleave has something to mint.
     adapter.capture(makeEvent({ event: RESERVED_PAGE_EVENT, isPageView: true }));
     await adapter.flush();
 
-    // Opt out at runtime, then spy AFTER — every call recorded now is post-opt-out.
+    // Opt out at runtime, then RE-spy AFTER — every call recorded now is post-opt-out.
     adapter.setConsentState('denied');
     const calls = spyFetch(adapter);
     const beaconsBefore = beaconMock.calls.length;

@@ -47,12 +47,14 @@ export function pickNextRetryDelay(
 }
 
 /**
- * Whether a delivery response warrants a retry. Ported from the reference split:
- * a 2xx (specifically 200) succeeded; a status-0 or 5xx is transient and retries;
- * a 4xx is a permanent rejection and is NEVER retried (the batch is dropped).
+ * Whether a delivery response is TRANSIENT and warrants a retry (mirrors node's
+ * send-batch.ts isTransientStatus): a network error (status 0), a 408 request-timeout,
+ * a 429 rate-limit, or any 5xx. Everything else — a 2xx success, a 3xx redirect, and
+ * every other 4xx — is terminal and is NEVER retried (a re-send would either duplicate a
+ * delivered batch or hammer a permanent rejection).
  */
 export function isRetryableStatus(status: number): boolean {
-  return status !== 200 && (status < 400 || status >= 500);
+  return status === 0 || status === 408 || status === 429 || status >= 500;
 }
 
 /** The per-status retry budget: a shorter one for status-0 network failures. */

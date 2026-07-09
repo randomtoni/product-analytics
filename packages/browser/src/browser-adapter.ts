@@ -274,8 +274,13 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // consent against, mirroring the facade's resolveOptedOut. Only 'granted' opts a pending
   // client IN; unset/'denied' keeps the fail-safe drop. Does NOT relax cookie persistence.
   private readonly consentDefault: ConsentState | undefined;
+  // The ingest auth key (config), stamped in-body on every wire event's properties by the
+  // wire-mapper so the batch endpoint authenticates each event. The KEY VALUE is config;
+  // it never surfaces on the neutral seam — it rides only the [WIRE] token property.
+  private readonly apiKey: string;
 
   constructor(options: BrowserAdapterOptions) {
+    this.apiKey = options.key;
     this.compressionEnabled = options.compression !== false && isGzipSupported();
     this.enrichment = options.enrichment ?? {};
     this.disableGeoip = options.disableGeoip === true;
@@ -696,7 +701,7 @@ export class BrowserAdapter implements AnalyticsAdapter {
     // A scoped context view (E6-S8) may override the geoip flag per event; absent, the
     // adapter's construction-time default applies.
     const disableGeoip = event.enrichmentProfile?.disableGeoip ?? this.disableGeoip;
-    return mapEventToWire(event, { disableGeoip });
+    return mapEventToWire(event, { disableGeoip, token: this.apiKey });
   }
 
   /** @internal The current-pageview record (undefined before the first `page` event
@@ -971,11 +976,13 @@ export class BrowserAdapter implements AnalyticsAdapter {
       // fetch preferred: the neutral SPI is the fetch-transport branch. When fetch is
       // absent at runtime, fall to a direct XHR POST — both resolve the neutral response.
       if (hasFetch()) {
-        return this.fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': encoded.contentType },
-          body: encoded.body,
-        });
+        return this.safeFetch(
+          this.fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': encoded.contentType },
+            body: encoded.body,
+          })
+        );
       }
       // The XHR fallback is NOT unload-safe; the unload drain relies on sendBeacon (see unload()), never this path.
       return postViaXhr(url, {
@@ -989,16 +996,34 @@ export class BrowserAdapter implements AnalyticsAdapter {
     const buffer = encoded.body.slice().buffer as ArrayBuffer;
     const headers = { 'Content-Type': encoded.contentType };
     if (hasFetch()) {
-      return fetch(compressedUrl, {
-        method: 'POST',
-        headers,
-        body: buffer,
-        // Best-effort delivery for a closing page; only ever set under the ~52 KB cap
-        // (over it, fetch keepalive errors). The gzipped body is near-always well under.
-        keepalive: encoded.body.byteLength < KEEPALIVE_THRESHOLD_BYTES,
-      });
+      return this.safeFetch(
+        fetch(compressedUrl, {
+          method: 'POST',
+          headers,
+          body: buffer,
+          // Best-effort delivery for a closing page; only ever set under the ~52 KB cap
+          // (over it, fetch keepalive errors). The gzipped body is near-always well under.
+          keepalive: encoded.body.byteLength < KEEPALIVE_THRESHOLD_BYTES,
+        }) as unknown as Promise<NeutralFetchResponse>
+      );
     }
     return postViaXhr(compressedUrl, { method: 'POST', headers, body: buffer });
+  }
+
+  // Normalize a fetch REJECTION to a status-0 neutral response at the transport boundary.
+  // Browser fetch rejects on a network failure (unlike XHR, which resolves status 0), so
+  // an un-caught rejection would escape postBatch → sendBatchWithRetry and be swallowed,
+  // losing the batch (never re-held / persisted). Resolving status 0 here flows the failure
+  // into the existing retryable path: isRetryableStatus(0) is true, maxRetriesForStatus(0)
+  // is a short budget, and the offline mirror persists it. The empty text() short-circuits
+  // interpretBackPressure so a network error arms no spurious cool-off. Mirrors the
+  // reference request.ts:346, which maps a rejection to statusCode:0 via the same callback.
+  private async safeFetch(pending: Promise<NeutralFetchResponse>): Promise<NeutralFetchResponse> {
+    try {
+      return await pending;
+    } catch {
+      return { status: 0, text: async () => '', json: async () => ({}) };
+    }
   }
 
   getConsentState(): ConsentState {

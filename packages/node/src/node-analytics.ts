@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import {
-  deriveAllowlistFromTaxonomy,
   enforceAllowlist,
   type NeutralEvent,
   type NeutralProperties,
@@ -74,9 +73,7 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
   // `send` is the injected delivery seam. Unset ⇒ an internal no-op stub (the real
   // wire POST lands in E7-S4); tests inject a spy to observe the delivered batches.
   constructor(config: NodeAnalyticsConfig, send: SendBatch = async () => {}) {
-    const allowlist =
-      config.allowlist ??
-      (config.taxonomy === undefined ? undefined : deriveAllowlistFromTaxonomy(config.taxonomy));
+    const allowlist = config.allowlist;
     this.allowlist = allowlist === undefined ? undefined : new Set(allowlist);
     this.onViolation = config.onViolation ?? 'throw';
     this.eventDecls = config.taxonomy?.decl.events;

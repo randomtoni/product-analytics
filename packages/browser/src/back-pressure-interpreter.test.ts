@@ -82,4 +82,32 @@ describe('interpretBodyBackPressure — [WIRE] body-borne signal', () => {
     );
     expect(signals).toHaveLength(1);
   });
+
+  // A valid-JSON body that parses to a NON-OBJECT (null / number / string / array) must not
+  // reach the field access — `JSON.parse('null')` is null, and `null[LIMITED_SCOPES_FIELD]`
+  // would THROW. The post-parse guard returns [] for each without throwing.
+  test.each(['null', '42', '"x"', '[]'])(
+    'a valid-JSON but non-object body (%s) arms NO cool-off and does NOT throw (FIX #15)',
+    async (bodyText) => {
+      await expect(interpretBodyBackPressure(responseWithBody(bodyText))).resolves.toEqual([]);
+    }
+  );
+
+  test('a JSON `null` body specifically does not throw on the field access (the reported crash)', async () => {
+    // The exact reported defect: JSON.parse('null') → null, then body[LIMITED_SCOPES_FIELD]
+    // threw a TypeError OUTSIDE the parse-only try/catch. The guard now short-circuits it.
+    let result: unknown;
+    await expect(
+      (async () => {
+        result = await interpretBodyBackPressure(responseWithBody('null'));
+      })()
+    ).resolves.toBeUndefined();
+    expect(result).toEqual([]);
+  });
+
+  test('a JSON array body (a scope list at the ROOT, not under the field) arms NO cool-off', async () => {
+    // Only a plain object can carry the limited-scope field; a bare array is not the shape.
+    const signals = await interpretBodyBackPressure(responseWithBody(JSON.stringify(['events'])));
+    expect(signals).toEqual([]);
+  });
 });

@@ -51,6 +51,14 @@ export const AUTOCAPTURE_WIRE_EVENT = '$autocapture';
 // library toggle, never a consumer value — the neutral surface never sees this token.
 export const GEOIP_DISABLE_WIRE_KEY = '$geoip_disable';
 
+// The [WIRE] property name carrying the ingest auth key on EVERY event. The batch
+// endpoint reads the key off each event's properties (de-branded from posthog-core,
+// where calculateEventProperties sets properties['token'] per event) — NOT a top-level
+// envelope field or a URL param — so it survives gzip on the normal POST and the beacon
+// path alike. The KEY VALUE is consumer config; this is only the wire property name it
+// rides under. Adapter-internal — the neutral surface never sees this token.
+export const TOKEN_WIRE_KEY = 'token';
+
 // Adapter-internal [WIRE] property names carried on the merge / traits event only —
 // the retained prior anon id (the merge link) and the two person-trait bags. The
 // E5 wire-mapper normalizes these to the vendor conventions; the neutral surface

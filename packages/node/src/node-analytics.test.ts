@@ -1,5 +1,5 @@
-import { defineTaxonomy } from 'analytics-kit';
-import type { NeutralEvent } from 'analytics-kit';
+import { createAnalytics, defineTaxonomy, NoopAdapter } from 'analytics-kit';
+import type { AnalyticsAdapter, NeutralEvent } from 'analytics-kit';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { NodeAnalyticsClient, type SendBatch } from './node-analytics';
 import { mapEventToWire } from './wire-mapper';
@@ -153,28 +153,21 @@ test('distinctId is the exact first-arg value on the minted event', () => {
 // --- server-side allowlist gate (bar A) ---
 
 // The off-list bag is assembled behind a widening so the runtime guard — not the compiler —
-// is what rejects it (the compile-time rejection is pinned in typing.test.ts).
+// is what would reject it if a guard were active (the compile-time rejection is pinned in
+// typing.test.ts).
 const offListProps = { amount: 1, rogue: 'x' } as { amount: number };
 
-test('off-list props key throws under the default throw policy — nothing minted', () => {
+// A taxonomy alone does NOT activate the runtime guard — it is a typing decision, not a
+// privacy decision. With no explicit allowlist supplied, an off-taxonomy key passes through
+// UNGATED, mirroring the seam's posture (packages/analytics-kit/src/allowlist.test.ts:325).
+test('a taxonomy alone does NOT activate the guard — an off-taxonomy props key passes through ungated', () => {
   const { client, sink } = keyedClient();
-
-  expect(() => client.capture('user-1', 'order_placed', offListProps)).toThrow(
-    /not on the payload allowlist/
-  );
-  flush();
-  expect(sink.delivered).toHaveLength(0);
-});
-
-test('off-list props key under drop-and-error-log drops the event and logs — nothing minted', () => {
-  const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-  const { client, sink } = keyedClient({ onViolation: 'drop-and-error-log' });
 
   client.capture('user-1', 'order_placed', offListProps);
   flush();
 
-  expect(sink.delivered).toHaveLength(0);
-  expect(spy).toHaveBeenCalledWith(expect.stringContaining('not on the payload allowlist'));
+  expect(sink.delivered).toHaveLength(1);
+  expect(sink.delivered[0].properties).toEqual({ amount: 1, rogue: 'x' });
 });
 
 test('an on-list props key passes the gate and is minted', () => {
@@ -206,6 +199,37 @@ test('with no taxonomy and no allowlist, every prop is allowed (undefined allowl
   client.capture('user-1', 'anything', { whatever: true });
   flush();
   expect(sink.delivered).toHaveLength(1);
+});
+
+// Bar A parity: the SAME { taxonomy, no explicit allowlist } config is ungated on BOTH the seam
+// and node — a taxonomy is a typing decision, not a privacy decision, so it does not auto-activate
+// the guard on either platform. This pins the fix for the node-vs-seam divergence.
+test('node-vs-seam parity: { taxonomy, no allowlist } is ungated on both — off-taxonomy key reaches delivery', () => {
+  const seamTaxonomy = defineTaxonomy({
+    events: { signed_up: { plan: 'string' } },
+  });
+
+  // Seam side: taxonomy present, no explicit allowlist ⇒ guard inactive, off-taxonomy key reaches
+  // the adapter (mirrors packages/analytics-kit/src/allowlist.test.ts:325).
+  const captured: NeutralEvent[] = [];
+  const adapter: AnalyticsAdapter = new NoopAdapter();
+  adapter.capture = (event: NeutralEvent): void => {
+    captured.push(event);
+  };
+  adapter.getConsentState = (): 'granted' => 'granted';
+  const seam = createAnalytics({ taxonomy: seamTaxonomy, consentDefault: 'granted' }, adapter);
+  // @ts-expect-error off_taxonomy_key is not part of signed_up's declared props
+  seam.track('signed_up', { off_taxonomy_key: 1 });
+  expect(captured).toHaveLength(1);
+  expect(captured[0].properties).toEqual({ off_taxonomy_key: 1 });
+
+  // Node side: same config posture (taxonomy present, no explicit allowlist) ⇒ same ungated verdict.
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient({ key: 'k', taxonomy, flushAt: 1 }, sink.send);
+  client.capture('user-1', 'order_placed', offListProps);
+  flush();
+  expect(sink.delivered).toHaveLength(1);
+  expect(sink.delivered[0].properties).toEqual({ amount: 1, rogue: 'x' });
 });
 
 // --- browser-only NeutralEvent fields stay unset ---
@@ -339,8 +363,24 @@ test('setGroupTraits mints a group event with the composite distinctId default',
   });
 });
 
-test('setTraits off-list trait key throws under the default policy — nothing minted', () => {
+// A taxonomy alone does NOT activate the trait guard either — with no explicit allowlist the
+// off-taxonomy trait key passes through ungated (typing decision ≠ privacy decision). Explicit
+// allowlist gating of traits is pinned separately below.
+test('setTraits with a taxonomy alone does NOT gate — an off-taxonomy trait key passes through ungated', () => {
   const { client, sink } = keyedClient();
+  const offList = { plan: 'pro', rogue: 'x' } as { plan: string };
+
+  client.setTraits('user-1', offList);
+  flush();
+
+  const [event] = sink.delivered;
+  expect(mapEventToWire(event).properties).toEqual({ set: { plan: 'pro', rogue: 'x' } });
+});
+
+// An EXPLICIT consumer allowlist still gates traits — an off-list key fails loudly, nothing minted.
+test('setTraits with an explicit allowlist gates an off-list trait key — throws, nothing minted', () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient({ key: 'k', allowlist: ['plan'], flushAt: 1 }, sink.send);
   const offList = { plan: 'pro', rogue: 'x' } as { plan: string };
 
   expect(() => client.setTraits('user-1', offList)).toThrow(/not on the payload allowlist/);
@@ -348,9 +388,13 @@ test('setTraits off-list trait key throws under the default policy — nothing m
   expect(sink.delivered).toHaveLength(0);
 });
 
-test('setTraits off-list trait key under drop-and-error-log drops + logs — nothing minted', () => {
+test('setTraits with an explicit allowlist under drop-and-error-log drops + logs — nothing minted', () => {
   const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-  const { client, sink } = keyedClient({ onViolation: 'drop-and-error-log' });
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient(
+    { key: 'k', allowlist: ['plan'], onViolation: 'drop-and-error-log', flushAt: 1 },
+    sink.send
+  );
   const offList = { plan: 'pro', rogue: 'x' } as { plan: string };
 
   client.setTraits('user-1', offList);
@@ -360,8 +404,9 @@ test('setTraits off-list trait key under drop-and-error-log drops + logs — not
   expect(spy).toHaveBeenCalledWith(expect.stringContaining('not on the payload allowlist'));
 });
 
-test('setGroupTraits off-list trait key throws under the default policy — nothing minted', () => {
-  const { client, sink } = keyedClient();
+test('setGroupTraits with an explicit allowlist gates an off-list trait key — throws, nothing minted', () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient({ key: 'k', allowlist: ['name'], flushAt: 1 }, sink.send);
   const offList = { name: 'Acme', rogue: 'x' } as { name: string };
 
   expect(() => client.setGroupTraits('company', 'acme', offList)).toThrow(
@@ -369,6 +414,22 @@ test('setGroupTraits off-list trait key throws under the default policy — noth
   );
   flush();
   expect(sink.delivered).toHaveLength(0);
+});
+
+// A taxonomy alone does NOT gate group traits either — off-taxonomy key passes through ungated.
+test('setGroupTraits with a taxonomy alone does NOT gate — an off-taxonomy trait key passes through ungated', () => {
+  const { client, sink } = keyedClient();
+  const offList = { name: 'Acme', rogue: 'x' } as { name: string };
+
+  client.setGroupTraits('company', 'acme', offList);
+  flush();
+
+  const [event] = sink.delivered;
+  expect(mapEventToWire(event).properties).toEqual({
+    group_type: 'company',
+    group_key: 'acme',
+    group_set: { name: 'Acme', rogue: 'x' },
+  });
 });
 
 test('the raw wrapper key (`set`) is not itself allowlist-gated — the raw trait keys are', () => {

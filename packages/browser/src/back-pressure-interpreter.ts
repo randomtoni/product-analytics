@@ -41,14 +41,22 @@ export const interpretBodyBackPressure: BackPressureInterpreter = async (
     return [];
   }
 
-  let body: BackPressureBody;
+  let parsed: unknown;
   try {
-    body = JSON.parse(text) as BackPressureBody;
+    parsed = JSON.parse(text);
   } catch {
     // A non-JSON / malformed body is not a back-pressure signal — continue
     // sending rather than mistaking a parse failure for a limit.
     return [];
   }
+
+  // JSON.parse of a valid-but-non-object body ('null', '42', '"x"', '[]') yields a
+  // primitive/null/array on which a field access would throw. Only a plain object can
+  // carry the limited-scope field — anything else is "no back-pressure".
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return [];
+  }
+  const body = parsed as BackPressureBody;
 
   const limitedScopes = body[LIMITED_SCOPES_FIELD] ?? [];
   // A blind cast over JSON.parse: a malformed body (e.g. a bare string for the

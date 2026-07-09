@@ -64,33 +64,47 @@ describe('pickNextRetryDelay — exponential backoff base*2**n', () => {
   });
 });
 
-describe('isRetryableStatus — network/5xx only, never 4xx', () => {
-  test('a 200 is a success — not retryable', () => {
-    expect(isRetryableStatus(200)).toBe(false);
+describe('isRetryableStatus — transient only (0/408/429/5xx), mirrors node isTransientStatus', () => {
+  // The transient set: a network error, a request-timeout, a rate-limit, and any 5xx —
+  // exactly node's send-batch.ts isTransientStatus. Everything else is terminal.
+  test.each([0, 408, 429, 500, 503])('%i is TRANSIENT ⇒ retryable', (status) => {
+    expect(isRetryableStatus(status)).toBe(true);
   });
 
-  test('a status-0 (network / no HTTP response) is retryable', () => {
-    expect(isRetryableStatus(0)).toBe(true);
-  });
-
-  test('every 5xx is retryable', () => {
+  test('every 5xx is retryable (spot-check across the range)', () => {
     expect(isRetryableStatus(500)).toBe(true);
     expect(isRetryableStatus(502)).toBe(true);
     expect(isRetryableStatus(503)).toBe(true);
     expect(isRetryableStatus(599)).toBe(true);
   });
 
-  test('NO 4xx is ever retryable — a permanent rejection', () => {
-    for (const status of [400, 401, 403, 404, 413, 429, 499]) {
+  // The terminal set: a 2xx success (200 AND any other 2xx like 201/204), a 3xx redirect,
+  // and every 4xx OTHER than the two transient ones (408/429). A re-send of any of these
+  // is wrong — it either duplicates a delivered batch or hammers a permanent rejection.
+  test.each([200, 201, 204, 301, 302, 400, 401, 403, 404, 413])(
+    '%i is TERMINAL ⇒ NOT retryable',
+    (status) => {
       expect(isRetryableStatus(status)).toBe(false);
     }
+  );
+
+  test('a 2xx-non-200 (201/204) is NOT re-sent — the inverted split would have duped it', () => {
+    // Regression pin: the OLD `status !== 200 && (status < 400 || status >= 500)` treated
+    // a 201/204 as retryable and re-sent an already-delivered batch. It must be terminal.
+    expect(isRetryableStatus(201)).toBe(false);
+    expect(isRetryableStatus(204)).toBe(false);
   });
 
-  test('other 2xx/3xx are not retryable (only a bare 200 counts as success in the split)', () => {
-    // Mirrors the ported split: status !== 200 && (status < 400 || status >= 500).
-    // A 201/204 or a 3xx falls in the < 400 branch and IS retryable per the port.
-    expect(isRetryableStatus(204)).toBe(true);
-    expect(isRetryableStatus(301)).toBe(true);
+  test('a 3xx (301/302) is NOT re-sent — the inverted split would have duped it', () => {
+    expect(isRetryableStatus(301)).toBe(false);
+    expect(isRetryableStatus(302)).toBe(false);
+  });
+
+  test('408 and 429 ARE retried — the inverted split wrongly DROPPED these transient failures', () => {
+    // Regression pin: the OLD split classified 408/429 as terminal and dropped a
+    // recoverable timeout / rate-limit. They are transient and must retry.
+    expect(isRetryableStatus(408)).toBe(true);
+    expect(isRetryableStatus(429)).toBe(true);
   });
 });
 

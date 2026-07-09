@@ -8,6 +8,7 @@ import {
   PAGEVIEW_WIRE_EVENT,
   SET_TRAITS_KEY,
   SET_TRAITS_ONCE_KEY,
+  TOKEN_WIRE_KEY,
 } from './persistence-keys';
 
 // The [WIRE] shape of a single captured event — the object the transport POSTs
@@ -49,9 +50,12 @@ export interface WireEvent {
 // The adapter-internal, library-set wire toggles the mapper stamps onto the event.
 // disableGeoip resolves once at adapter construction — never a consumer value, so it
 // crosses no allowlist; it is applied here, at the [WIRE] boundary, not on the neutral
-// surface.
+// surface. `token` is the ingest auth key threaded from config: stamped in-body on every
+// event's properties (never a consumer value; the KEY VALUE is config, the wire property
+// name is [WIRE] vocabulary) so the endpoint can authenticate each event.
 export interface WireMapOptions {
   disableGeoip?: boolean;
+  token?: string;
 }
 
 export function mapEventToWire(event: NeutralEvent, options?: WireMapOptions): WireEvent {
@@ -68,7 +72,7 @@ export function mapEventToWire(event: NeutralEvent, options?: WireMapOptions): W
       ? base
       : normalizeMergeEvent(base, event.properties);
 
-  return stampGeoipDisable(mapped, options?.disableGeoip);
+  return stampToken(stampGeoipDisable(mapped, options?.disableGeoip), options?.token);
 }
 
 // Stamp the [WIRE] $geoip_disable property when the library toggle is on. An event with
@@ -79,6 +83,17 @@ function stampGeoipDisable(wire: WireEvent, disableGeoip?: boolean): WireEvent {
     return wire;
   }
   return { ...wire, properties: { ...wire.properties, [GEOIP_DISABLE_WIRE_KEY]: true } };
+}
+
+// Stamp the [WIRE] auth-key property on EVERY event (mirrors posthog-core.ts:1516's
+// per-event properties['token'] set). Rides in-body so it survives gzip and the beacon
+// path; the properties bag is minted here when the event has none. No token ⇒ no stamp
+// (an unkeyed / no-delivery client).
+function stampToken(wire: WireEvent, token?: string): WireEvent {
+  if (token === undefined) {
+    return wire;
+  }
+  return { ...wire, properties: { ...wire.properties, [TOKEN_WIRE_KEY]: token } };
 }
 
 // Swap the neutral event name/marker for its [WIRE] name. A pageview is recognized by

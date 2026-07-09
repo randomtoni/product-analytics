@@ -16,7 +16,15 @@ function detachValue(value: unknown): unknown {
   if (value === null || typeof value !== 'object') {
     return value;
   }
-  return structuredClone(value);
+  // structuredClone throws DataCloneError on a non-cloneable value (a function, a DOM
+  // node, a symbol-holding object). A super-prop must never break register(), so on a
+  // clone failure store the value as-is rather than dropping the key — the (rare) shared
+  // reference is the lesser evil than a lost registration.
+  try {
+    return structuredClone(value);
+  } catch {
+    return value;
+  }
 }
 
 // A property store over a single storage backend. The in-memory `props` is the

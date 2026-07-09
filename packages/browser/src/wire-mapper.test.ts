@@ -11,6 +11,7 @@ import {
   PAGEVIEW_WIRE_EVENT,
   SET_TRAITS_KEY,
   SET_TRAITS_ONCE_KEY,
+  TOKEN_WIRE_KEY,
 } from './persistence-keys';
 
 function makeEvent(overrides: Partial<NeutralEvent> = {}): NeutralEvent {
@@ -305,6 +306,83 @@ describe('wire-mapper — data:[] batch envelope + timestamp→offset (S2)', () 
 
   test('an empty batch serializes an empty data array', () => {
     expect(assembleBatchBody([], Date.now())).toBe('{"data":[]}');
+  });
+});
+
+describe('wire-mapper — token stamps the [WIRE] auth key in-body on EVERY event (FIX #1)', () => {
+  const KEY = 'proj-key-abc';
+
+  test('stamps properties.token === the key on a plain event, alongside existing properties', () => {
+    const wire = mapEventToWire(makeEvent({ properties: { plan: 'pro' } }), { token: KEY });
+
+    expect(wire.properties?.[TOKEN_WIRE_KEY]).toBe(KEY);
+    expect(wire.properties).toMatchObject({ plan: 'pro', token: KEY });
+  });
+
+  test('mints a properties bag carrying the token when the event had NO properties (undefined guard)', () => {
+    const wire = mapEventToWire(makeEvent({ properties: undefined }), { token: KEY });
+
+    // The bag was minted just to carry the auth key — without a body key the endpoint
+    // rejects the event; the whole FIX #1 defect was the missing per-event key.
+    expect(wire.properties).toEqual({ token: KEY });
+    expect(wire.properties?.[TOKEN_WIRE_KEY]).toBe(KEY);
+  });
+
+  test('EVERY mapped event across a mixed set carries properties.token (plain, page, autocapture, no-props)', () => {
+    const events = [
+      makeEvent({ event: 'purchase', properties: { a: 1 } }),
+      makeEvent({ event: '/dashboard', isPageView: true }),
+      makeEvent({ event: AUTOCAPTURE_EVENT, properties: { event_type: 'click' } }),
+      makeEvent({ event: 'no_props', properties: undefined }),
+    ];
+
+    for (const event of events) {
+      const wire = mapEventToWire(event, { token: KEY });
+      expect(wire.properties?.[TOKEN_WIRE_KEY]).toBe(KEY);
+    }
+  });
+
+  test('stamps the token on a merge event AFTER trait-bag normalization — it lands INSIDE properties, not a trait bag', () => {
+    const wire = mapEventToWire(
+      makeEvent({
+        event: MERGE_EVENT,
+        properties: {
+          [ANONYMOUS_DISTINCT_ID_KEY]: 'anon-1',
+          [SET_TRAITS_KEY]: { plan: 'pro' },
+        },
+      }),
+      { token: KEY }
+    );
+
+    // Trait bag lifted to a top-level wire key; the token rides inside properties with the
+    // retained merge link, never inside the lifted trait bag.
+    expect(wire.set_traits).toEqual({ plan: 'pro' });
+    expect(wire.properties).toMatchObject({ [ANONYMOUS_DISTINCT_ID_KEY]: 'anon-1', token: KEY });
+    expect(wire.set_traits).not.toHaveProperty(TOKEN_WIRE_KEY);
+  });
+
+  test('token + geoip compose — both wire stamps land in properties on the same event', () => {
+    const wire = mapEventToWire(makeEvent({ properties: { a: 1 } }), {
+      token: KEY,
+      disableGeoip: true,
+    });
+
+    expect(wire.properties).toMatchObject({ a: 1, token: KEY, $geoip_disable: true });
+  });
+
+  test('omits the token when no token option is supplied (an unkeyed / no-delivery client)', () => {
+    const wire = mapEventToWire(makeEvent({ properties: { plan: 'pro' } }));
+
+    expect(wire.properties ?? {}).not.toHaveProperty(TOKEN_WIRE_KEY);
+  });
+
+  test('the token rides IN-BODY (properties), never a top-level envelope key or the event name', () => {
+    const wire = mapEventToWire(makeEvent({ properties: undefined }), { token: KEY });
+
+    // Belt-and-braces: the auth key is inside properties (survives gzip + beacon), not a
+    // sibling of `event`/`distinct_id`/`uuid`.
+    expect(wire).not.toHaveProperty(TOKEN_WIRE_KEY);
+    expect(wire.properties?.[TOKEN_WIRE_KEY]).toBe(KEY);
   });
 });
 
