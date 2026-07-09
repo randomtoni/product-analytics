@@ -371,6 +371,54 @@ describe('injected send seam', () => {
   });
 });
 
+describe('size (drain-loop read for E7-S6)', () => {
+  test('size reports the buffered count and returns to 0 after a drain', () => {
+    const { send } = spySend();
+    const queue = new BatchQueue<number>({ send, flushAt: 5000, maxBatchSize: 100 });
+
+    expect(queue.size).toBe(0);
+    enqueueN(queue, 3);
+    expect(queue.size).toBe(3);
+    queue.drain();
+    expect(queue.size).toBe(0);
+  });
+
+  test('size returns to 0 after flushNow force-drains the buffer', async () => {
+    const { send } = spySend();
+    const queue = new BatchQueue<number>({ send, flushAt: 5000, maxBatchSize: 100 });
+
+    enqueueN(queue, 4);
+    expect(queue.size).toBe(4);
+    await queue.flushNow();
+    expect(queue.size).toBe(0);
+  });
+
+  // The load-bearing mid-drain case the shutdown loop catches: a refill that lands in the
+  // buffer DURING a flush's in-flight await leaves size > 0 after that flushNow, so a
+  // second flushNow ships it. This is the queue-seam proof behind the client's
+  // `while (queue.size > 0) await queue.flushNow()` drain loop (E7-S6).
+  test('a refill enqueued during a flush in-flight await is caught by a second flushNow', async () => {
+    let refilled = false;
+    const box: { queue?: BatchQueue<number> } = {};
+    const send = vi.fn(async () => {
+      if (!refilled) {
+        refilled = true;
+        box.queue?.enqueue(999); // lands mid-await, after the first drain took the buffer
+      }
+    });
+    const queue = new BatchQueue<number>({ send, flushAt: 5000, maxBatchSize: 100 });
+    box.queue = queue;
+
+    queue.enqueue(1);
+    await queue.flushNow();
+    expect(queue.size).toBe(1); // the refill is buffered, not yet sent
+
+    await queue.flushNow();
+    expect(queue.size).toBe(0);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('drain (quiesce handhold for E7-S6)', () => {
   test('drain returns the buffered events without sending and clears the timers', () => {
     const { send } = spySend();

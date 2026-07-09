@@ -61,11 +61,15 @@ export interface NodeAnalytics<TX extends TaxonomyShape> {
   shutdown(): Promise<void>;
 }
 
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30000;
+
 export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalytics<TX> {
   private readonly allowlist?: ReadonlySet<string>;
   private readonly onViolation: ViolationPolicy;
   private readonly eventDecls?: Readonly<Record<string, PropDecl>>;
   private readonly queue: BatchQueue<NeutralEvent>;
+  private readonly shutdownTimeoutMs: number;
+  private stopped = false;
 
   // `send` is the injected delivery seam. Unset ⇒ an internal no-op stub (the real
   // wire POST lands in E7-S4); tests inject a spy to observe the delivered batches.
@@ -76,6 +80,7 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
     this.allowlist = allowlist === undefined ? undefined : new Set(allowlist);
     this.onViolation = config.onViolation ?? 'throw';
     this.eventDecls = config.taxonomy?.decl.events;
+    this.shutdownTimeoutMs = config.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
     this.queue = new BatchQueue<NeutralEvent>({
       send,
       flushAt: config.flushAt,
@@ -91,6 +96,7 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
     propsOrOptions?: object,
     options?: CaptureOptions
   ): void {
+    if (this.stopped) return;
     const { props, dedupeId } = this.splitArgs(event, propsOrOptions, options);
 
     if (!enforceAllowlist(this.allowlist, this.onViolation, props)) return;
@@ -139,6 +145,7 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
   // mint; the wire-mapper renames it to the de-branded nested `[set]`/`[set_once]`.
   // `once === true` routes the bag to the set-once (first-touch) key, else the set key.
   setTraits(distinctId: string, traits: NeutralTraits, once?: boolean): void {
+    if (this.stopped) return;
     if (!enforceAllowlist(this.allowlist, this.onViolation, traits)) return;
 
     const properties: NeutralProperties = {
@@ -153,6 +160,7 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
   // consumer properties, so they are not gated. The wire-mapper renames the wrapper
   // keys to the de-branded `[group_type]`/`[group_key]`/`[group_set]` nested shape.
   setGroupTraits(groupType: string, groupKey: string, traits: NeutralTraits): void {
+    if (this.stopped) return;
     if (!enforceAllowlist(this.allowlist, this.onViolation, traits)) return;
 
     const properties: NeutralProperties = {
@@ -179,9 +187,48 @@ export class NodeAnalyticsClient<TX extends TaxonomyShape> implements NodeAnalyt
     });
   }
 
-  // Real force-drain body lands in E7-S6.
-  async flush(): Promise<void> {}
+  // Force-send the buffered queue immediately (bypassing the size/interval trigger) and
+  // resolve once the in-flight POST(s) settle. Per-request cleanup that keeps the client
+  // usable afterward — unlike shutdown, it does not quiesce.
+  async flush(): Promise<void> {
+    await this.queue.flushNow();
+  }
 
-  // Real drain-within-timeout body lands in E7-S6.
-  async shutdown(): Promise<void> {}
+  // Drain the queue and quiesce for process exit. Setting `stopped` FIRST makes any
+  // consumer capture racing in during the drain inert (the "no new work once shutdown
+  // starts" invariant), so no post-shutdown enqueue can re-arm delivery. The drain loop
+  // re-flushes until the buffer is empty, catching queue-internal residue that lands
+  // during a flush's in-flight await, raced against a configurable timeout so the process
+  // never hangs on a wedged backend. On timeout we RESOLVE (not reject) with a warning —
+  // shutdown completing is not an error, and a rejecting shutdown in a signal handler is
+  // an unhandled-rejection footgun; any still-buffered in-memory events are left unsent by
+  // design (ephemeral server, no disk persistence). A final drain clears the queue timers
+  // so the client is fully quiesced.
+  async shutdown(): Promise<void> {
+    if (this.stopped) return;
+    this.stopped = true;
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        console.error(
+          'Timed out while shutting down analytics; some events may not have been sent.'
+        );
+        resolve();
+      }, this.shutdownTimeoutMs);
+    });
+
+    try {
+      await Promise.race([this.drainLoop(), timeout]);
+    } finally {
+      clearTimeout(timeoutHandle);
+      this.queue.drain();
+    }
+  }
+
+  private async drainLoop(): Promise<void> {
+    while (this.queue.size > 0) {
+      await this.queue.flushNow();
+    }
+  }
 }

@@ -49,3 +49,18 @@ Closes the epic: an unkeyed node client is a whole-stack silent no-op (bar B: co
 - api_impact additive.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, doc): AC-3 "re-flushes to catch events enqueued during the drain" splits into two cases — (a) a CONSUMER capture racing mid-shutdown is intentionally INERT (`stopped`-at-top = "no new work once shutdown starts"), (b) QUEUE-INTERNAL residue landing during a `flushNow` in-flight await IS swept by the next loop iteration (proven at the queue seam). The reference's loop sweeps case (b), not (a) — inert-consumer is strictly safer, not an AC violation. Note both cases so a future reader doesn't misread.
+- > Reviewer note (2026-07-08): resolve-not-reject on shutdown timeout (+ `console.error`) is the sound choice for a `shutdown(): Promise<void>` awaited in a SIGTERM handler (a rejecting shutdown is an unhandled-rejection footgun) — a PostHog-anchored deviation, correctly justified. AC only needs "settles deterministically / not hung."
+- > Reviewer note (2026-07-08, precision): the story note "flush/shutdown are shared verb NAMES with the seam facade" understates it — `flush`/`shutdown` ARE members of the seam's `AnalyticsProvider` frozen-15. The pin claim still holds: seam untouched, node does NOT implement `AnalyticsProvider` (own narrower `NodeAnalytics`).
+- > E10 watch-items (2026-07-08): (1) node `NodeAnalytics` (`capture`/`setTraits`/`setGroupTraits`/`flush`/`shutdown`) is intentionally narrower + differently-named than the seam facade (`track`/`identify`/`group`…) — E10 must show browser+node as SIBLINGS, not a unified client. (2) the resolve-on-timeout `console.error` is the only shutdown-drop signal — E10's shutdown wiring should await `shutdown()` in the signal handler so the drain window is used.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08. Closes E7 (the node target).
+
+- **Files added (node):** `node-noop.ts` (`NodeNoop<TX>` null-object implementing narrow `NodeAnalytics` — every verb a silent no-op, never constructs queue/transport, `flush`/`shutdown` resolve immediately)
+- **Files changed:** `create-analytics.ts` (factory selects `NodeNoop` when `config.key === undefined`, else real client — returns BEFORE `createSendBatch` so the transport is provably never built), `node-analytics.ts` (real `flush()`=`queue.flushNow()`; `shutdown()`=`stopped`-at-top + loop-drain `while(queue.size>0) await flushNow()` raced against configurable `shutdownTimeoutMs` default 30000 via `Promise.race`, resolve+`console.error` on timeout, `queue.drain()` clears timers; all 3 verbs guard `if(this.stopped) return`), `batch-queue.ts` (+`get size()` pure read-only — honest buffered count, NOT a client shadow counter; queue stays a pure buffer)
+- **New public API:** node `flush()`/`shutdown()` real bodies (verb names shared with seam facade but on node's OWN narrower client — seam-15 UNTOUCHED). Unkeyed⇒`NodeNoop`.
+- **Tests added:** node +19 (create-analytics: keyed→real/unkeyed→NodeNoop, unkeyed all-3-verbs-never-send bar B, unkeyed off-list-doesn't-throw gate-skipped, unkeyed flush/shutdown resolve; node-analytics: flush force-drains-before-interval + resolves-on-settle + stays-usable, shutdown drains-all + mid-drain-consumer-inert + empty-resolves + timeout-deterministic-not-hung + configurable + post-shutdown-inert-no-rearm + double-shutdown-noop; batch-queue: get size() + refill-during-in-flight-caught) → 117; seam 166 unchanged
+- **Commit:** `E7-S6-noop-and-lifecycle — No-op-without-key + flush/shutdown lifecycle` on `core-cycle`
+- **Reviewer notes:** 0 critical, 3 doc/assessment suggestions; E7-close-ready (node target coherent, both bars held)

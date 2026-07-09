@@ -404,12 +404,224 @@ test('traits and captures ride the SAME queue and batch together', () => {
   ]);
 });
 
-// --- lifecycle skeletons resolve (real bodies E7-S6) ---
+// --- flush(): force-drain bypassing the trigger, resolve once POSTs settle ---
 
-test('flush() and shutdown() are async no-op skeletons that resolve', async () => {
-  const { client } = keyedClient();
+test('flush() force-drains the buffer before the interval elapses and resolves', async () => {
+  const sink = collectingSend();
+  // flushAt high + interval long: nothing would ship on its own before flush().
+  const client = new NodeAnalyticsClient(
+    { key: 'k', taxonomy, flushAt: 20, flushInterval: 10000 },
+    sink.send
+  );
 
-  await expect(client.flush()).resolves.toBeUndefined();
+  client.capture('u', 'order_placed', { amount: 1 });
+  expect(sink.delivered).toHaveLength(0); // no trigger fired yet
+
+  await client.flush();
+  expect(sink.delivered).toHaveLength(1); // force-drained before any trigger
+  expect(sink.delivered[0]?.event).toBe('order_placed');
+});
+
+test('flush() resolves only once the in-flight delivery settles', async () => {
+  let resolveDelivery: () => void = () => {};
+  const send: SendBatch = () =>
+    new Promise<void>((r) => {
+      resolveDelivery = r;
+    });
+  const client = new NodeAnalyticsClient(
+    { key: 'k', taxonomy, flushAt: 20, flushInterval: 10000 },
+    send
+  );
+
+  client.capture('u', 'order_placed', { amount: 1 });
+  const flushed = client.flush();
+
+  let settled = false;
+  void flushed.then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false); // the POST has not resolved yet
+
+  resolveDelivery();
+  await flushed;
+  expect(settled).toBe(true);
+});
+
+test('flush() leaves the client usable — a later capture still ships', async () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient(
+    { key: 'k', taxonomy, flushAt: 20, flushInterval: 10000 },
+    sink.send
+  );
+
+  client.capture('u', 'order_placed', { amount: 1 });
+  await client.flush();
+  expect(sink.delivered).toHaveLength(1);
+
+  client.capture('u', 'order_placed', { amount: 2 });
+  await client.flush();
+  expect(sink.delivered).toHaveLength(2);
+});
+
+// --- shutdown(): drain-until-empty, catch mid-drain enqueue, quiesce ---
+
+test('shutdown() drains the buffer and resolves', async () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient(
+    { key: 'k', taxonomy, flushAt: 20, flushInterval: 10000 },
+    sink.send
+  );
+
+  client.capture('u', 'order_placed', { amount: 1 });
+  await expect(client.shutdown()).resolves.toBeUndefined();
+  expect(sink.delivered).toHaveLength(1);
+});
+
+test('shutdown() drains ALL buffered pre-shutdown work, re-flushing across the loop', async () => {
+  const sink = collectingSend();
+  // maxBatchSize=1 → the buffered burst slices into several deliveries; the drain must
+  // sweep every one before resolving, not just the first slice.
+  const client = new NodeAnalyticsClient(
+    { key: 'k', taxonomy, flushAt: 20, flushInterval: 10000, maxBatchSize: 1 },
+    sink.send
+  );
+
+  for (let i = 0; i < 5; i++) client.capture('u', 'order_placed', { amount: i });
+  await client.shutdown();
+
+  expect(sink.delivered).toHaveLength(5);
+  expect(sink.delivered.map((e) => e.properties?.amount)).toEqual([0, 1, 2, 3, 4]);
+});
+
+// A consumer capture racing in AFTER shutdown began is inert by design (stopped-at-top,
+// the "no new work once shutdown starts" invariant) — so the drain loop's "catch events
+// enqueued mid-drain" behavior is exercised at the QUEUE seam (batch-queue.test.ts:
+// "the loop re-drains a buffer that refills during a flush's in-flight await"), where a
+// refill that lands during flushNow's await is the real, non-consumer mid-drain case.
+// This client-level test pins the complementary invariant: the consumer path is inert.
+test('a capture fired DURING shutdown (mid-drain) is inert — not shipped, stopped-at-top', async () => {
+  const sink = collectingSend();
+  let racedIn = false;
+  const send: SendBatch = async (batch) => {
+    sink.batches.push(batch);
+    if (!racedIn) {
+      racedIn = true;
+      // The consumer races a capture in mid-drain; stopped is already true → inert.
+      client.capture('u', 'order_placed', { amount: 99 });
+    }
+  };
+  const client = new NodeAnalyticsClient(
+    { key: 'k', taxonomy, flushAt: 20, flushInterval: 10000 },
+    send
+  );
+
+  client.capture('u', 'order_placed', { amount: 1 });
+  await client.shutdown();
+
+  expect(sink.delivered).toHaveLength(1);
+  expect(sink.delivered.map((e) => e.properties?.amount)).toEqual([1]);
+});
+
+test('shutdown() with an empty buffer resolves immediately (nothing to drain)', async () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient({ key: 'k', taxonomy }, sink.send);
+
+  await expect(client.shutdown()).resolves.toBeUndefined();
+  expect(sink.delivered).toHaveLength(0);
+});
+
+// --- shutdown() timeout: deterministic settle, not hung ---
+
+test('shutdown() settles deterministically on timeout when a delivery hangs — process not hung', async () => {
+  const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  // A delivery that never resolves: without the timeout race, shutdown would hang forever.
+  const send: SendBatch = () => new Promise<void>(() => {});
+  const client = new NodeAnalyticsClient(
+    { key: 'k', taxonomy, flushAt: 20, flushInterval: 10000, shutdownTimeoutMs: 5000 },
+    send
+  );
+
+  client.capture('u', 'order_placed', { amount: 1 });
+  const shutdown = client.shutdown();
+
+  let settled = false;
+  void shutdown.then(() => {
+    settled = true;
+  });
+
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(settled).toBe(false); // still within the timeout
+
+  await vi.advanceTimersByTimeAsync(1); // timeout fires
+  await shutdown;
+  expect(settled).toBe(true); // resolved, not hung
+  expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('may not have been sent'));
+});
+
+test('shutdownTimeoutMs is configurable — the drain window honors the override', async () => {
+  const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const send: SendBatch = () => new Promise<void>(() => {});
+  const client = new NodeAnalyticsClient(
+    { key: 'k', taxonomy, flushAt: 20, flushInterval: 10000, shutdownTimeoutMs: 100 },
+    send
+  );
+
+  client.capture('u', 'order_placed', { amount: 1 });
+  const shutdown = client.shutdown();
+
+  let settled = false;
+  void shutdown.then(() => {
+    settled = true;
+  });
+
+  await vi.advanceTimersByTimeAsync(99);
+  expect(settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  await shutdown;
+  expect(settled).toBe(true);
+  expect(errSpy).toHaveBeenCalled();
+});
+
+// --- post-shutdown quiesce: timer cleared, later capture inert (no re-arm) ---
+
+test('after shutdown() a later capture is inert — nothing ships, no delivery timer re-arms', async () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient(
+    { key: 'k', taxonomy, flushAt: 20, flushInterval: 10000 },
+    sink.send
+  );
+
+  client.capture('u', 'order_placed', { amount: 1 });
+  await client.shutdown();
+  expect(sink.delivered).toHaveLength(1);
+
+  client.capture('u', 'order_placed', { amount: 2 });
+  // No re-arm: advancing well past the interval fires no delivery.
+  vi.advanceTimersByTime(100000);
+  expect(sink.delivered).toHaveLength(1);
+});
+
+test('after shutdown() setTraits and setGroupTraits are also inert', async () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient(
+    { key: 'k', taxonomy, flushAt: 20, flushInterval: 10000 },
+    sink.send
+  );
+
+  await client.shutdown();
+
+  client.setTraits('u', { plan: 'pro' });
+  client.setGroupTraits('company', 'acme', { name: 'Acme' });
+  vi.advanceTimersByTime(100000);
+  expect(sink.delivered).toHaveLength(0);
+});
+
+test('a second shutdown() is a no-op and resolves', async () => {
+  const sink = collectingSend();
+  const client = new NodeAnalyticsClient({ key: 'k', taxonomy }, sink.send);
+
+  await client.shutdown();
   await expect(client.shutdown()).resolves.toBeUndefined();
 });
 

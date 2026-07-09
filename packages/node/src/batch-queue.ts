@@ -73,6 +73,12 @@ export class BatchQueue<T> {
     this.armInterval();
   }
 
+  // Buffered-event count — the honest read of state the queue owns. The shutdown
+  // drain loop (E7-S6) reads it to catch events enqueued mid-flush.
+  get size(): number {
+    return this.buffer.length;
+  }
+
   // Force an immediate drain and resolve once every triggered delivery — and any
   // auto-flush delivery still in flight — settles. The lifecycle verbs (E7-S6) use it.
   async flushNow(): Promise<void> {
