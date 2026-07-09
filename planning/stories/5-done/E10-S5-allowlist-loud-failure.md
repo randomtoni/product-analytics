@@ -45,3 +45,19 @@ Exercises E3's privacy contract as an executable proof: the consumer supplies th
 - **Runs against the mock (shape A).** Facade behavior — injected recording adapter via the seam factory; the `drop-and-error-log` branch is proven by asserting the recording adapter received nothing off-list.
 
 ## Shipped
+- > Reviewer suggestion (2026-07-09, optional): a one-line note at the config defs that all configs set `key` (so the RecordingAdapter, not Noop, is wired) would make that load-bearing invariant explicit against a future config-copy mistake.
+- > Reviewer suggestion (2026-07-09): the drop-branch relies on `emitViolation` passing a single string to `console.error` — if E3 ever switches to structured args, `stringContaining` on the first arg still holds; noting the intentional message-format coupling.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-09. E3's privacy contract as an executable consumer-side proof (bar B).
+
+- **Files added (examples ONLY — bar B):** `allowlist-loud-failure.test.ts` (7 tests) — NO source change; policy = consumer config, enforcement = library.
+- **New public API:** none — example-only. ZERO `packages/**` edits (bar B).
+- **The loud-failure crux + compile-vs-runtime pin:** off-list PII key `ssn` → `expect(() => analytics.register({ssn})).toThrow()` under default `throw`. **Routed through `register`** (`props: NeutralProperties = Record<string,unknown>` → `ssn` COMPILES) NOT `identify(id, traits)`/taxonomy-typed `track` (where `ssn` is a COMPILE error blocking the build). The throw fires BEFORE the adapter (`allowed()` gates in `register` before `adapter.register`) — recorder stays empty (no side-effect, genuine not incidental). Reviewer traced against the real interface signatures.
+- **drop-and-error-log branch:** config-selected `onViolation:'drop-and-error-log'` → off-list `register({ssn})` DROPPED (recorder clean) + `console.error` logged (spied/restored); on-list registers still record under drop (regression pin).
+- **derive-from-taxonomy + gotcha proved:** `deriveAllowlistFromTaxonomy(fernlyTaxonomy)` contains event/trait/group keys, OMITS `page` keys (`path`/`referrer` — `not.toContain`, and the hand-written list adds them back — the omission demonstrated as a real consumer consequence); a harness from the derived list gates `ssn` identically. Undefined-allowlist→pass-through regression pin (allowlist MUST be explicitly set to gate).
+- **Tests added:** fernly +7 (allowlist config-only on-list-passes, on-list register through, off-list throws no-side-effect, drop-and-error-log drops+logs, on-list-under-drop, derive-omits-page + gates-ssn, undefined-passthrough) → 56; turbo typecheck+test green; bar-B holds
+- **Commit:** `E10-S5-allowlist-loud-failure — Allowlist contents + the deliberate off-list-key loud-failure assertion` on `core-cycle`
+- **Reviewer notes:** ship-ready — 0 critical, 2 optional suggestions
+- **Cross-story seams exposed (S6):** node server capture is `← S2 only` (no dependency on this browser recording harness) — a DIFFERENT target: `@analytics-kit/node` `capture(distinctId, 'plan_upgraded', props, {dedupeId})` on the SAME distinct id used client-side, `await shutdown()` in a signal handler (browser+node siblings, E7). Same bar-B: config-only, `examples/**` only.
