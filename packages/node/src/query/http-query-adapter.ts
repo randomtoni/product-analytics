@@ -98,8 +98,54 @@ interface WireSyncEnvelope extends WireResultBearing {
   is_cached?: boolean;
 }
 
+// The async status envelope: the SAME `{ query_status }` key carries both the pending
+// state and — once `complete` flips true — the nested completed `results`. `results`
+// nests ONE level deeper than the sync path and carries no sibling columns/types here.
+// Detection MUST key on `complete === false` (or HTTP 202), never on mere presence of
+// `query_status` (the completed poll response still carries the key).
+interface WireQueryStatus extends WireResultBearing {
+  id: string;
+  complete?: boolean;
+  error?: boolean;
+  error_message?: string;
+  is_cached?: boolean;
+}
+
+interface WireAsyncEnvelope {
+  query_status: WireQueryStatus;
+}
+
+// Either the inline sync envelope OR the async status envelope — the POST may return
+// either, and the adapter branches on which by inspecting `query_status.complete`.
+type WirePostResponse = WireSyncEnvelope & Partial<WireAsyncEnvelope>;
+
 const QUERY_PATH_TEMPLATE = (projectId: string): string =>
   `/api/projects/${projectId}/query/`;
+
+const STATUS_ACCEPTED = 202;
+
+// Async-request posture: ALWAYS-ASYNC. Every POST carries `refresh: 'async'`, so the
+// backend runs long-window funnel/retention/trend snapshots off-thread and hands back a
+// pollable status; short queries still complete inline (no `query_status.complete: false`)
+// and take the sync branch unchanged. A single posture keeps one code path and matches a
+// snapshot read client's large-window workload. The value is adapter-internal config.
+const ASYNC_REFRESH = 'async';
+
+// Bounded backoff-aware poll budget. Borrows the SHAPE of E5's browser backoff
+// (base * 2**n, capped) but is adapter-local — a query POLL (waiting for a long-running
+// query to finish) is a distinct concern from a transport RETRY, so it lives here, not in
+// send-batch (fixed-delay) nor cross-package-coupled to the browser retry queue.
+const POLL_BASE_MS = 250;
+const POLL_MAX_DELAY_MS = 5000;
+const POLL_MAX_ATTEMPTS = 20;
+
+function pollDelay(attempt: number): number {
+  return Math.min(POLL_MAX_DELAY_MS, POLL_BASE_MS * 2 ** attempt);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const INTERVAL_FOR_UNIT: Record<Duration['unit'], Interval> = {
   minute: 'hour',
@@ -195,6 +241,9 @@ export interface HttpQueryAdapterOptions {
   personalKey: string;
   projectId: string;
   fetch: FetchLike;
+  // Injectable purely so the poll backoff is drivable without a real wait under test
+  // (fake timers / an immediate resolver). Defaults to a real setTimeout-backed delay.
+  sleep?: (ms: number) => Promise<void>;
 }
 
 // The first real query backend, named by ROLE (never a vendor). It translates each neutral
@@ -208,12 +257,14 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
   private readonly url: string;
   private readonly personalKey: string;
   private readonly fetch: FetchLike;
+  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(options: HttpQueryAdapterOptions) {
     const host = options.queryEndpoint.replace(/\/$/, '');
     this.url = `${host}${QUERY_PATH_TEMPLATE(options.projectId)}`;
     this.personalKey = options.personalKey;
     this.fetch = options.fetch;
+    this.sleep = options.sleep ?? sleep;
   }
 
   async funnel(spec: FunnelSpec<TX>): Promise<QueryResult> {
@@ -268,14 +319,68 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
   private async run(query: WireQueryNode): Promise<QueryResult> {
     const response = await this.fetch(this.url, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.personalKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query }),
+      headers: this.headers(),
+      body: JSON.stringify({ query, refresh: ASYNC_REFRESH }),
     });
-    const envelope = (await response.json()) as WireSyncEnvelope;
-    return normalizeResult(envelope, envelope.is_cached);
+    if (response.ok === false) {
+      throw new Error('analytics: query request failed');
+    }
+    const body = (await response.json()) as WirePostResponse;
+
+    // Async when the backend accepted the query off-thread (HTTP 202, or a status
+    // envelope not yet complete). The completed status envelope ALSO carries the
+    // `query_status` key, so detection keys on `complete === false`, never on presence.
+    const status = body.query_status;
+    if (response.status === STATUS_ACCEPTED || (status !== undefined && status.complete !== true)) {
+      return this.pollToCompletion(status);
+    }
+    return normalizeResult(body, body.is_cached);
+  }
+
+  private async pollToCompletion(initial: WireQueryStatus | undefined): Promise<QueryResult> {
+    let status = initial;
+    if (status !== undefined && status.complete === true) {
+      return this.resultFrom(status);
+    }
+    if (status === undefined) {
+      // 202 with no inline status body: nothing to poll against — a give-up.
+      throw new Error('analytics: query did not complete');
+    }
+
+    const pollUrl = `${this.url}${status.id}/`;
+    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+      await this.sleep(pollDelay(attempt));
+      const response = await this.fetch(pollUrl, {
+        method: 'GET',
+        headers: this.headers(),
+      });
+      if (response.ok === false) {
+        throw new Error('analytics: query request failed');
+      }
+      const body = (await response.json()) as WireAsyncEnvelope;
+      status = body.query_status;
+      if (status.complete === true) {
+        return this.resultFrom(status);
+      }
+    }
+    throw new Error('analytics: query did not complete');
+  }
+
+  // Turn a completed status envelope into the neutral result — or surface its failure
+  // neutrally. Reuses the SAME normalizer as the sync path on `query_status.results`,
+  // which has no sibling columns/types (its columns-absent pass-through branch applies).
+  private resultFrom(status: WireQueryStatus): QueryResult {
+    if (status.error === true) {
+      throw new Error('analytics: query did not complete');
+    }
+    return normalizeResult(status, status.is_cached);
+  }
+
+  private headers(): Record<string, string> {
+    return {
+      Authorization: `Bearer ${this.personalKey}`,
+      'Content-Type': 'application/json',
+    };
   }
 }
 

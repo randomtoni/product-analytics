@@ -54,3 +54,17 @@ Long-running queries return an async status envelope instead of results inline; 
 - **Builds directly on S3.** This extends the same `HttpQueryAdapter`; it depends on S3's sync normalization + transport being in place (`depends_on: [E8-S3]`).
 
 ## Shipped
+- > Reviewer suggestion (2026-07-08, deferred cosmetic): `WirePostResponse = WireSyncEnvelope & Partial<WireAsyncEnvelope>` (an intersection) would be more honest as a discriminated union `WireSyncEnvelope | WireAsyncEnvelope`, but that ripples into `run()`'s pre-narrow `body.query_status` read + `normalizeResult(body, body.is_cached)` — cosmetic, zero runtime impact. Skipped-with-reason (don't destabilize the green path for a type aesthetic).
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-08.
+
+- **Files changed (node/query):** `http-query-adapter.ts` (extended the SAME adapter — extends not forks: non-exported async wire types `WireQueryStatus`/`WireAsyncEnvelope`/`WirePostResponse`; always-async `refresh:'async'` POST posture; sync-vs-async branch on `query_status.complete !== true`/HTTP 202; adapter-local bounded exponential-with-cap `pollToCompletion` GET loop `POLL_BASE_MS=250`/`POLL_MAX_DELAY_MS=5000`/`POLL_MAX_ATTEMPTS=20`; `resultFrom` feeds nested `query_status.results` to the SHARED `normalizeResult` (columns-absent pass-through); non-OK response guard `response.ok === false`; injectable `sleep` on adapter-internal `HttpQueryAdapterOptions` NOT `QueryClientConfig`) + new `http-query-adapter-async.test.ts`
+- **New public API:** none — async is entirely adapter-internal; interface/`QueryResult`/`QueryClientConfig` UNCHANGED. `.d.ts` grep clean of `query_status`/`refresh`/vendor. Sync & async indistinguishable to the caller.
+- **Async mechanics (posthog-source-guide-grounded):** POST `refresh:'async'` → `{query_status:{id,complete:false}}` → GET-poll `/api/projects/{projectId}/query/{id}/` until `complete===true` → results at `query_status.results` → `normalizeResult`. Bounded give-up + `query_status.error` → NEUTRAL error (`'analytics: query did not complete'`/`'...request failed'`, NO vendor string leak).
+- **Tests added:** node +12 (POST-pending→GET-poll-complete→normalized-QueryResult, nested-results-read, multi-pending, sync-branch-regression, sync≡async-shape, never-completes→bounded-neutral-error-no-leak, fake-timer no-hang, `query_status.error`→neutral, 202-empty→give-up, non-OK POST/POLL guards, bar-A neutral-keys-only) → 171; seam 172 unchanged
+- **Retry history:** 1 retry (cap 2). Critical fixed: the `typecheck` gate was RED (7 TS errors — `.catch((e)=>e as Error)` widened to `QueryResult | Error`; the builder had run `vitest`/esbuild not `tsc`). Fix: cast the AWAITED value `(await …catch((e)=>e)) as Error` at 3 sites (intent preserved, no assertion weakened); + tightened `resultFrom` to `status.error === true` only (S3 reviewer suggestion 1). Independently re-verified typecheck exits 0 before ship.
+- **Commit:** `E8-S4-http-query-adapter-async — HTTP query adapter: async refresh/poll path` on `core-cycle`
+- **Reviewer notes:** ship-ready (0 critical after fix); 1 deferred cosmetic (WirePostResponse union)
+- **Cross-story seams exposed:** **S5** (warehouse stub) UNAFFECTED — async was entirely adapter-internal to `HttpQueryAdapter`; the neutral interface/`QueryResult`/seam are unchanged, so S5 builds against the same interface for its bar-A typecheck proof.
