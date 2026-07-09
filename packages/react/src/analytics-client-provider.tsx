@@ -19,20 +19,32 @@ export function AnalyticsClientProvider(props: AnalyticsClientProviderProps): Re
     }
   }
 
-  const [ownedClient] = useState<RootAnalytics | undefined>(() =>
-    passedClient === undefined ? createAnalytics(config as AnalyticsConfig) : undefined
-  );
+  if (passedClient !== undefined) {
+    return (
+      <AnalyticsClientContext.Provider value={passedClient}>
+        {children}
+      </AnalyticsClientContext.Provider>
+    );
+  }
 
-  const client = passedClient ?? (ownedClient as RootAnalytics);
+  return <OwnedAnalyticsProvider config={config}>{children}</OwnedAnalyticsProvider>;
+}
+
+function OwnedAnalyticsProvider({
+  config,
+  children,
+}: {
+  config: AnalyticsConfig;
+  children?: ReactNode;
+}): ReactNode {
+  const [client] = useState<RootAnalytics>(() => createAnalytics(config));
 
   useEffect(() => {
-    if (ownedClient === undefined) {
-      return;
-    }
+    // Under SSR (renderToString) effects never run, so this owned client is never shutdown()-drained here — it's GC'd, harmless (no transport/DOM work happens before an effect commits).
     return () => {
-      void ownedClient.shutdown();
+      void client.shutdown();
     };
-  }, [ownedClient]);
+  }, [client]);
 
   return (
     <AnalyticsClientContext.Provider value={client}>{children}</AnalyticsClientContext.Provider>

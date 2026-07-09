@@ -67,3 +67,10 @@ The consumer-facing read path: a hook that returns the same neutral client the r
 - **Commit:** `E9-S3-use-analytics-hook — useAnalytics() hook` on `core-cycle`
 - **Reviewer notes:** ship — 0 critical, 2 minor suggestions (keyset test-double fidelity; error-message cosmetic)
 - **Cross-story seams exposed (S4):** `usePageView()` builds on `useAnalytics()` to get the client + fire manual `page()` on a consumer-threaded route change (no history listener). The no-provider throw is CENTRALIZED in `useAnalytics()` — S4 inherits the loud failure free, need not re-check the sentinel. S4 calls `useAnalytics()` bare (`DefaultTaxonomyShape`) unless it threads `TX` for the taxonomy-typed `page(name?, props?)`.
+
+## Follow-up
+
+> E9 post-close improvement pass, 2026-07-08 (commit follows). Reviewer-verified, no regression.
+
+- **No-provider error → one sentence** — collapsed the two-sentence throw to a single clear sentence still naming `AnalyticsClientProvider` (the `/AnalyticsClientProvider/` + `.toContain(...)` test assertions still pass; no test asserted the literal string). (Addresses the S3 cosmetic suggestion.)
+- Skipped-with-reason: the runtime keyset test-double fidelity note is a marginal test comment — the type-level `keyof` pin is the load-bearing guarantee; the intentional `client as RootAnalytics<TX>` taxonomy re-application cast is correct (context typed to default `RootAnalytics`) and left untouched.

@@ -8,7 +8,7 @@ export function useAnalytics<
   const client = useContext(AnalyticsClientContext);
   if (client === NOT_IN_PROVIDER) {
     throw new Error(
-      'useAnalytics() must be used within an <AnalyticsClientProvider>. No provider was found above this component.'
+      'useAnalytics() must be used within an <AnalyticsClientProvider>.'
     );
   }
   return client as RootAnalytics<TX>;
