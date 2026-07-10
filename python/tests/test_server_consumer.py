@@ -15,6 +15,8 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 from analytics_kit import AnalyticsConfig, BatchConsumer, ServerAdapter, create_server_analytics
 from analytics_kit.neutral_event import NeutralEvent
 from analytics_kit.server.consumer import (
@@ -404,3 +406,30 @@ def test_no_consumer_threads_leak_after_shutdown() -> None:
 
     after = {t.name for t in threading.enumerate()}
     assert "analytics-kit-consumer" not in (after - before)
+
+
+def test_overflow_drop_oldest_warns_once(caplog: pytest.LogCaptureFixture) -> None:
+    # Drop-oldest at max_queue_size was silent — undiagnosable production data loss. It now warns
+    # ONCE. Deterministic: block the daemon in its first delivery so the buffer fills to the cap,
+    # then enqueue past it; the drop-oldest evictions emit exactly one warning, not one-per-drop.
+    entered = threading.Event()
+    release = threading.Event()
+
+    def deliver(_batch: list[NeutralEvent]) -> None:
+        entered.set()
+        release.wait(timeout=5.0)
+
+    consumer = BatchConsumer(
+        deliver, sync_mode=False, flush_at=1, flush_interval=1000.0, max_queue_size=3
+    )
+    try:
+        with caplog.at_level("WARNING", logger="analytics_kit"):
+            consumer.enqueue(_event("held"))  # daemon pops this, enters deliver, blocks
+            assert entered.wait(timeout=2.0), "the daemon never entered the blocked delivery"
+            for i in range(10):  # fill the cap-3 buffer, then drop-oldest on each further enqueue
+                consumer.enqueue(_event(f"x{i}"))
+        warnings = [r for r in caplog.records if "queue is full" in r.message]
+        assert len(warnings) == 1  # warn-once, not one per evicted event
+    finally:
+        release.set()
+        consumer.shutdown()

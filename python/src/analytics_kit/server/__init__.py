@@ -10,6 +10,7 @@ fenced seam modules.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 
 from ..config import AnalyticsConfig
@@ -19,6 +20,8 @@ from ..version import __version__
 from .adapter import ServerAdapter
 from .consumer import BatchConsumer
 from .transport import Transport, UrllibTransport, create_send_batch
+
+_logger = logging.getLogger("analytics_kit")
 
 __all__ = [
     "BatchConsumer",
@@ -44,6 +47,11 @@ def create_server_analytics(
     parsed = AnalyticsConfig.model_validate(config)
     if parsed.key is None:
         return create_analytics(parsed)
+    if not parsed.ingest_host:
+        _logger.warning(
+            "a key is set but no ingest_host is configured; every batch will POST to a host-less "
+            "URL, fail, and be dropped. Set ingest_host."
+        )
     transport = UrllibTransport()
     consumer = BatchConsumer(
         create_send_batch(parsed, transport),

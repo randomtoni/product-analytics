@@ -13,12 +13,16 @@ server-capture cycle, dropped in by construction with no reshaping of this adapt
 
 from __future__ import annotations
 
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
 from ..adapter import ConsentState, NeutralResponse
 from ..neutral_event import NeutralEvent
 from .transport import Transport, UrllibTransport
+
+_STATUS_NO_RESPONSE = 0
 
 LIBRARY_ID = "analytics-kit"
 
@@ -102,8 +106,29 @@ class ServerAdapter:
         headers: dict[str, str],
         body: str | None = None,
     ) -> NeutralResponse:
-        """Neutral HTTP send primitive; the real transport lands with batch delivery."""
-        return NeutralResponse(status=0, body="")
+        """The neutral string-bodied HTTP send primitive — a method-general request.
+
+        Distinct from the adapter's gzipped batch delivery, which owns its own binary transport
+        path below the seam: this is the SPI's transport-agnostic primitive, so ``body`` stays
+        ``str``. A non-2xx returns its real status (``urllib`` raises ``HTTPError``); a genuine
+        network failure normalizes to ``0`` here, so no raw ``urllib`` exception crosses the seam.
+        """
+        data = body.encode("utf-8") if body is not None else None
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request) as response:  # noqa: S310
+                return NeutralResponse(status=response.status, body=response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            # Capture the status FIRST, then read the body defensively: send is self-contained (no
+            # outer boundary backstops it), so a body-read failure must not leak a raw exception nor
+            # lose the real status.
+            try:
+                error_body = error.read().decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001 — a body-read failure never crosses the seam.
+                error_body = ""
+            return NeutralResponse(status=error.code, body=error_body)
+        except Exception:  # noqa: BLE001 — normalize any transport failure; no raw error crosses the seam.
+            return NeutralResponse(status=_STATUS_NO_RESPONSE, body="")
 
     def get_consent_state(self) -> ConsentState:
         """Read the adapter's consent decision."""

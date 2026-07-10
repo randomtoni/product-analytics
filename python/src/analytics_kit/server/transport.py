@@ -18,6 +18,7 @@ from __future__ import annotations
 import gzip
 import json
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -82,8 +83,15 @@ class UrllibTransport:
 
     def post(self, url: str, headers: dict[str, str], body: bytes) -> NeutralResponse:
         request = urllib.request.Request(url, data=body, headers=headers, method=_WIRE_METHOD_POST)
-        with urllib.request.urlopen(request) as response:  # noqa: S310
-            return NeutralResponse(status=response.status, body=response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request) as response:  # noqa: S310
+                return NeutralResponse(status=response.status, body=response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            # urllib RAISES HTTPError for every non-2xx (unlike fetch, which resolves with the
+            # status). Return its real status so the retry classifier + 413-halving see 400/413/5xx
+            # instead of the raise normalizing to a transient 0. Genuine network errors (no HTTP
+            # status — connection/DNS/bad-URL) still propagate to post_envelope's boundary → 0.
+            return NeutralResponse(status=error.code, body=error.read().decode("utf-8", errors="replace"))
 
 
 def _gzip_body(payload: str) -> tuple[bytes, bool]:

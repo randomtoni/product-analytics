@@ -450,6 +450,25 @@ def test_unkeyed_is_a_whole_stack_no_op() -> None:
     provider.shutdown()
 
 
+# --- keyed-but-hostless is a misconfiguration that must WARN, not fail silently ------------
+
+
+def test_keyed_without_ingest_host_warns(caplog: pytest.LogCaptureFixture) -> None:
+    # A key set but no ingest_host: every batch POSTs to a host-less URL, fails, and is dropped.
+    # Silently, before the fix — now it warns loudly at construction (TS-parity).
+    with caplog.at_level("WARNING", logger="analytics_kit"):
+        create_server_analytics(AnalyticsConfig(key="k", sync_mode=True))  # sync ⇒ no daemon thread
+    assert any("no ingest_host is configured" in r.message for r in caplog.records)
+
+
+def test_keyed_with_ingest_host_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING", logger="analytics_kit"):
+        create_server_analytics(
+            AnalyticsConfig(key="k", ingest_host="https://ingest.example", sync_mode=True)
+        )
+    assert not any("no ingest_host is configured" in r.message for r in caplog.records)
+
+
 # --- config: the additive reliability knobs ----------------------------------------------
 
 

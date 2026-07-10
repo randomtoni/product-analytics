@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -193,8 +194,13 @@ class _UrllibQueryTransport:
     ) -> NeutralResponse:
         data = body.encode("utf-8") if body is not None else None
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(request) as response:  # noqa: S310
-            return NeutralResponse(status=response.status, body=response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request) as response:  # noqa: S310
+                return NeutralResponse(status=response.status, body=response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            # urllib RAISES on non-2xx; return the real status so ``_post``'s status check classifies
+            # it (a non-OK status → neutral query error) rather than the blanket except doing so.
+            return NeutralResponse(status=error.code, body=error.read().decode("utf-8", errors="replace"))
 
 
 def _breakdown_filter(breakdown: str | None) -> dict[str, object] | None:
@@ -419,6 +425,10 @@ class HttpQueryAdapter:
             envelope = self._post(poll_url, _WIRE_METHOD_GET, None)
             status = envelope.get(_WIRE_QUERY_STATUS_KEY)
             if not isinstance(status, dict):
+                raise _QueryError("analytics-kit: query did not complete")
+            # Short-circuit a backend that reports failure before completing — otherwise an
+            # ``error: true, complete: false`` status would poll the whole budget before failing.
+            if status.get(_WIRE_ERROR_KEY) is True:
                 raise _QueryError("analytics-kit: query did not complete")
             if status.get(_WIRE_COMPLETE_KEY) is True:
                 return self._result_from_status(status)

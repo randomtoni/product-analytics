@@ -93,6 +93,7 @@ class BatchConsumer:
         self._lock = threading.Lock()
         self._buffer: deque[NeutralEvent] = deque(maxlen=self._max_queue_size)
         self._not_empty = threading.Condition(self._lock)
+        self._overflow_warned = False
 
         self._running = False
         # The quiesce latch: set FIRST on shutdown so a capture racing in during the drain is
@@ -120,6 +121,13 @@ class BatchConsumer:
             # deque(maxlen=...) auto-evicts from the OLDEST (left) end on append at cap — the
             # drop-OLDEST overflow policy. A bounded queue that rejected the incoming event
             # would drop the NEWEST, the wrong policy here.
+            if len(self._buffer) == self._max_queue_size and not self._overflow_warned:
+                self._overflow_warned = True
+                _logger.warning(
+                    "analytics queue is full (max_queue_size=%d); dropping the oldest buffered "
+                    "events. Raise max_queue_size or flush/deliver more often.",
+                    self._max_queue_size,
+                )
             self._buffer.append(event)
             self._not_empty.notify()
             reached_size_trigger = len(self._buffer) >= self._flush_at
@@ -186,10 +194,12 @@ class BatchConsumer:
             return len(self._buffer)
 
     def flush(self) -> None:
-        """Force-drain the buffer immediately, blocking until every triggered delivery returns.
+        """Force-drain the currently-buffered events on the calling thread, bypassing the trigger.
 
-        Bypasses the size/interval trigger and leaves the adapter USABLE afterward — unlike
-        ``shutdown``, it does not quiesce, so captures keep flowing after it returns.
+        Blocks until the deliveries IT drives return, and leaves the adapter USABLE afterward —
+        unlike ``shutdown``, it does not quiesce, so captures keep flowing after it returns. It does
+        NOT await a batch the async daemon has already popped and is delivering concurrently;
+        ``_next_batch``'s locking still guarantees no event is delivered twice.
         """
         self._drain_all()
 
@@ -220,6 +230,10 @@ class BatchConsumer:
             remaining = max(deadline - time.monotonic(), 0.0)
             thread.join(timeout=remaining)
             self._thread = None
+
+        # Drop the exit hook once quiesced so many short-lived consumers don't pile up handlers
+        # (idempotent; a no-op in sync_mode, which never registered one).
+        atexit.unregister(self.shutdown)
 
         if timed_out or self._buffer_size() > 0:
             _logger.warning(

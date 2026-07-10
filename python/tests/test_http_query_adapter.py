@@ -329,6 +329,17 @@ def test_a_wire_error_flag_on_a_completed_status_surfaces_a_neutral_error() -> N
         _adapter(transport).raw_query("q")
 
 
+def test_an_errored_but_incomplete_poll_short_circuits_before_exhausting_the_budget() -> None:
+    # A backend reporting error:true while still incomplete must fail FAST, not poll the whole
+    # budget: POST submit (pending) → first poll GET (errored) short-circuits. Before the fix the
+    # error flag was only read once complete, so this polled all POLL_MAX_ATTEMPTS before failing.
+    errored_incomplete = _ok({"query_status": {"id": "q-1", "complete": False, "error": True}})
+    transport = _CannedTransport([_pending(), errored_incomplete])
+    with pytest.raises(_QueryError):
+        _adapter(transport).raw_query("q")
+    assert len(transport.sends) == 2  # 1 POST + exactly 1 poll GET, NOT 1 + POLL_MAX_ATTEMPTS
+
+
 def test_a_completed_status_missing_its_status_id_is_a_neutral_error() -> None:
     # An incomplete status with no id has nowhere to poll — a bounded give-up, not a hang.
     transport = _CannedTransport([_ok({"query_status": {"complete": False}})])
