@@ -46,7 +46,7 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
 - **[PY1-NODE-python-scaffold](epics/done/PY1-NODE-python-scaffold.md)** *(done)* — uv/pytest/ruff/mypy(strict)
   scaffold; **one distribution `analytics-kit` + extras** (not multiple), submodule layout, gates green
   on the empty seam.
-- **[PY2-CORE-python-seam](epics/PY2-CORE-python-seam.md)** — the vendor-neutral seam: adapter
+- **[PY2-CORE-python-seam](epics/PY2-CORE-python-seam.md)** *(active)* — the vendor-neutral seam: adapter
   `Protocol` SPI + server-shaped provider contract (frozen-15 = 13 methods + `flags?`/`replay?`
   declared `None`-slots) + config-selected factory + no-op; sync-client + background-thread posture;
   Pydantic at boundaries.
