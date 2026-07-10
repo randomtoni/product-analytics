@@ -36,6 +36,17 @@ it, ``opt_in()`` clears it, ``has_opted_out()`` reads it; each verb short-circui
 minting, dropping and discarding the event. A stateless server holds nothing to resurrect,
 so the plain guard is the complete server semantic (there is no persisted store to protect
 under opt-out).
+
+Delivery posture (LOCKED) — the client is **synchronous with a background daemon thread**;
+there is **no asyncio**. ``flush()`` and ``shutdown()`` are synchronous and
+*drain-to-completion*: they block until the delegated ``adapter.flush()`` / ``adapter.shutdown()``
+returns, never fire-and-forget, never a coroutine. The ``sync_mode`` config flag selects
+delivery: ``sync_mode=True`` bypasses the thread and delivers inline (the mode short-lived
+scripts and tests use); ``sync_mode=False`` (default) offloads delivery to the background
+daemon thread. This module fixes the posture and the lifecycle contract only — the queue,
+the daemon thread, the exit-time join, and the two ``sync_mode`` delivery paths are wired by
+the server-capture cycle inside the target adapter, which plugs into the existing
+``adapter.capture`` / ``adapter.flush`` / ``adapter.shutdown`` contract with no new seam member.
 """
 
 from __future__ import annotations
@@ -138,11 +149,19 @@ class Analytics:
         )
 
     def flush(self) -> None:
-        """Force-send buffered events; leaves the provider usable afterward."""
+        """Force-send buffered events; leaves the provider usable afterward.
+
+        Synchronous drain-to-completion: blocks until the delegated ``adapter.flush()``
+        returns. Not fire-and-forget, not a coroutine.
+        """
         self._adapter.flush()
 
     def shutdown(self) -> None:
-        """Drain and quiesce for process exit."""
+        """Drain and quiesce for process exit.
+
+        Synchronous drain-to-completion: blocks until the delegated ``adapter.shutdown()``
+        returns. Not fire-and-forget, not a coroutine.
+        """
         self._adapter.shutdown()
 
     def opt_out(self) -> None:

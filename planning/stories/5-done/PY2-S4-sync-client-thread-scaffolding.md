@@ -49,7 +49,17 @@ The Python client posture is locked as **sync with a background flush thread** (
 - **`sync_mode` semantics** (de-brand from posthog-python `client.py` `sync_mode`): `True` bypasses the thread (inline POST) — the mode used by tests and short-lived scripts; `False` (default) uses the background thread. PY2 defines the flag + contract so PY4 wires the two paths.
 - **CONTRACT vs IDIOM reference:** the lifecycle `flush`/`shutdown` CONTRACT ports *to* TS `node-analytics.ts` (its `flush()`/`shutdown()` returning promises → sync here); the thread/`sync_mode` IDIOM de-brands *from* posthog-python `consumer.py`/`client.py`. The posture choice (sync+thread) is the architect's ruling, not a posthog-python copy.
 - **Neutrality lesson from PY1 — docstrings ship** vendor-neutral; only `#`-comments carry provenance.
+> Reviewer suggestion (2026-07-09): the seam-guard's `_SEAM_MODULES` tuple omits `client.py` (a public seam module re-exporting `Analytics`) — a stray `import threading`/`async def` there would pass the guard silently. Add `"client"` to the tuple.
+> Reviewer suggestion (2026-07-09): note (test docstring) that `_FORBIDDEN_IMPORTS` fences the SEAM modules, not the whole package — PY4's delivery adapter legitimately imports `queue`/`threading`/`atexit`.
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-09.
+
+- **Files changed:** `python/src/analytics_kit/config.py` (+`sync_mode: bool = False`, additive, known field under `extra="forbid"`), `python/src/analytics_kit/provider.py` (posture docstring + drain-to-completion pins on `flush`/`shutdown`)
+- **Files added:** `python/tests/test_sync_seam.py` (11 cases incl. an AST guard proving NO threading/queue/asyncio in the seam)
+- **New public API:** `AnalyticsConfig.sync_mode: bool = False` (inline vs background-thread delivery contract)
+- **Tests added:** `test_sync_seam.py` — `sync_mode` parse, `flush`/`shutdown` sync drain-to-completion (`iscoroutinefunction` False + delegation-ordering), and the machine-enforced no-delivery AST guard
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** `see Technical notes` — clean/ship; 2 suggestions captured for the improvement pass (widen the AST guard to `client.py`; clarify it fences seam modules not the package)
+- **Cross-story seams exposed:** **PY4** fills the pre-shaped hole — the existing `AnalyticsAdapter.capture`/`flush`/`shutdown` trio is the plug-point (Option A, no new SPI member); PY4 owns the `queue.Queue` + daemon `Thread` + `atexit` join + **drop-oldest** overflow (to match TS, NOT posthog-python's drop-newest) + size/interval flush + the `sync_mode` inline-vs-thread paths. The AST guard fences delivery OUT of the seam modules; PY4's adapter is where queue/threading legitimately land.

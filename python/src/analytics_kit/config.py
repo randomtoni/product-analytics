@@ -17,6 +17,9 @@ class AnalyticsConfig(BaseModel):
 
     ``key`` presence drives adapter selection: unkeyed configuration yields a whole-stack
     silent no-op. ``super_properties`` are merged into every captured event by the provider.
+    ``sync_mode`` selects the delivery posture: ``True`` delivers inline (no background
+    thread); ``False`` (default) offloads delivery to a background daemon thread. The flag
+    is the contract only — both delivery paths are wired in the server-capture cycle.
     Unknown keys are rejected loudly — a config typo raises rather than silently degrading.
     """
 
@@ -24,3 +27,4 @@ class AnalyticsConfig(BaseModel):
 
     key: str | None = None
     super_properties: dict[str, object] | None = None
+    sync_mode: bool = False
