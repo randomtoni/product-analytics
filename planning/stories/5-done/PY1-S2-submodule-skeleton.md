@@ -54,4 +54,12 @@ Epics slice by submodule, not distribution. The later cycle epics (PY2 seam, PY3
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-09.
+
+- **Files changed:** none
+- **Files added:** `python/src/analytics_kit/client.py`, `query.py`, `taxonomy.py`, `allowlist.py`, `integrations/__init__.py` — all 5-line docstring-only neutral placeholders
+- **New public API:** `none — empty-but-importable placeholders` (submodules import cleanly; no seam surface pre-stubbed)
+- **Tests added:** `none` — skeleton; the import smoke-test is an AC, and the wheel-presence proof is S3's build check
+- **Commit:** `core-cycle` (message = this story's title; find via `git log --grep`)
+- **Reviewer notes:** `none` — approved first pass; reviewer AST-verified zero pre-stubbed surface + independent neutrality grep
+- **Cross-story seams exposed:** **S3 must assert the built wheel contains `analytics_kit/integrations/__init__.py` AND the four leaf modules** (`client`/`query`/`taxonomy`/`allowlist`) — the `integrations/__init__.py` is load-bearing (a namespace dir would drop from the wheel). PY2 fills `client.py`; PY5 fills `query.py`; PY3 fills `taxonomy.py` + `allowlist.py`; PY6 fills `integrations/`.
