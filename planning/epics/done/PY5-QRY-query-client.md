@@ -1,6 +1,6 @@
 ---
 id: PY5-QRY-query-client
-status: active
+status: done
 area: query
 touches: [adapters]
 api_impact: additive
@@ -26,9 +26,9 @@ The query client is the durable-KPI-snapshotting surface — the funnel/retentio
 
 Chain — `S1 → {S2, S3}`; S2 and S3 both depend only on S1 (they can build in parallel, like TS E8's HTTP + warehouse tracks). Written to `stories/2-ready-for-dev/`. Fills the empty PY1-skeleton `query.py` (as a `query/` submodule). **Slice note:** the query **no-op** folds into S1 (co-located with the factory, mirroring TS `E8-S2`), NOT S3 — so S3 is the warehouse stub alone.
 
-- **[PY5-S1](../stories/2-ready-for-dev/PY5-S1-query-protocol-specs-result-factory.md)** *(additive, no deps)* — `AnalyticsQueryClient` `Protocol` (5 sync members) + plain-`@dataclass` spec types (funnel/retention/trend/unique-count + `Duration`/`Granularity`/`Aggregation`) + Pydantic `QueryResult`/`QueryColumn` + separate Pydantic `QueryClientConfig` (distinct `personal_key`/`query_endpoint`) + `create_query_client` factory + `QueryNoop` (bar B).
-- **[PY5-S2](../stories/2-ready-for-dev/PY5-S2-http-query-adapter.md)** *(additive, depends on S1)* — `HttpQueryAdapter`: Bearer-auth POST to the config endpoint, **sync-blocking-poll** (TS async poll → `time.sleep` loop, NO asyncio), Pydantic wire→`QueryResult` decode, fetch-failure normalization at the boundary, injectable transport on the ctor, all wire vocab `_WIRE_*`-confined (the highest-neutrality-risk surface — the `HogQLQuery`-leak class).
-- **[PY5-S3](../stories/2-ready-for-dev/PY5-S3-warehouse-adapter-stub.md)** *(additive, depends on S1)* — `WarehouseQueryAdapter` typed not-implemented stub satisfying the Protocol unchanged (**the bar-A proof**: two adapters, one Protocol, zero consumer change) + documented per-method SQL mapping.
+- **[PY5-S1](../../stories/5-done/PY5-S1-query-protocol-specs-result-factory.md)** *(done — `484c580`)* — `AnalyticsQueryClient` `Protocol` (5 sync members) + plain-`@dataclass` specs + Pydantic `QueryResult`/`QueryColumn` (matching TS byte-for-byte) + separate `QueryClientConfig` + `create_query_client` + `QueryNoop` (bar B). The `_conforms` type-level sink (bar-A substrate) negative-controlled 3 ways.
+- **[PY5-S2](../../stories/5-done/PY5-S2-http-query-adapter.md)** *(done — `6b29521`)* — `HttpQueryAdapter`: Bearer-auth POST, **sync-blocking-poll** (bounded, `complete != True`-keyed — never the `query_status`-presence infinite-loop foot-gun; NO asyncio), Pydantic decode, fetch-failure normalization (negative-controlled), injectable transport on the ctor, all wire vocab `_WIRE_*`-confined. Neutrality bar corrected: `hogql`/`HogQLQuery` is required confined wire vocab (TS `FORBIDDEN_TOKENS` permits it); `posthog` is the forbidden class (clean).
+- **[PY5-S3](../../stories/5-done/PY5-S3-warehouse-adapter-stub.md)** *(done — `775d923`)* — `WarehouseQueryAdapter` typed sync-`def` stub satisfying the UNMOVED Protocol (**the bar-A proof**, negative-controlled 3 ways; both adapters fed through one `_conforms` sink) + engine-neutral documented SQL mapping (dropped the TS reference's HogQL/Postgres/DuckDB/JSONB — a neutrality improvement).
 
 Build topo order: `PY5-S1 → PY5-S2` and `PY5-S1 → PY5-S3` (S2/S3 parallel).
 

@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-10 — Python-parity cycle in flight; PY1–PY4 shipped (scaffold · seam · taxonomy/allowlist · server capture)
+Last updated: 2026-07-10 — Python-parity cycle in flight; PY1–PY5 shipped (scaffold · seam · taxonomy/allowlist · server capture · query client)
 
 ## Status
 
@@ -55,7 +55,7 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
 - **[PY4-NODE-server-capture](epics/done/PY4-NODE-server-capture.md)** *(done)* — server capture + set/set-group +
   `queue.Queue`/daemon-thread consumer (**drop-oldest to match TS, NOT posthog-python's drop-newest**)
   + adapter-internal wire mapper + `dedupe_id`→`uuid` idempotency + retry classification + no-op.
-- **[PY5-QRY-query-client](epics/PY5-QRY-query-client.md)** *(active)* — `AnalyticsQueryClient` `Protocol`
+- **[PY5-QRY-query-client](epics/done/PY5-QRY-query-client.md)** *(done)* — `AnalyticsQueryClient` `Protocol`
   (funnel/retention/trend/unique-count + `raw_query`) + sync HTTP query adapter + warehouse stub (bar-A
   proof) + no-op.
 - **[PY6-RCT-framework-bindings](epics/PY6-RCT-framework-bindings.md)** — the React analog:
