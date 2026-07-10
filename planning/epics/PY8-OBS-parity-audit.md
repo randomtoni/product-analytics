@@ -1,11 +1,11 @@
 ---
 id: PY8-OBS-parity-audit
-status: planned
+status: active
 area: observability
 touches: [core, privacy]
 api_impact: additive
 blocked_by: [PY7-CORE-example-consumer]
-updated: 2026-07-09
+updated: 2026-07-10
 ---
 
 # PY8-OBS-parity-audit — Python parity audit + neutrality gate
@@ -29,11 +29,13 @@ The capstone: prove the Python port is at **capability parity with the TS surfac
 
 ## Stories
 
-_Tentative slice (story files not yet written):_
+All three drafted to [`stories/2-ready-for-dev/`](../stories/2-ready-for-dev/). Topo order **S1 → S2 → S3**: S1 finalizes the doc target(s) S2's doc dimension scans; S3's neutrality-on-the-wire assertions complement S2's static scan. The architect ruled (2026-07-10) that a **local-loopback captured-request server** satisfies S3's "real-stack probe + negative control" with zero external setup — no live vendor endpoint, no `blocked_by`, no `## Development prerequisites` gate.
 
-- **S1** — the capability-parity matrix vs the TS surface (direct / idiomatic / N-A rows, the taxonomy-guarantee-gap statement) + the README interface→implementation + adopt-in-a-new-app sections.
-- **S2** — the neutrality-scan analog: `scripts/neutrality_scan.py` scanning the wheel/sdist (surface + value dimensions) + the `ast` wire-confinement pass over `src/`, the `_WIRE_*` confinement convention, the provenance-comment AST exemption; exit-nonzero, wrapped by a `pytest` gate.
-- **S3** — the real-stack probes + negative controls (round-trip capture, real query shape, off-list rejection, unkeyed silence, dedupe idempotency) + the re-runnable bar-A/bar-B proofs.
+- **[PY8-S1](../stories/2-ready-for-dev/PY8-S1-parity-matrix-and-readme.md)** *(additive, no deps)* — the capability-parity matrix vs the TS surface (four categories: direct-analog / idiomatic-adaptation / N-A-by-platform / declared-but-unimplemented slot — with the browser-N-A rows AND the distinct `flags?`/`replay?` declared-slot rows, the taxonomy-guarantee-gap row, no silent gap) + the README interface→implementation matrix + the adopt-in-a-new-app config-only section.
+- **[PY8-S2](../stories/2-ready-for-dev/PY8-S2-neutrality-scan-analog.md)** *(additive, depends on S1)* — `scripts/neutrality_scan.py` scanning the FULLY-EXTRACTED wheel + sdist (payload `.py`/`.pyi` + metadata — the PY1-S1-escape fix) + the `ast` wire-confinement pass over `src/` (the `_WIRE_*` const convention), vendor-NAME-only `FORBIDDEN_TOKENS` (`hogql` PERMITTED), the provenance-comment AST exemption (comments exempt; docstrings + metadata NOT); exit-nonzero, wrapped by a `pytest` gate; `examples/**` exempt.
+- **[PY8-S3](../stories/2-ready-for-dev/PY8-S3-real-stack-probes-and-bar-proofs.md)** *(additive, depends on S2)* — real-stack probes over a local loopback HTTP server (round-trip capture asserting the `{api_key, batch, sent_at}` envelope + `uuid` idempotency field + `$`-free/vendor-free bytes; real query shape) + negative controls (off-list key absent, unkeyed → zero requests, retry → stable `uuid`) ground-truthed vs `posthog-python` SOURCE + the re-runnable bar-A swap proof and the referenced PY7 two-gate bar-B proof.
+
+**Dependency graph:** PY8-S1 → PY8-S2 → PY8-S3 (linear).
 
 ## Out of scope
 

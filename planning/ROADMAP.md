@@ -65,7 +65,7 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
   example (Quillstream) proving bar B (config-only adoption) via the architect-locked TWO-gate model —
   fidelity (installed-dist mypy) + enforcement (AST import-audit, public-API-only) — since Python has no
   physical `dist` boundary; framework binding carries a request-scoped distinct_id; zero `analytics_kit` edits.
-- **[PY8-OBS-parity-audit](epics/PY8-OBS-parity-audit.md)** — capability-parity matrix vs the TS
+- **[PY8-OBS-parity-audit](epics/PY8-OBS-parity-audit.md)** *(active)* — capability-parity matrix vs the TS
   surface (browser-N-A rows AND `flags?`/`replay?` declared-slot rows documented, no silent gap) +
   the Python neutrality-scan analog (wheel + `ast` wire-confinement) as a standing gate + real-stack
   probes/negative controls.
