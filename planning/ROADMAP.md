@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-10 — Python-parity cycle in flight; PY1–PY6 shipped; PY7 (example) + PY8 (audit) remain
+Last updated: 2026-07-10 — Python-parity cycle in flight; PY1–PY7 shipped; PY8 (audit) remains — the final epic
 
 ## Status
 
@@ -61,8 +61,10 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
 - **[PY6-RCT-framework-bindings](epics/done/PY6-RCT-framework-bindings.md)** *(done)* — the React analog:
   `contextvars` request scope + `@scoped` decorator + **Django + ASGI/FastAPI** middleware (Flask/Celery
   deferred), lazy-imported behind extras.
-- **[PY7-CORE-example-consumer](epics/PY7-CORE-example-consumer.md)** *(active)* — generic server-shaped example
-  proving bar B (config-only adoption), type-checking against the installed distribution.
+- **[PY7-CORE-example-consumer](epics/done/PY7-CORE-example-consumer.md)** *(done)* — generic server-shaped
+  example (Quillstream) proving bar B (config-only adoption) via the architect-locked TWO-gate model —
+  fidelity (installed-dist mypy) + enforcement (AST import-audit, public-API-only) — since Python has no
+  physical `dist` boundary; framework binding carries a request-scoped distinct_id; zero `analytics_kit` edits.
 - **[PY8-OBS-parity-audit](epics/PY8-OBS-parity-audit.md)** — capability-parity matrix vs the TS
   surface (browser-N-A rows AND `flags?`/`replay?` declared-slot rows documented, no silent gap) +
   the Python neutrality-scan analog (wheel + `ast` wire-confinement) as a standing gate + real-stack
