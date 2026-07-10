@@ -26,11 +26,16 @@ this story adds NO seam surface. Wiring it into the resolution/fallback ladder i
 - **A pure in-process evaluator module** (`ts/packages/node/src/flags/local/` subdir, adapter-internal
   — nothing exported from node's `index.ts` in this story) de-branded from
   `posthog-js/packages/node/src/extensions/feature-flags/feature-flags.ts`:
-  - **Rollout-hash bucketing** — the deterministic consistent-hash of `flagKey "." bucketingValue`
-    (no salt for rollout; the `'variant'` salt for the variant band) → a `[0,1)` float compared to
-    `rollout_percentage/100`. Port `_hash` + `LONG_SCALE` (`0xfffffffffffffff`) + `hashSHA1`
-    (`crypto.ts`) VERBATIM in algorithm — the constant, the SHA-1 concat shape, and the 15-hex-nibble
-    slice are the load-bearing parity invariant (see Technical notes). `bucketingValue` is the
+  - **Rollout-hash bucketing** — the deterministic consistent-hash `SHA1(flagKey "." bucketingValue
+    + salt)` → first **15** hex nibbles → int → `/ LONG_SCALE` → a `[0,1]` float (top-inclusive: an
+    all-`f` slice yields exactly `1.0` — do NOT renormalize to `[0,1)`; the 100%-rollout gate depends on
+    `1.0 <= 1.0`). No salt (`''`) for rollout; the literal `'variant'` salt for the variant band (the
+    salt is a **suffix on `bucketingValue` with NO separator** — the `.` sits between key and value only).
+    Rollout gate is inclusion `_hash <= rollout_percentage / 100.0` (exclusion is strict `>`); divide by
+    `100.0` (float), never integer-divide. Port `_hash` + `LONG_SCALE` (`0xfffffffffffffff` = **15 f's** =
+    `2^60 − 1` = `1152921504606846975`, kept a FLOAT divisor) + `hashSHA1` (`crypto.ts`) VERBATIM in
+    algorithm — the constant, the SHA-1 concat shape, and the 15-hex-nibble slice are the load-bearing
+    parity invariant (see Technical notes for the exact pinned vector). `bucketingValue` is the
     `distinctId`, or the group key for a group-aggregated flag.
   - **Property operators** — `exact`/`is_not` (case-insensitive, array membership), `is_set`/
     `is_not_set`, `icontains`/`not_icontains`, `regex`/`not_regex`, `gt`/`gte`/`lt`/`lte` (numeric
@@ -38,7 +43,13 @@ this story adds NO seam surface. Wiring it into the resolution/fallback ladder i
     `semver_*` family. Default operator is `exact`. Port the `matchProperty` `switch`.
   - **Condition-group + variant matching** — OR across condition groups, AND within a group,
     rollout gate per group, contiguous variant bands (`variantLookupTable` / `getMatchingVariant`),
-    and a hard `condition.variant` override.
+    and a hard `condition.variant` override. Bands are **cumulative running sums** of
+    `variant.rollout_percentage / 100` in **declared array order** (do NOT sort), each band matched
+    **half-open `[value_min, value_max)`** (lower inclusive, upper exclusive), first match wins; a hash
+    landing in a gap (variant percentages sum < 100) returns no variant and the flag resolves to bare
+    `true`. The variant hash uses the `'variant'` salt and is computed **independently** of the rollout
+    hash — a flag can pass rollout on one hash and land in a band on the other, both off the same
+    `bucketingValue`.
   - **Cohort matching** — nested AND/OR property groups against a locally-fetched cohort map.
   - **Two inconclusive signals** — an adapter-internal `InconclusiveMatchError` analog ("have the
     definition, can't decide with the properties given": missing person property, experience
@@ -52,7 +63,10 @@ this story adds NO seam surface. Wiring it into the resolution/fallback ladder i
   - Fetch flag **definitions** (not evaluated flags) — the definition list + group-type mapping +
     cohort map — from a **config-supplied definitions endpoint**, authenticated by the
     **privileged (definition-reading) credential** (see the credential note). Endpoint path,
-    query params, and the two-key auth scheme are `$`-const/`[WIRE]` internals.
+    query params, and the two-key auth scheme are `[WIRE]`-const internals — match the SHIPPED node
+    flag adapter's convention: plain UPPER_SNAKE `*_WIRE_*` consts (e.g. `DEFINITIONS_ENDPOINT_WIRE_PATH`),
+    NOT `$`-prefixed. (`$`-const naming is the browser package's property-key convention, not node's
+    flag wire — `http-flag-adapter.ts` uses `FLAG_ENDPOINT_WIRE_PATH`/`TOKEN_WIRE_KEY`, plain non-`$`.)
   - A **self-rescheduling `setTimeout`** poll (immediate first load, then reschedule at a
     config-supplied interval BEFORE doing work — mirror the reference's `_loadFeatureFlags`), in-flight
     **dedup via a single shared promise**, and a **`stop()`** that clears the timer. ETag/`If-None-Match`
@@ -87,9 +101,14 @@ the strategy is invisible; both together prove bar A/B for local eval.>
 
 - [ ] The evaluator is a pure function of `(flag definition, bucketingValue, person/group properties,
       cohort map)` — no I/O, no timers, no HTTP, no reads off `FlagContext` beyond what S2 passes in.
-- [ ] The rollout/variant hash matches the reference algorithm exactly: a fixed `(flagKey, distinctId)`
-      produces a stable float asserted against a known vector; a rollout at 0% never matches, at 100%
-      always matches, and the same actor lands in the same variant band deterministically across runs.
+- [ ] The rollout/variant hash matches the reference algorithm exactly, asserted at THREE tiers against
+      the pinned vector (see Technical notes): (1) the SHA1 primitive —
+      `SHA1("some-flag.some_distinct_id") == "e4ce124e800a818c63099f95fa085dc2b620e173"`; (2) the exact
+      `_hash` floats (e.g. `("simple-flag","distinct_id_0") → 0.78369637642204315`,
+      `("simple-flag","distinct_id_1") → 0.33970699269954008`); (3) the end-to-end consistency vector —
+      `simple-flag` at 45% over `distinct_id_{0..9}` → `[false,true,true,false,true,false,false,true,false,true]`.
+      A rollout at 0% never matches (except an exact-`0.0` hash), at 100% always matches (incl. the
+      all-`f` `1.0` edge), and the same actor lands in the same variant band deterministically across runs.
 - [ ] Every ported operator has a passing + a failing test case; the default operator is `exact`;
       `is_not_set` resolves locally for an absent key (does not throw), while a genuinely-missing
       property under a value operator throws the inconclusive signal.
@@ -102,8 +121,8 @@ the strategy is invisible; both together prove bar A/B for local eval.>
       credential; the fetch is injectable and mocked.
 - [ ] Neutrality: `grep -ri posthog ts/packages/node/src` clean (save the architect-locked
       `// De-branded from …` provenance comments); the definitions endpoint, query params, hash
-      constants, and rule/cohort wire shapes confined to `$`-const/`[WIRE]` internals;
-      `pnpm neutrality-scan` green.
+      constants, and rule/cohort wire shapes confined to `*_WIRE_*`/`[WIRE]`-const internals (the
+      SHIPPED node convention — plain UPPER_SNAKE, not `$`-prefixed); `pnpm neutrality-scan` green.
 - [ ] Gates green: `pnpm --filter @analytics-kit/node build test typecheck lint`; all tests
       mock/loopback, never a live backend or live key.
 
@@ -114,12 +133,43 @@ the strategy is invisible; both together prove bar A/B for local eval.>
   `variantLookupTable`, the cohort `matchPropertyGroup`, the `_hash`/`LONG_SCALE` bucketing, the two
   error classes, and the `FeatureFlagsPoller` load/reschedule path) + `crypto.ts` (`hashSHA1`). Port
   the ALGORITHM verbatim, the NAMING de-branded. — posthog-source-guide (2026-07-10).
-- **The hash is the load-bearing parity invariant — do NOT "improve" it (— posthog-source-guide
-  2026-07-10):** `SHA1(flagKey "." bucketingValue [+ salt])`, take the first 15 hex nibbles → int →
-  divide by `LONG_SCALE = 0xfffffffffffffff` → a `[0,1)` float; rollout uses no salt, variants use the
-  `'variant'` salt. This must be bit-identical to whatever backend produces the remote eval or S4's
-  ground-truth diff fails. Keep the constant, the concat order, and the nibble slice exact; the ONLY
-  change is stripping vendor naming. This slice is what the S3 Python port must replicate exactly.
+- **The hash is the load-bearing parity invariant — do NOT "improve" it, pinned EXACTLY
+  (— posthog-source-guide 2026-07-10, verified against both reference suites + re-computed):**
+  reference `_hash` at `posthog-js/packages/node/src/extensions/feature-flags/feature-flags.ts:1041-1044`,
+  `hashSHA1` at `.../crypto.ts:3-12`, `LONG_SCALE` at `feature-flags.ts:10`. Algorithm, verbatim:
+  - **Concat:** `hashString = SHA1(`​`` `${key}.${bucketingValue}${salt}` `` ​`)` — UTF-8, lowercase hex
+    digest (40 chars). The `.` separator sits **between key and bucketingValue ONLY**; `salt` is a
+    **suffix appended to `bucketingValue` with NO separator**. Rollout salt = `''`; variant salt = the
+    literal 7-char string `'variant'`.
+  - **Slice + scale:** `parseInt(hashString.slice(0, 15), 16) / LONG_SCALE`, where
+    `LONG_SCALE = 0xfffffffffffffff` (**exactly 15 f's** = `2^60 − 1` = `1152921504606846975`). Keep the
+    divisor a FLOAT and do the division in float64 (the 60-bit numerator exceeds JS
+    `Number.MAX_SAFE_INTEGER`, but immediate float division matches Python's `int / float(...)` — a port
+    using `Decimal`/integer-division would silently drift). Range is `[0,1]` **top-inclusive** (all-`f`
+    slice → exactly `1.0`); do NOT renormalize to half-open.
+  - **Rollout gate:** inclusion is `_hash <= rollout_percentage / 100.0` (the reference expresses the
+    exclusion `_hash > rollout/100.0` at `feature-flags.ts:633`). 0% ⇒ effectively no one; 100% ⇒
+    everyone incl. the `1.0` edge. Divide by `100.0` (float), never integer-divide.
+  - **Variant bands** (`variantLookupTable` `feature-flags.ts:652-668`, `getMatchingVariant` `:640-650`):
+    cumulative running sums of `variant.rollout_percentage / 100` in declared array order (do NOT sort),
+    matched half-open `[value_min, value_max)`, first match wins; gap ⇒ bare `true`.
+  - **THE PINNED CROSS-TREE VECTOR (S1 asserts, S3 re-asserts the SAME, S4 anchors it):**
+    (1) primitive — `SHA1("some-flag.some_distinct_id") == "e4ce124e800a818c63099f95fa085dc2b620e173"`
+    (`posthog-js/packages/node/src/__tests__/crypto.spec.ts:5-6`);
+    (2) exact floats — `("simple-flag","distinct_id_0") → 0.78369637642204315`,
+    `("simple-flag","distinct_id_1") → 0.33970699269954008`,
+    `("simple-flag","distinct_id_2") → 0.37204343502390519`, and variant-salt
+    `("multivariate-flag","distinct_id_0") → 0.61864545379303792`;
+    (3) end-to-end — `simple-flag` at 45% over `distinct_id_{0..9}` →
+    `[false,true,true,false,true,false,false,true,false,true]`
+    (`feature-flags.spec.ts:4038-5067`), and `multivariate-flag` (group 55%, variants 50/20/20/5/5)
+    over `distinct_id_{0..}` → `['second-variant','second-variant','first-variant',false,false,'second-variant','first-variant',…]`
+    (`feature-flags.spec.ts:5071-6109`). These are REAL reference-suite vectors, not invented — pin all
+    three tiers so a wrong f-count, wrong slice length, or int-vs-float division fails a test.
+  This must be bit-identical to whatever backend produces the remote eval or S4's ground-truth diff
+  fails. The ONLY change from the reference is stripping vendor naming. This is exactly what the S3
+  Python port must replicate — S3 references `posthog-python/posthog/feature_flags.py:79-82` (`_hash`),
+  `:14` (`__LONG_SCALE__ = float(0xFFFFFFFFFFFFFFF)`, same 15 f's), confirmed byte-identical.
 - **Two-tier inconclusive is universal, keep both (— posthog-source-guide 2026-07-10):** the
   `Inconclusive` (retry-remote-if-allowed) vs `RequiresServerEvaluation` (static cohort — definition
   references server-only data) distinction is real and drives different S2 behavior. An inconclusive in
@@ -139,6 +189,23 @@ the strategy is invisible; both together prove bar A/B for local eval.>
   epic-level escalation, not a story decision. The reference already carries person/group properties on
   its context exactly as E12's `FlagContext` does (`personProperties`/`groupProperties`), so the
   evaluator reads what it needs off the context S2 passes in. — architect (2026-07-10, epic Notes).
+- **The pure evaluator is SYNCHRONOUS — do not carry the reference's `async` through
+  (— posthog-source-guide 2026-07-10):** the reference `_hash`/`matchFeatureFlagProperties`/
+  `getMatchingVariant` are `async` (`feature-flags.ts:1041,491,640`) ONLY because `hashSHA1` awaits
+  WebCrypto's `subtle.digest`. In node, hash synchronously via node's `crypto` (`createHash('sha1')`),
+  keeping the pure matcher a plain synchronous function of its inputs — no `Promise`, no `await`. This
+  matters for S2: the poller owns the only async boundary (the definitions fetch); the per-flag eval S2
+  calls in its resolution loop must be sync so the strategy branch stays inside the existing
+  `async evaluate` without a nested await-per-flag. (AC-1's "no I/O, no timers, no HTTP" already implies
+  this; stated explicitly so the builder doesn't port the `async` signature.)
+- **S1→S2 evaluator API contract (coordination pin — this is the surface S2 binds to):** expose an
+  adapter-internal `evaluateFlagLocally(definition, bucketingValue, personProperties, groupProperties,
+  cohortMap) → FlagValue` that either RETURNS a resolved `FlagValue` (`string | boolean`) or THROWS one
+  of the two inconclusive signals — plus the poller's `isReady()` + a defs-snapshot accessor. S2's
+  strategy loop is `try { local } catch (InconclusiveMatchError | RequiresServerEvaluation) { fallback }`
+  per flag. Keep the throw-based control flow (not a result-union) — it mirrors the reference and is what
+  S2's Technical notes assume. Name the exported-internal symbols concretely here so S2 doesn't re-invent
+  them.
 - **Split confirmation (— posthog-source-guide 2026-07-10):** the reference's natural fault line is
   (a) pure evaluator + hashing + operators + cohorts (~55-60%, fully pure), (b) poller/cache (~30%,
   needs only a `fetch` seam), (c) resolution/fallback (~10-15%, lives in the client). This story is

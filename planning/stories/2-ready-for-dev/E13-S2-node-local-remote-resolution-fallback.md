@@ -30,11 +30,18 @@ holds: local vs remote is entirely adapter-internal.
     present and the S1 poller has loaded definitions), evaluate each requested flag **locally first**
     against the `FlagContext`'s `personProperties`/`groupProperties`/`groups`/`distinctId`.
   - On the S1 `InconclusiveMatchError`/`RequiresServerEvaluation` signal for a flag, **fall back to
-    E12's existing remote `roundTrip` path** for the unresolved flags — reuse the SHIPPED remote
-    machinery, do NOT fork a second remote client. Merge: locally-resolved flags kept, remotely-
-    resolved flags layered over the still-unresolved ones — a single coherent `FlagSet`.
-  - Assemble the merged result into a `FlagSet` via the EXISTING `buildFlagSet` with the EXISTING
-    `FlagReason` union (`resolved`/`bootstrap`/`stale`/`unresolved`) — no new reason, no new field.
+    E12's existing private `roundTrip(context)` path** (`http-flag-adapter.ts:160`) for the unresolved
+    flags — reuse the SHIPPED remote machinery, do NOT fork a second remote client. Because `roundTrip`
+    is `private`, the branch lives INSIDE `HttpFlagAdapter` (it already does — this is a method change,
+    not a new class). Merge on the `Snapshot` maps (see the merge Technical note), locally-resolved flags
+    kept, remote layered over the still-unresolved ones — a single coherent snapshot.
+  - Assemble the merged result into a `FlagSet` via the EXISTING `buildFlagSet<TX>(snapshot: Snapshot)`
+    (`http-flag-adapter.ts:77`) with the EXISTING `FlagReason` union
+    (`resolved`/`bootstrap`/`stale`/`unresolved`) — no new reason, no new field, no per-flag reason
+    (the `Snapshot.reason` stays snapshot-uniform).
+  - **`evaluate`'s signature is UNCHANGED** — it currently takes only `context?` (the shipped adapter
+    does not read `options`, `http-flag-adapter.ts:114`); the strategy branch is added inside the body,
+    the parameter list and the `Promise<FlagSet<TX>>` return are untouched.
 - **`onlyEvaluateLocally` / `strictLocalEvaluation` as adapter config** — added to `FlagClientConfig`
   (`ts/packages/node/src/flags/config.ts`) + threaded into the adapter, NEVER onto the neutral
   `FlagContext`/`FlagEvaluateOptions`/`FeatureFlagPort`:
@@ -129,15 +136,39 @@ holds: local vs remote is entirely adapter-internal.
   `distinctId` — exactly what the S1 in-process matcher needs to evaluate without a round-trip. This is
   the concrete reason E12's port shape holds for E13 with zero seam change: the context the remote path
   forwards is the same context the local path matches against.
-- **The `getAllFlags` merge semantics (— posthog-source-guide 2026-07-10):** evaluate all requested
-  flags locally; the flags that threw inconclusive are the fallback set; fetch those remotely (unless
-  `onlyEvaluateLocally`) and layer the remote values OVER the locally-resolved ones. Locally-resolved
-  flags are kept; only the unresolved get remote values. This is per-flag, not all-or-nothing.
+- **The merge happens at the `Snapshot` map level, then ONE `buildFlagSet` (code-shape pin against the
+  SHIPPED adapter):** the shipped remote path is `evaluate → roundTrip(context) → fetchFlags(context)`
+  where `roundTrip` returns the adapter-internal `Snapshot` (`{ flags, payloads, reason, degraded }`,
+  `http-flag-adapter.ts:54-59`) with a SINGLE snapshot-level `reason`/`degraded` — NOT per-flag reasons,
+  NOT a `FlagSet`. So the strategy branch does NOT get per-flag remote reasons for free. Do the merge on
+  the `flags`/`payloads` MAPS: (1) build the locally-resolved `{flags, payloads}` from the S1 evaluator;
+  (2) collect the keys that threw inconclusive as the fallback set; (3) unless `onlyEvaluateLocally`,
+  call the SHIPPED `roundTrip(context)` (optionally narrowing `context.flagKeys` to the fallback set so
+  the remote body only asks for the unresolved) and layer its `flags`/`payloads` OVER the still-unresolved
+  keys — locally-resolved keys are KEPT, only the unresolved get remote values; (4) wrap the merged maps
+  in ONE `buildFlagSet<TX>({ flags, payloads, reason, degraded })`. The snapshot-level `reason` for a
+  mixed result: `resolved` when everything resolved (locally or remotely) cleanly; `unresolved`/`degraded`
+  when a fallback flag still could not resolve — reuse the EXISTING reason-derivation, add no per-flag
+  reason field (that would be a `Snapshot`-shape change; the frozen `FlagReason` stays snapshot-uniform).
+  This is per-flag on the MAPS, all-at-once on the reason — mirrors the reference `getAllFlags` layering
+  within E12's snapshot-uniform-reason shape.
 - **Config surface: put the knobs on `FlagClientConfig`, not `NodeAnalyticsConfig`, not the seam.**
-  `FlagClientConfig` (`flags/config.ts`) already owns the flag-eval endpoint separate from the ingest
-  endpoint (E12-S3); add `definitionsEndpoint` + the privileged-credential field + `pollInterval` +
-  `onlyEvaluateLocally` + `strictLocalEvaluation` there. The seam `FlagsConfig.bootstrap` and the
-  neutral port stay untouched.
+  `FlagClientConfig` (`flags/config.ts`) is currently `{ key?, flagEndpoint?, taxonomy?, bootstrap?,
+  fetch? }` (5 fields); add `definitionsEndpoint?` + the privileged-credential field (role-named, e.g.
+  `definitionsKey?` — never `personalApiKey`) + `pollInterval?` + `onlyEvaluateLocally?` +
+  `strictLocalEvaluation?` there. The seam `FlagsConfig.bootstrap` and the neutral port stay untouched.
+- **Factory selection wrinkle — local-capability is ADDITIVE to the shipped 3-way branch (pin against
+  `create-flag-client.ts`):** the shipped factory is (a) no `key` ⇒ `FlagNoop`; (b) `key` but no
+  `flagEndpoint` ⇒ warn-once + `FlagNoop`; (c) `key` + `flagEndpoint` ⇒ `HttpFlagAdapter` remote-only.
+  S2 adds local-capability as a CONSTRUCTION OPTION on branch (c), not a new branch: when
+  `definitionsEndpoint` + the privileged credential are ALSO present, construct the adapter local-capable
+  (poller/evaluator on); else remote-only exactly as shipped. **Edge — local-only with NO remote
+  `flagEndpoint`:** a consumer running `onlyEvaluateLocally` may not supply `flagEndpoint`, but branch (b)
+  currently warns→`FlagNoop` on `key`-without-`flagEndpoint`. Resolve it so that `key` +
+  `definitionsEndpoint` + privileged credential (even without `flagEndpoint`) selects a local-capable
+  adapter rather than the no-op — the fallback `roundTrip` is simply never reached under
+  `onlyEvaluateLocally`. Keep the warn→`FlagNoop` ONLY for the genuinely-nowhere-to-go case (`key` set,
+  neither `flagEndpoint` nor `definitionsEndpoint`). This keeps bar B honest for the local-only posture.
 - **E13's load-bearing invariant:** ZERO seam/port change. This is the regression check on E12 — the
   whole story ships behind the unchanged `evaluate`. If the wiring seems to need a port change, that's
   an E12-was-wrong escalation, not a story decision.

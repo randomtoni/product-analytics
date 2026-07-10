@@ -34,13 +34,27 @@ privileged (definition-reading) key — so it is split out and gated.
   mismatched local rule (or a rollout boundary flipped) produces a DIFFERENT result from remote, so a
   passing diff is non-vacuous. A self-consistent mock that can never disagree is exactly what PY8 warned
   against.
-- **A cross-tree hash-parity assertion** — a shared known vector (the SAME `(flag_key, distinct_id)` →
-  float) asserted in both the TS and Python suites, pinning that S1 and S3 bucket identically. (If S1/S3
-  already assert this vector, S4 documents it as the parity anchor rather than duplicating.)
+- **A cross-tree hash-parity assertion** — the SAME pinned vector S1 and S3 already assert (do NOT mint
+  a new one): tier (1) `SHA1("some-flag.some_distinct_id") == "e4ce124e800a818c63099f95fa085dc2b620e173"`;
+  tier (2) the exact floats (`("simple-flag","distinct_id_0") → 0.78369637642204315`,
+  `("simple-flag","distinct_id_1") → 0.33970699269954008`, variant-salt
+  `("multivariate-flag","distinct_id_0") → 0.61864545379303792`); tier (3) `simple-flag` at 45% over
+  `distinct_id_{0..9}` → `[false,true,true,false,true,false,false,true,false,true]`. Since S1 (TS) and S3
+  (Python) each assert this in their own suite, S4 **documents it as the parity anchor** — the shared
+  vector both suites bind to — rather than adding a third copy. S4's contribution is asserting the
+  cross-tree IDENTITY explicitly (e.g. a recipe/comment stating both suites pin the identical vector, so
+  a drift in either tree's hash fails ITS suite and the anchor is named in one place).
 - **Parity-matrix update** — record feature-flag LOCAL EVAL as a server-target capability present in
   BOTH trees (TS-node + Python server), **absent-by-platform from the browser** (browsers fetch; they
-  don't do local eval — a documented boundary, not a gap). Update wherever the parity matrix lives
-  (the doc PY-cycle established; the builder locates it — likely `planning/` or a tree README).
+  don't do local eval — a documented boundary, not a gap). The matrix lives at
+  `planning/audit/capability-completeness.md` (PY8-S1 established it; also mirrored in the tree READMEs
+  per PY8-S1). **Coherence note:** that matrix's feature-flags row still reads "Typed extension point,
+  NOT implemented — by design" (`:175`) — it predates E12/E13. This story's remit is ADDING the
+  local-eval row; but the row must not contradict the now-shipped reality (E12 remote eval + E13 local
+  eval). Add the local-eval row (server-target, both trees, browser-absent-by-platform) AND, if the
+  flags row still says "NOT implemented," correct THAT line to reflect flags-are-now-implemented so the
+  matrix is internally coherent (feature-flags = implemented; remote eval both targets; local eval
+  server-only). Do NOT expand into re-auditing other capabilities — just make the flags rows truthful.
 - **Bar re-proof note** — a short confirmation in the test/recipe that both bars hold for local eval:
   bar A (an adapter that only does remote, or only local, still satisfies the one `evaluate` — local eval
   is a capability an adapter MAY add) and bar B (enabling local eval is config-only). These are already
@@ -58,9 +72,11 @@ privileged (definition-reading) key — so it is split out and gated.
 ## Acceptance criteria
 
 - [ ] A ground-truth test evaluates a known flag set LOCALLY and REMOTELY against the same inputs and
-      asserts per-flag agreement (value + variant + payload). It exercises the real definitions fetch +
-      real remote response when the privileged key is present, and SKIPS cleanly (not fails) when it is
-      absent — the loopback/mock rule-matching stays green key-less.
+      asserts per-flag agreement (value + variant + payload). The KEY-LESS layer exercises the real
+      definitions fetch + real remote response through a **loopback `http.server`** (a real socket, the
+      PY8-S3 precedent — not a mock), and is fully green with no external setup; the LIVE layer
+      (diffing against a real backend's own bucketing via the privileged key) SKIPS cleanly — not fails —
+      when the key is absent.
 - [ ] Negative controls prove the diff is non-vacuous: a deliberately-wrong local rule or flipped rollout
       boundary yields a DIFFERENT result from remote, so the passing agreement is meaningful (the PY8
       lesson — the test can fail).
@@ -77,13 +93,23 @@ privileged (definition-reading) key — so it is split out and gated.
 
 ## Technical notes
 
-- **DEVELOPMENT PREREQUISITE — gated on a privileged (definition-reading) key (— epic, ROADMAP
-  `## Development prerequisites`):** the ground-truth diff needs a live analytics project + a privileged
-  key to read real definitions AND run a real remote eval to diff against. This gates ONLY this story's
-  real-stack proof; the unit-level rule-matching in S1/S2/S3 is loopback/mock-provable and needs no key.
-  Structure the live diff as skip-if-no-key (the PY8 precedent) so the CC-reachable path — loopback/mock
-  proof + the cross-tree hash vector — is fully green without external setup, and the live-key ground-
-  truth is the only gated part. Confirm the prerequisite is already in ROADMAP (added when E13 was
+- **THREE test layers, only the third is key-gated (pin the narrowest path per the PY8-S3 precedent):**
+  the PY8-S3 real-stack probes used a **local loopback `http.server`** (stdlib, ephemeral port) as the
+  REAL transport — NO live vendor endpoint, NO live key. Mirror that here so the CC-reachable GREEN path
+  is as strong as possible without external setup:
+  1. **Loopback ground-truth (CC-reachable, KEY-LESS, the primary green path):** stand up a loopback
+     server that serves BOTH a canned-but-realistic **definitions** payload (to the S1/S3 poller) AND a
+     canned remote `/flags` response (to the shipped `roundTrip`/`_round_trip`) for the SAME
+     `FlagContext` inputs. Evaluate locally and remotely THROUGH THE REAL TRANSPORT and assert per-flag
+     agreement. This satisfies the PY8 "real path, not a self-consistent mock" lesson at the transport
+     layer without a key — the definitions AND the remote response cross a real socket.
+  2. **Cross-tree hash anchor (CC-reachable, KEY-LESS):** the shared vector named above.
+  3. **Live privileged-key ground-truth (GATED, skip-if-no-key):** the ONLY part needing a live
+     analytics project + privileged (definition-reading) key — it diffs local eval against a REAL
+     backend's OWN bucketing/definitions (the true correctness anchor for the hash against production,
+     which loopback canned data cannot prove). Structure it `skip-if-no-key` (the PY8 precedent) so its
+     absence SKIPS (not fails); layers 1–2 stay fully green key-less.
+  Confirm the prerequisite is already in ROADMAP `## Development prerequisites` (added when E13 was
   drafted) — do NOT duplicate the entry.
 - **The PY8 lesson is the whole point (— E12-S4 / PY8 precedent):** a real-stack probe must exercise the
   REAL path, not a self-consistent mock. Local eval that only ever compares against its own mocked remote
