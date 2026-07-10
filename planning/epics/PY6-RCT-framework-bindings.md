@@ -1,11 +1,11 @@
 ---
 id: PY6-RCT-framework-bindings
-status: planned
+status: active
 area: react
 touches: [node]
 api_impact: additive
 blocked_by: [PY4-NODE-server-capture]
-updated: 2026-07-09
+updated: 2026-07-10
 ---
 
 # PY6-RCT-framework-bindings — Python framework bindings
@@ -24,11 +24,20 @@ The framework bindings are the Python analog of the React binding — the option
 
 ## Stories
 
-_Tentative slice (story files not yet written):_
+Chain — `S1 → {S2, S3}`; S2 and S3 both depend only on S1 (parallel — the two middlewares are the same `new_context` wrapper for WSGI vs ASGI). Written to `stories/2-ready-for-dev/`. Fills the empty PY1 `integrations/` package. **The #4 provider-context mechanism is architect-locked (Option B): the context supplies distinct_id + tags at the CALL SITE via a binding-layer view — the shipped `provider.py` is NOT modified.**
 
-- **S1** — the `contextvars` core: `new_context()` / current-context accessor carrying `distinct_id` + tags, and the `@scoped` decorator; wired so the PY4 client reads the active context's distinct_id when a per-call one isn't given.
-- **S2** — the Django middleware (`analytics-kit[django]` extra, lazy import) opening a request-scoped context.
-- **S3** — the ASGI/FastAPI middleware (`analytics-kit[fastapi]` extra, lazy import) — the same `new_context` wrapper for async servers.
+- **[PY6-S1](../stories/2-ready-for-dev/PY6-S1-context-core-and-scoped-view.md)** *(additive, no deps)* — the `contextvars` core (`new_context()` @contextmanager + current-context accessor carrying `distinct_id` + tags + `add_tag`) + the `@scoped` decorator + the context-aware capture path (resolves distinct_id = arg-else-context, raises if neither; merges tags `super_properties → tags → call_properties`, tags gated). `provider.py` untouched.
+- **[PY6-S2](../stories/2-ready-for-dev/PY6-S2-django-middleware.md)** *(additive, depends on S1)* — the Django (WSGI) middleware opening a `new_context()` per request, lazy `try/except ImportError` behind `[django]`, consumer tags only (no library-computed metadata).
+- **[PY6-S3](../stories/2-ready-for-dev/PY6-S3-asgi-fastapi-middleware.md)** *(additive, depends on S1)* — the ASGI/FastAPI middleware (same `new_context` wrapper, `contextvars` is task-local ⇒ async-safe), lazy import behind `[fastapi]`; the sync client works inside an async server (delivery thread-offloaded).
+
+Build topo order: `PY6-S1 → PY6-S2` and `PY6-S1 → PY6-S3` (S2/S3 parallel).
+
+**Module map** (fills the empty PY1 `integrations/` package; the shipped `provider.py` is NOT modified — the context read lives in the binding layer per the #4 ruling):
+
+- `integrations/context.py` — the `contextvars` stack + `ContextScope` (`distinct_id`+`tags`) + `new_context()` + `@scoped` + the context-aware capture entry (S1)
+- `integrations/django.py` — the Django middleware, lazy-imported behind `[django]` (S2)
+- `integrations/fastapi.py` (or `asgi.py`) — the ASGI/FastAPI middleware, lazy-imported behind `[fastapi]` (S3)
+- `pyproject.toml` `[dependency-groups] dev` gains `django` + `fastapi`/`starlette` (the test-infra decision — the runtime extras/lazy path stays real for consumers)
 
 ## Out of scope
 

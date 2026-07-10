@@ -58,7 +58,7 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
 - **[PY5-QRY-query-client](epics/done/PY5-QRY-query-client.md)** *(done)* — `AnalyticsQueryClient` `Protocol`
   (funnel/retention/trend/unique-count + `raw_query`) + sync HTTP query adapter + warehouse stub (bar-A
   proof) + no-op.
-- **[PY6-RCT-framework-bindings](epics/PY6-RCT-framework-bindings.md)** — the React analog:
+- **[PY6-RCT-framework-bindings](epics/PY6-RCT-framework-bindings.md)** *(active)* — the React analog:
   `contextvars` request scope + `@scoped` decorator + **Django + ASGI/FastAPI** middleware (Flask/Celery
   deferred), lazy-imported behind extras.
 - **[PY7-CORE-example-consumer](epics/PY7-CORE-example-consumer.md)** — generic server-shaped example
