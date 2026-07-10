@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-09 — Python-parity cycle opened as NOW; feature-flags promoted to UPCOMING
+Last updated: 2026-07-09 — Python-parity cycle opened as NOW; feature-flags promoted to UPCOMING; epics refined (architect re-validated)
 
 ## Status
 
@@ -47,13 +47,14 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
   scaffold; **one distribution `analytics-kit` + extras** (not multiple), submodule layout, gates green
   on the empty seam.
 - **[PY2-CORE-python-seam](epics/PY2-CORE-python-seam.md)** — the vendor-neutral seam: adapter
-  `Protocol` SPI + server-shaped provider contract + config-selected factory + no-op; sync-client +
-  background-thread posture; Pydantic at boundaries.
+  `Protocol` SPI + server-shaped provider contract (frozen-15 = 13 methods + `flags?`/`replay?`
+  declared `None`-slots) + config-selected factory + no-op; sync-client + background-thread posture;
+  Pydantic at boundaries.
 - **[PY3-CORE-taxonomy-allowlist](epics/PY3-CORE-taxonomy-allowlist.md)** — the library's OWN surface:
   payload allowlist (1:1 port) + two-layer typed taxonomy (runtime registry + best-effort static).
 - **[PY4-NODE-server-capture](epics/PY4-NODE-server-capture.md)** — server capture + set/set-group +
-  `queue.Queue`/daemon-thread consumer + adapter-internal wire mapper + `dedupe_id`→`uuid` idempotency
-  + retry classification + no-op.
+  `queue.Queue`/daemon-thread consumer (**drop-oldest to match TS, NOT posthog-python's drop-newest**)
+  + adapter-internal wire mapper + `dedupe_id`→`uuid` idempotency + retry classification + no-op.
 - **[PY5-QRY-query-client](epics/PY5-QRY-query-client.md)** — `AnalyticsQueryClient` `Protocol`
   (funnel/retention/trend/unique-count + `raw_query`) + sync HTTP query adapter + warehouse stub (bar-A
   proof) + no-op.
@@ -63,8 +64,9 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
 - **[PY7-CORE-example-consumer](epics/PY7-CORE-example-consumer.md)** — generic server-shaped example
   proving bar B (config-only adoption), type-checking against the installed distribution.
 - **[PY8-OBS-parity-audit](epics/PY8-OBS-parity-audit.md)** — capability-parity matrix vs the TS
-  surface (N-A rows documented, no silent gap) + the Python neutrality-scan analog (wheel + `ast`
-  wire-confinement) as a standing gate + real-stack probes/negative controls.
+  surface (browser-N-A rows AND `flags?`/`replay?` declared-slot rows documented, no silent gap) +
+  the Python neutrality-scan analog (wheel + `ast` wire-confinement) as a standing gate + real-stack
+  probes/negative controls.
 
 **Dependency graph:** PY1 → PY2 → PY3; then {PY4, PY5} in parallel off PY3; PY6 → off PY4; PY7 needs
 PY4 + PY5 + PY6; PY8 closes off PY7.
