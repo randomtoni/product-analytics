@@ -3,6 +3,49 @@
 Cycle narrative, newest-first. The [ROADMAP](ROADMAP.md) holds the forward plan; this file holds
 what closed cycles established and why.
 
+## `Python parity` cycle — closed 2026-07-10 (PY1–PY8)
+
+The library became polyglot: a full Python implementation under `python/` at capability parity with
+the shipped TS surface, **server-shaped** (a plain client + framework bindings; no browser/DOM target).
+On 2026-07-09 the repo split to `ts/` + `python/`; `planning/` and `.claude/` govern both trees. Parity
+is by shared contract, not shared code — the shipped `ts/` seam is the reference the port ports *to*.
+
+- **The seam ported capability-for-capability (PY1–PY3).** uv/pytest/ruff/mypy(strict) scaffold, one
+  `analytics-kit` distribution + extras. The neutral seam is `Protocol`s (adapter SPI + a frozen-15
+  provider: 13 methods + `flags?`/`replay?` declared `None`-slots), Pydantic at the genuine boundaries,
+  the config-selected factory + a whole-stack `NoopAdapter` (unkeyed ⇒ silent). Taxonomy = runtime-registry
+  parity + a best-effort static layer (NOT the TS compile-time literal guarantee — the const-generic wall,
+  PM-locked); the consumer-supplied payload allowlist is a 1:1 port, gating consumer keys pre-enrichment.
+  The adapter SPI is **capture-only** (set/group mint `internal_kind`-discriminated `NeutralEvent`s routed
+  through `capture`).
+
+- **Server capture + query + framework bindings (PY4–PY6).** Server capture over a bounded queue +
+  daemon-thread consumer, **drop-oldest overflow to match TS (not posthog-python's drop-newest)**, an
+  adapter-internal wire mapper (`dedupe_id`→wire `uuid`; de-branded `set`/`set_once`/`group_*` wrappers,
+  never `$set`/`$groupidentify`), retry classification + 413-halving + fetch-failure normalization. The
+  query client (funnel/retention/trend/unique-count + `raw_query`) over a sync HTTP adapter + a warehouse
+  stub (bar-A). The React analog: `contextvars` request scope + `@scoped` + Django + ASGI/FastAPI
+  middleware behind extras.
+
+- **Example consumer + parity audit (PY7–PY8).** Quillstream proves bar B via the architect-locked
+  **TWO-gate model** — fidelity (installed-dist mypy) + enforcement (AST import-audit, public-API-only) —
+  since Python has no physical `dist` boundary like TS Fernly's typecheck-against-`dist`. The capstone
+  audit: a capability-parity matrix vs the TS surface (browser-N-A rows AND the distinct `flags?`/`replay?`
+  declared-slot rows, no silent gap), the Python neutrality-scan analog (fully-extracted wheel+sdist +
+  `ast` `_WIRE_*` wire-confinement) as a standing zero-vendor gate, and real-stack loopback probes +
+  negative controls ground-truthed vs `posthog-python` source. Both acceptance bars re-proven.
+
+- **Post-cycle reliability fix (PR review).** The audit's real-stack probe was transient-only (503),
+  missing that `urllib` raises `HTTPError` on **every** non-2xx — which the transport normalized to a
+  transient `0`, making a permanent `400` retry-then-drop and 413-halving dead code. Fixed (catch
+  `HTTPError` → real status; network errors still normalize to `0` at the boundary, matching TS's `fetch`
+  semantics), with loopback regression tests across permanent / halving / transient statuses. Lesson
+  carried forward: a real-stack probe must exercise the permanent/error path, not just a transient one.
+
+Epics archived to [`epics/done/`](epics/done/): PY1-NODE-python-scaffold, PY2-CORE-python-seam,
+PY3-CORE-taxonomy-allowlist, PY4-NODE-server-capture, PY5-QRY-query-client, PY6-RCT-framework-bindings,
+PY7-CORE-example-consumer, PY8-OBS-parity-audit.
+
 ## `R1 targets` cycle — closed 2026-07-09 (E4–E11)
 
 The three platform targets + example consumer + adoption audit brought the library to
