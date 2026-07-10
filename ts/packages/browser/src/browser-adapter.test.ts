@@ -5288,3 +5288,128 @@ describe('group() — membership super-prop + group-identify event, reaching the
     expect(reloaded.getPersistedProperty(GROUPS_KEY)).toEqual({ company: 'acme' });
   });
 });
+
+describe('onSessionRotated — the additive rotation fan-out off the ONE verdict (E14-S3)', () => {
+  const IDLE_MS = 30 * 60 * 1000;
+  const MAX_MS = 24 * 60 * 60 * 1000;
+
+  test('primes the listener immediately on subscribe with the current session id', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    // A captured event mints + commits the shared session id.
+    const stamped = adapter.runCapturePipeline(makeEvent());
+
+    const seen: (string | undefined)[] = [];
+    adapter.onSessionRotated((id) => seen.push(id));
+
+    // The subscribe-time prime carries the current (last-seen) id — the SAME id events carry.
+    expect(seen).toEqual([stamped.sessionId]);
+    expect(seen[0]).toBe(adapter.getReplaySessionId());
+  });
+
+  test('primes with undefined before any event has minted a session', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    const seen: (string | undefined)[] = [];
+    adapter.onSessionRotated((id) => seen.push(id));
+
+    expect(seen).toEqual([undefined]);
+  });
+
+  test('fires on an idle-expiry rotation with the NEW shared session id (equals the event sessionId)', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    const first = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base) }));
+
+    const seen: (string | undefined)[] = [];
+    adapter.onSessionRotated((id) => seen.push(id)); // prime = first.sessionId
+
+    // A captured event past the idle window rotates the session → the verdict fires.
+    const rotated = adapter.runCapturePipeline(
+      makeEvent({ timestamp: new Date(base + IDLE_MS + 1) })
+    );
+
+    expect(rotated.sessionId).not.toBe(first.sessionId);
+    // prime (first id) then the rotation notification (the new id, = the event's sessionId).
+    expect(seen).toEqual([first.sessionId, rotated.sessionId]);
+  });
+
+  test('fires on a max-length rotation too', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    const first = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base) }));
+
+    const seen: (string | undefined)[] = [];
+    adapter.onSessionRotated((id) => seen.push(id));
+
+    // Steady activity so idle never fires, past the 24h max.
+    for (let t = base + 20 * 60 * 1000; t <= base + MAX_MS; t += 20 * 60 * 1000) {
+      adapter.runCapturePipeline(makeEvent({ timestamp: new Date(t) }));
+    }
+    const pastMax = adapter.runCapturePipeline(
+      makeEvent({ timestamp: new Date(base + MAX_MS + 1) })
+    );
+
+    expect(pastMax.sessionId).not.toBe(first.sessionId);
+    // Only ONE rotation notification (plus the prime) across all the steady 'same' events.
+    expect(seen).toEqual([first.sessionId, pastMax.sessionId]);
+  });
+
+  test('does NOT fire on a continuing (same) session — only on a rotation edge', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    const first = adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base) }));
+
+    const seen: (string | undefined)[] = [];
+    adapter.onSessionRotated((id) => seen.push(id));
+
+    // Within the idle window — the session continues, no rotation.
+    adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base + 10 * 60 * 1000) }));
+    adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base + 20 * 60 * 1000) }));
+
+    // Just the prime — no rotation edge crossed.
+    expect(seen).toEqual([first.sessionId]);
+  });
+
+  test('the returned unsubscribe stops further notifications', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const base = new Date('2026-07-08T00:00:00.000Z').getTime();
+
+    adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base) }));
+
+    const seen: (string | undefined)[] = [];
+    const unsubscribe = adapter.onSessionRotated((id) => seen.push(id)); // prime
+    unsubscribe();
+
+    // A rotation after unsubscribe reaches nobody.
+    adapter.runCapturePipeline(makeEvent({ timestamp: new Date(base + IDLE_MS + 1) }));
+
+    expect(seen).toHaveLength(1); // only the prime
+  });
+
+  test('a reset() rotation is observed — the next captured event re-keys and notifies', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+
+    const first = adapter.runCapturePipeline(makeEvent());
+
+    const seen: (string | undefined)[] = [];
+    adapter.onSessionRotated((id) => seen.push(id)); // prime = first.sessionId
+
+    // reset() clears the session; the next captured event mints a fresh id → rotation.
+    adapter.reset();
+    const afterReset = adapter.runCapturePipeline(makeEvent());
+
+    expect(afterReset.sessionId).not.toBe(first.sessionId);
+    expect(seen).toEqual([first.sessionId, afterReset.sessionId]);
+  });
+
+  test('getReplaySessionId reads the SHARED id — equal to the captured event sessionId', () => {
+    const adapter = new BrowserAdapter({ key: freshKey() });
+    const stamped = adapter.runCapturePipeline(makeEvent());
+
+    // The recorder's linkage id IS the id events carry — single-sourced, never re-minted.
+    expect(adapter.getReplaySessionId()).toBe(stamped.sessionId);
+  });
+});

@@ -262,6 +262,11 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // pipeline pass. ONE comparison serves both the pageview-record clear (E6-S1) and the
   // per-session entry-prop recapture (E6-S4). Adapter-internal.
   private lastSeenSessionId: string | undefined;
+  // Subscribers notified when the session id rotates (the replay recorder re-keys its
+  // recording off this). A notification EDGE off the ONE existing rotation verdict
+  // (classifySessionTransition), not a second detector — fired from commitSessionTransition's
+  // call site on a 'rotated' transition, primed with the current id on subscribe.
+  private readonly sessionRotatedListeners = new Set<(sessionId: string | undefined) => void>();
   // Whether unload() mints a pageleave. Resolved once at construction from the E6-S5
   // structured `enrichment.pageleave` toggle (authoritative), falling back to the legacy
   // `capturePageleave` boolean when absent; on unless explicitly disabled (posthog's
@@ -587,6 +592,9 @@ export class BrowserAdapter implements AnalyticsAdapter {
     this.maintainSessionEntry(stamped.sessionId, transition);
     this.writeInitialProps();
     this.commitSessionTransition(stamped.sessionId);
+    if (transition === 'rotated') {
+      this.notifySessionRotated(stamped.sessionId);
+    }
     return this.enrichAttribution(this.enrichContext(this.mergeSuperProperties(stamped)));
   }
 
@@ -653,6 +661,15 @@ export class BrowserAdapter implements AnalyticsAdapter {
   // the transition verdict has run.
   private commitSessionTransition(sessionId: string | undefined): void {
     this.lastSeenSessionId = sessionId;
+  }
+
+  // Fan the ONE rotation verdict out to every subscriber (the replay recorder re-keys off
+  // it). Called from the verdict site on a 'rotated' transition — never on its own timer, so
+  // it inherits the verdict's capture-gated firing cadence (see getReplaySessionId note).
+  private notifySessionRotated(sessionId: string | undefined): void {
+    for (const listener of this.sessionRotatedListeners) {
+      listener(sessionId);
+    }
   }
 
   // Per-SESSION entry props (E6-S4). Re-capture the raw {referrer, url} snapshot on
@@ -1171,13 +1188,29 @@ export class BrowserAdapter implements AnalyticsAdapter {
   }
 
   /** @internal The current session-linkage id the replay recorder reads so a recording
-   * stitches to the same session captured events carry (E14-S2). A PURE read of the last
-   * session id observed on a captured event — it does NOT advance the idle clock the way
-   * checkAndGetSessionId() would, because getReplayId() may be called arbitrarily. undefined
-   * before the first captured event mints a session. S3 upgrades this to the shared session
-   * read + rotation re-key; S2 supplies it as the recorder's placeholder id source. */
+   * stitches to the same session captured events carry (E14-S3). A PURE read of the last
+   * session id observed on a captured event — the SAME shared id `SessionIdManager` mints and
+   * the pipeline stamps on `NeutralEvent.sessionId`, never minted by the recorder. It does NOT
+   * advance the idle clock the way checkAndGetSessionId() would, because getReplayId() may be
+   * called arbitrarily. undefined before the first captured event mints a session. */
   getReplaySessionId(): string | undefined {
     return this.lastSeenSessionId;
+  }
+
+  /** @internal Subscribe to session-id rotation so the replay recorder re-keys its recording
+   * onto the new id. Primes the listener immediately with the current session id on subscribe
+   * (how the recorder keys its FIRST segment at start()), then fires on every subsequent
+   * rotation. Returns an unsubscribe closure the recorder disposes on stop()/teardown. Reuses
+   * the ONE existing rotation verdict (classifySessionTransition) — no second detector, no
+   * onSessionId observer on the pure SessionIdManager. NOTE: the verdict fires only on a
+   * captured event (runCapturePipeline), so an idle/max-length rotation that happens while no
+   * event is captured re-keys LATE — a known v1 cadence limitation (E14-S3 notes). */
+  onSessionRotated(listener: (sessionId: string | undefined) => void): () => void {
+    this.sessionRotatedListeners.add(listener);
+    listener(this.lastSeenSessionId);
+    return () => {
+      this.sessionRotatedListeners.delete(listener);
+    };
   }
 
   getLibraryId(): string {

@@ -37,7 +37,39 @@ function fakeHandle(): { handle: ReplayRecordingHandle; stop: ReturnType<typeof 
   return { handle: { stop, buffer: [] }, stop };
 }
 
-afterEach(() => {
+// A controllable stand-in for the adapter's `onSessionRotated`: primes the listener with the
+// current id on subscribe (mirroring the real fan-out), records subscribe/unsubscribe, and
+// exposes `rotate(id)` so a test can drive a rotation edge. `current` is the shared session id
+// the recorder reads via `getSessionId` — `rotate` advances it before notifying so the two
+// stay consistent, exactly as the real adapter commits the id then fires.
+function fakeRotationSource(initialId: string | undefined) {
+  const state = { current: initialId };
+  let listener: ((id: string | undefined) => void) | undefined;
+  let subscribed = false;
+  return {
+    getSessionId: () => state.current,
+    onRotate: (fn: (id: string | undefined) => void): (() => void) => {
+      listener = fn;
+      subscribed = true;
+      fn(state.current); // prime on subscribe
+      return () => {
+        listener = undefined;
+        subscribed = false;
+      };
+    },
+    rotate: (id: string | undefined): void => {
+      state.current = id;
+      listener?.(id);
+    },
+    isSubscribed: (): boolean => subscribed,
+  };
+}
+
+afterEach(async () => {
+  // Drain any dynamic-import microtasks a still-running recorder left pending BEFORE resetting
+  // the mock, so a leaked `beginSegment` resolution lands on the old mock and never bleeds a
+  // spurious `startRecording` call into the next test.
+  await settleReplayLoad();
   vi.restoreAllMocks();
   replayMock.startRecording.mockReset();
 });
@@ -135,6 +167,112 @@ describe('ReplayRecorder control surface (E14-S2)', () => {
     expect(recorder.getReplayId()).toBeUndefined();
     current = 'session-abc';
     expect(recorder.getReplayId()).toBe('session-abc');
+  });
+});
+
+describe('ReplayRecorder re-key on rotation (E14-S3)', () => {
+  test('the subscribe-time prime does NOT re-key — the first segment is the only recording', async () => {
+    const { handle } = fakeHandle();
+    replayMock.startRecording.mockReturnValue(handle);
+    const source = fakeRotationSource('s1');
+    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+
+    recorder.start();
+    await settleReplayLoad();
+
+    // start() begins ONE segment; the prime carries the same id it already keyed, so no re-key.
+    expect(replayMock.startRecording).toHaveBeenCalledTimes(1);
+    expect(source.isSubscribed()).toBe(true);
+  });
+
+  test('re-keys on rotation — stops the current recording and starts a fresh segment', async () => {
+    const first = fakeHandle();
+    const second = fakeHandle();
+    replayMock.startRecording.mockReturnValueOnce(first.handle).mockReturnValueOnce(second.handle);
+    const source = fakeRotationSource('s1');
+    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+
+    recorder.start();
+    await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(1));
+
+    source.rotate('s2');
+    // The old segment is stopped and a new one begins — one recording never spans two ids.
+    expect(first.stop).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(2));
+    expect(recorder.isActive()).toBe(true);
+  });
+
+  test('getReplayId reflects the NEW id after a rotation re-key', async () => {
+    replayMock.startRecording.mockReturnValue(fakeHandle().handle);
+    const source = fakeRotationSource('s1');
+    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+
+    recorder.start();
+    await settleReplayLoad();
+    expect(recorder.getReplayId()).toBe('s1');
+
+    source.rotate('s2');
+    // The linkage id follows the shared source — the re-keyed segment stitches to the new id.
+    expect(recorder.getReplayId()).toBe('s2');
+  });
+
+  test('a rotation to the SAME id does not re-key (redundant notification is ignored)', async () => {
+    replayMock.startRecording.mockReturnValue(fakeHandle().handle);
+    const source = fakeRotationSource('s1');
+    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+
+    recorder.start();
+    await settleReplayLoad();
+    expect(replayMock.startRecording).toHaveBeenCalledTimes(1);
+
+    source.rotate('s1'); // same id — not a real rotation edge
+    await settleReplayLoad();
+
+    expect(replayMock.startRecording).toHaveBeenCalledTimes(1);
+  });
+
+  test('stop unsubscribes from rotation — a later rotation does not re-key', async () => {
+    replayMock.startRecording.mockReturnValue(fakeHandle().handle);
+    const source = fakeRotationSource('s1');
+    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+
+    recorder.start();
+    await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(1));
+    recorder.stop();
+    expect(source.isSubscribed()).toBe(false);
+
+    source.rotate('s2'); // reaches nobody
+    await settleReplayLoad();
+
+    expect(replayMock.startRecording).toHaveBeenCalledTimes(1);
+    expect(recorder.isActive()).toBe(false);
+  });
+
+  test('a rotation while inactive (after stop) is a no-op', async () => {
+    replayMock.startRecording.mockReturnValue(fakeHandle().handle);
+    const source = fakeRotationSource('s1');
+    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+
+    recorder.start();
+    await settleReplayLoad();
+    recorder.stop();
+
+    // handleRotation is guarded on `started`; calling the (now-detached) listener path is inert.
+    source.rotate('s2');
+    await settleReplayLoad();
+    expect(replayMock.startRecording).toHaveBeenCalledTimes(1);
+  });
+
+  test('degrades to a single non-re-keying segment when no onRotate source is supplied', async () => {
+    replayMock.startRecording.mockReturnValue(fakeHandle().handle);
+    // No onRotate — mirrors an id source with no rotation signal.
+    const recorder = new ReplayRecorder({ getSessionId: () => 's1' });
+
+    recorder.start();
+    await settleReplayLoad();
+
+    expect(recorder.isActive()).toBe(true);
+    expect(replayMock.startRecording).toHaveBeenCalledTimes(1);
   });
 });
 
