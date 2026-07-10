@@ -61,4 +61,13 @@ Every PY7 slice adopts through one shared harness: an invented server-shaped pro
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added:** a SEPARATE uv project `python/examples/quillstream/` (invented product "quillstream") — `pyproject.toml`, `src/quillstream/{__init__,config,harness,recording_adapter,taxonomy}.py`, `py.typed`, `tests/test_harness.py`, `uv.lock`
+- **Files changed:** none under `analytics_kit` (bar B — zero library edits)
+- **New public API:** none in `analytics_kit`; the example is a downstream consumer. Product surface: `define_taxonomy(...)` (7 events/3 traits/2 groups), `AnalyticsConfig`/`QueryClientConfig`, `RecordingAdapter` (full `AnalyticsAdapter` Protocol, consent `"granted"`), `create_quillstream_analytics` (keyed ⇒ recorder / unkeyed ⇒ `create_analytics(config)` → `NoopAdapter`)
+- **Tests added:** `test_harness.py` — `_conforms` sink (RecordingAdapter satisfies the Protocol), positive records-something (capture N ⇒ list N), keyed/unkeyed branch
+- **⚠ SEPARATE GATE STEP (the bar-B proof — run from the example dir, NOT the main `python/` suite which excludes `examples/**`):** `cd python/examples/quillstream && uv sync && uv run mypy .` (fidelity gate — type-checks against the INSTALLED `analytics-kit` public types via the editable dep + `py.typed`) `&& uv run pytest`. Currently: mypy clean (6 files), pytest 4 passed.
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — bar-B fidelity gate **verified genuine** (zero `analytics_kit` edits; editable `[tool.uv.sources]` dep, NO `../../src` reroute; `py.typed`-resolved public types). RecordingAdapter full-Protocol **mypy-proven by mutation** (rename `get_library_version`→`version` breaks the `create_analytics(adapter=)` injection). Public-API-only (all 11 imports in `__all__`). The "internals still importable" Python gap is deferred to S3's AST audit (no install mode closes it).
+- **Cross-story seams exposed:** **S2** builds the capture+query+allowlist exercise on this harness (it should exercise `quillstream_query_config` — the reviewer noted S1 leaves it untested; S2's query exercise covers it). **S3** adds the framework-binding exercise + the two-gate proof (the fidelity gate above + the AST import-audit enforcing public-API-only). The `[django]`/`[fastapi]` deps + `starlette`/`httpx` dev-deps are in the example `pyproject.toml`.

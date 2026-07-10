@@ -1,0 +1,36 @@
+[project]
+name = "quillstream"
+version = "0.0.0"
+description = "Quillstream — an example consumer that adopts analytics-kit by configuration alone."
+requires-python = ">=3.10"
+dependencies = [
+    "analytics-kit[django]",
+    "analytics-kit[fastapi]",
+]
+
+[tool.uv.sources]
+analytics-kit = { path = "../..", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "mypy>=1.11",
+    "django>=4.2",
+    "starlette>=0.37",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quillstream"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
