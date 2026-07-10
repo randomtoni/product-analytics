@@ -57,4 +57,13 @@ Closes the epic's reliability contract — the R1 hardening lessons carried cros
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files changed:** `server/transport.py` (retry classification + fetch-failure normalization + 413-halving around `create_send_batch`), `server/consumer.py` (hardened `flush`/`shutdown` — quiesce-first, timeout-raced, settle-not-raise), `config.py` (+`shutdown_timeout`/`retry_count`/`retry_delay`), `server/__init__.py`
+- **Files added:** `tests/test_server_reliability.py` (fault-injecting probes)
+- **New public API:** the 3 config fields (`shutdown_timeout=30.0`, `retry_count=3`, `retry_delay=3.0`); `create_send_batch(..., wait=None)` (injectable retry pause)
+- **Tests added:** retry per-class, fetch-failure normalization negative-control, 413-halving + terminal drop, quiesce-first shutdown, flush-stays-usable, unkeyed no-op
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — **normalization negative-controlled through the full async stack** (raising transport → status 0, no raw exception escapes, daemon survives), retry classification `{0,408,429,5xx}` transient / non-413 4xx dropped (fixed delay, no exponential backoff), **413-halving terminates at every size {1,2,3,7,100}** (single-record-still-413 drops only that record), quiesce-first shutdown leaks zero daemon threads (50 cycles + double run). `except Exception` (not `BaseException`) so `KeyboardInterrupt`/`SystemExit` still propagate.
+> Reviewer suggestion (2026-07-10): the async-mode shutdown-TIMEOUT path (daemon orphaned finishing an in-flight POST) has no named test — the timeout-drain test uses `sync_mode`. Correct-by-design (daemon never blocks exit), a coverage gap only. Add a named test for the async orphaned-daemon timeout path. (Improvement-pass.)
+- **Cross-story seams exposed:** PY4 server-capture is COMPLETE — config+selection (S1) → drop-oldest queue+daemon (S2) → wire-mapper+gzip transport (S3) → reliability+lifecycle (S4) compose into the full vendor-neutral server-capture path, R1 hardening lessons carried as empirically-verified seam invariants. PY7's example consumer exercises this; PY8's parity matrix audits it vs TS E7.

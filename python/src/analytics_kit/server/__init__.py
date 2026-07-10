@@ -52,6 +52,7 @@ def create_server_analytics(
         flush_interval=parsed.flush_interval,
         max_batch_size=parsed.max_batch_size,
         max_queue_size=parsed.max_queue_size,
+        shutdown_timeout=parsed.shutdown_timeout,
     )
     adapter = ServerAdapter(version=__version__, sink=consumer, transport=transport)
     return create_analytics(parsed, adapter=adapter)

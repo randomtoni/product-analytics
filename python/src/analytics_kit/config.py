@@ -34,7 +34,11 @@ class AnalyticsConfig(BaseModel):
     consumer misconfiguration. ``flush_at``/``flush_interval``/``max_batch_size``/
     ``max_queue_size`` tune the server batch consumer (buffer size trigger, interval trigger in
     seconds, max records per delivery, max buffered events); unset uses the locked defaults.
-    Unknown keys are rejected loudly — a config typo raises rather than silently degrading.
+    ``shutdown_timeout`` bounds the drain ``shutdown()`` races against (seconds) before it
+    settles deterministically; ``retry_count``/``retry_delay`` bound the fixed-delay transient
+    retry budget on delivery (``retry_count`` retries after the first attempt ⇒ ``retry_count + 1``
+    total attempts, each spaced by ``retry_delay`` seconds). Unknown keys are rejected loudly — a
+    config typo raises rather than silently degrading.
     """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -51,3 +55,6 @@ class AnalyticsConfig(BaseModel):
     flush_interval: float = 10.0
     max_batch_size: int = 100
     max_queue_size: int = 1000
+    shutdown_timeout: float = 30.0
+    retry_count: int = 3
+    retry_delay: float = 3.0

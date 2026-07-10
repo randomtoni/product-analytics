@@ -53,9 +53,19 @@ def _paused_consumer(*, max_queue_size: int) -> BatchConsumer:
     """An async consumer whose drain thread is stopped BEFORE any enqueue, so the buffer
     accumulates without draining — the "thread not draining" posture the drop-oldest test needs
     to observe overflow without a flush masking which event was evicted. ``flush_at`` is set to
-    the cap so the size trigger can't inline-drain and the ``max_queue_size`` floor is a no-op."""
+    the cap so the size trigger can't inline-drain and the ``max_queue_size`` floor is a no-op.
+
+    The drain thread is paused (stopped + joined) WITHOUT quiescing — unlike ``shutdown()``, which
+    latches the consumer inert; here later enqueues must still buffer, so the test can observe the
+    drop-oldest eviction on overflow."""
     consumer = BatchConsumer(sync_mode=False, flush_at=max_queue_size, max_queue_size=max_queue_size)
-    consumer.shutdown()  # stop + join the thread; enqueue now only buffers
+    thread = consumer._thread
+    with consumer._lock:
+        consumer._running = False
+        consumer._not_empty.notify()
+    if thread is not None:
+        thread.join()
+    consumer._thread = None
     return consumer
 
 

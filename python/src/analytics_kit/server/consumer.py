@@ -25,6 +25,7 @@ the incoming event when full) is deliberately NOT used.
 from __future__ import annotations
 
 import atexit
+import logging
 import threading
 import time
 from collections import deque
@@ -36,6 +37,9 @@ DEFAULT_FLUSH_AT = 20
 DEFAULT_FLUSH_INTERVAL = 10.0
 DEFAULT_MAX_BATCH_SIZE = 100
 DEFAULT_MAX_QUEUE_SIZE = 1000
+DEFAULT_SHUTDOWN_TIMEOUT = 30.0
+
+_logger = logging.getLogger("analytics_kit")
 
 DeliverBatch = Callable[[list[NeutralEvent]], None]
 """The delivery seam: the consumer hands each ``max_batch_size``-sliced batch to this callable,
@@ -72,6 +76,7 @@ class BatchConsumer:
         flush_interval: float = DEFAULT_FLUSH_INTERVAL,
         max_batch_size: int = DEFAULT_MAX_BATCH_SIZE,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
+        shutdown_timeout: float = DEFAULT_SHUTDOWN_TIMEOUT,
     ) -> None:
         self._deliver: DeliverBatch = deliver if deliver is not None else _RecordingDelivery()
         # Floor flush_at and max_batch_size at 1: a misconfigured 0 would either wedge the
@@ -82,6 +87,7 @@ class BatchConsumer:
         # Floor max_queue_size at flush_at: a cap below the flush threshold would drop-oldest
         # before the size trigger could ever fire, wedging into a never-size-flush state.
         self._max_queue_size = max(max_queue_size, self._flush_at)
+        self._shutdown_timeout = shutdown_timeout
 
         self._sync_mode = sync_mode
         self._lock = threading.Lock()
@@ -89,6 +95,10 @@ class BatchConsumer:
         self._not_empty = threading.Condition(self._lock)
 
         self._running = False
+        # The quiesce latch: set FIRST on shutdown so a capture racing in during the drain is
+        # inert — the load-bearing "no new work once shutdown starts" invariant that stops a
+        # post-shutdown enqueue from re-arming delivery. Once true it never clears (no re-arm).
+        self._stopped = False
         self._thread: threading.Thread | None = None
         if not sync_mode:
             self._start()
@@ -101,8 +111,12 @@ class BatchConsumer:
         """Buffer an event; at cap the OLDEST buffered event is dropped (never blocks).
 
         In ``sync_mode`` a full buffer (size trigger reached) delivers inline before returning.
+        Once ``shutdown()`` has quiesced the consumer this is inert — a post-shutdown capture is
+        dropped, never re-arming a joined thread.
         """
         with self._lock:
+            if self._stopped:
+                return
             # deque(maxlen=...) auto-evicts from the OLDEST (left) end on append at cap — the
             # drop-OLDEST overflow policy. A bounded queue that rejected the incoming event
             # would drop the NEWEST, the wrong policy here.
@@ -167,24 +181,65 @@ class BatchConsumer:
         thread.start()
         atexit.register(self.shutdown)
 
-    def flush(self) -> None:
-        """Force-drain the buffer once, blocking until every triggered delivery returns.
+    def _buffer_size(self) -> int:
+        with self._lock:
+            return len(self._buffer)
 
-        Minimal by design — the hardened, timeout-raced drain lands with the reliability slice.
+    def flush(self) -> None:
+        """Force-drain the buffer immediately, blocking until every triggered delivery returns.
+
+        Bypasses the size/interval trigger and leaves the adapter USABLE afterward — unlike
+        ``shutdown``, it does not quiesce, so captures keep flowing after it returns.
         """
         self._drain_all()
 
     def shutdown(self) -> None:
-        """Signal the consumer to stop, wake and join the daemon thread, then final-drain.
+        """Drain and quiesce for process exit within ``shutdown_timeout``, then join the thread.
 
-        Minimal by design (the hardened quiesce/timeout lands with the reliability slice), but
-        enough that a live daemon thread is never leaked past process exit.
+        The quiesce latch is set FIRST so a ``capture`` racing in during the drain is inert (no
+        post-shutdown re-arm). The consumer then loop-drains until the buffer is empty — catching
+        residue enqueued during an in-flight delivery — raced against ``shutdown_timeout``. On
+        timeout it settles deterministically (logs and returns; the process is not hung, and any
+        still-buffered in-memory events are left unsent by design — no disk persistence) rather
+        than raising, since a raising ``shutdown`` in a SIGTERM handler is a footgun. A final
+        join stops the daemon thread; after ``shutdown`` no re-arm is possible.
         """
+        with self._lock:
+            already_stopped = self._stopped
+            self._stopped = True
+            self._running = False
+            self._not_empty.notify()
+        if already_stopped:
+            return
+
+        deadline = time.monotonic() + self._shutdown_timeout
+        timed_out = self._drain_until_empty(deadline)
+
         thread = self._thread
         if thread is not None:
-            with self._lock:
-                self._running = False
-                self._not_empty.notify()
-            thread.join()
+            remaining = max(deadline - time.monotonic(), 0.0)
+            thread.join(timeout=remaining)
             self._thread = None
-        self._drain_all()
+
+        if timed_out or self._buffer_size() > 0:
+            _logger.warning(
+                "Timed out while shutting down analytics; some events may not have been sent."
+            )
+
+    def _drain_until_empty(self, deadline: float) -> bool:
+        """Drain a batch at a time until the buffer is empty or ``deadline`` passes; return whether
+        it timed out.
+
+        Delivers one ``max_batch_size`` slice per iteration and re-checks both the deadline and the
+        buffer between slices — so a large backlog is bounded by the timeout (settling promptly once
+        a slice returns past the deadline) and residue enqueued during an in-flight delivery is
+        still caught. A single in-flight delivery cannot be interrupted mid-slice (the sync
+        posture); the timeout bounds the drain BETWEEN slices, not within one.
+        """
+        while True:
+            if time.monotonic() >= deadline:
+                return self._buffer_size() > 0
+            batch = self._next_batch()
+            if not batch:
+                return False
+            self._deliver(batch)
