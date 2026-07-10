@@ -3,7 +3,7 @@ id: E12-S4-python-server-remote-eval-adapter
 epic: E12-FF-flag-substrate-remote-eval
 status: ready-for-dev
 area: feature-flags
-touches: [python]
+touches: [node]
 depends_on: [E12-S1]
 api_impact: additive
 ---
