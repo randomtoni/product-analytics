@@ -197,6 +197,17 @@ alongside node here, server-shaped, at parity by shared contract.
 - **E13's load-bearing invariant:** ZERO seam/port change. This is the regression check that E12's port
   shape holds across BOTH trees. A needed port/context change is an E12-was-wrong escalation.
 
+> Reviewer suggestion (2026-07-10): The poller URL emits `&send_cohorts=` empty (`poller.py`). Confirm in S4's live diff that cohorts actually arrive on the wire — the local cohort map is what separates `InconclusiveMatchError` from `RequiresServerEvaluation`. (Same `send_cohorts` note as S1; S4 live-wiring.)
+> Reviewer suggestion (2026-07-10): The evaluator deliberately drops the reference `early_exit` short-circuit (parity with S1/TS, "strictly more conservative") — resolved VALUES are identical, only whether a fallback round-trip fires can differ from a pure-reference eval. Documented, not a defect.
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this when the story moves to stories/5-done/. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files changed:** `python/src/analytics_kit/config.py`, `python/src/analytics_kit/server/__init__.py`, `python/src/analytics_kit/flags/{adapter.py,config.py,factory.py}`
+- **Files added:** `python/src/analytics_kit/flags/local/` (evaluator + poller + matcher subdir), `python/tests/{test_flag_local_eval.py,test_flag_local_resolution.py}`
+- **New public API:** none new on the neutral surface. The Python `FlagClientConfig`/`FlagsConfig` gained the local-eval knobs (`definitions_endpoint`, `definitions_key` (role-named), `poll_interval`, `only_evaluate_locally`, `strict_local_evaluation`), Pydantic-validated. The local evaluator + poll daemon are adapter-internal.
+- **Tests added:** `test_flag_local_eval.py` + `test_flag_local_resolution.py` (78 local tests): the 3-tier hash vector asserted at S1's EXACT literals (byte-for-byte cross-tree), `match_property` operators, both inconclusive signals, local-first resolves with ZERO round-trip (post-count asserted), inconclusive → ONE narrowed `_round_trip`, `only_evaluate_locally` suppression, local-vs-remote indistinguishable, poll-daemon stop (no leaked thread), factory local-only edge.
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review. Reviewer **independently recomputed the hash in a standalone python process** — all 3 tiers float64-identical to S1 (arithmetic verified vs `feature_flags.py:79-82,:14` — 15-f `float` divisor, not Decimal/int-div). Verified sync/no-asyncio (`evaluate` non-coroutine, `ports.py` byte-unchanged), the poll-daemon stop mechanism in CODE (`stop()` sets an Event + joins; `while not stopped.wait(interval)`; ran the suite 3× with ZERO surviving `analytics-kit-flag-poller` threads — the E12-S4 leak genuinely avoided), the S2-mirrored branch, zero-seam-change, factory edge, neutrality (`--full` 0, `_WIRE_*` confined, `definitions_key` role-named). 2 S4-forward suggestions captured.
+- **Cross-story seams exposed:** feature-flags LOCAL eval now reaches parity across both server trees (TS node S1/S2 + Python S3), all behind the UNCHANGED `evaluate` (E12 port frozen). **S4 (ground-truth + parity proof)** — diffs THIS Python local path (+ the TS node path) against a real remote eval; asserts the cross-tree hash IDENTITY (both trees assert S1's exact vector — S4 names it the single anchor); negative control: a fully-local-decidable set issues ZERO remote calls (post-count 0). Live diff gated on the privileged definition-reading key; the loopback/mock + hash-vector layers are the CC-reachable green path. Confirm `send_cohorts` on the wire; the `early_exit` deferral is documented (conservative, identical values).

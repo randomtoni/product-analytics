@@ -31,7 +31,8 @@ class FlagBootstrap(BaseModel):
 
 
 class FlagsConfig(BaseModel):
-    """Feature-flag settings the server flag adapter reads — ``flag_endpoint`` + ``bootstrap``.
+    """Feature-flag settings the server flag adapter reads — ``flag_endpoint`` + ``bootstrap`` + the
+    local-eval knobs.
 
     ``flag_endpoint`` is the flag-eval round-trip origin, kept SEPARATE from the ingest
     ``ingest_host``: a flag decision endpoint differs from the ingest endpoint (mirroring the
@@ -39,13 +40,26 @@ class FlagsConfig(BaseModel):
     the split host/path of ingest). When present alongside a top-level ``key``, the server target
     attaches a flag client to the provider's ``flags`` slot; absent, the slot stays ``None``.
     ``bootstrap`` is the neutral server-rendered seed served as a fallback when a round-trip
-    fails. A nested model so a typo'd key still trips ``extra="forbid"``.
+    fails.
+
+    The local-eval knobs — ``definitions_endpoint``, ``definitions_key``, ``poll_interval``,
+    ``only_evaluate_locally``, ``strict_local_evaluation`` — select and tune in-process evaluation:
+    a definitions endpoint + the privileged ``definitions_key`` (a definition-reading credential
+    named BY ROLE, distinct from the top-level ``key``) makes the attached flag client local-capable
+    (poll definitions, evaluate in-process, fall back to the remote round-trip). A local-capable
+    client is attached even WITHOUT a ``flag_endpoint`` (the local-only posture). A nested model so a
+    typo'd key still trips ``extra="forbid"``.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     flag_endpoint: str | None = None
     bootstrap: FlagBootstrap | None = None
+    definitions_endpoint: str | None = None
+    definitions_key: str | None = None
+    poll_interval: float | None = None
+    only_evaluate_locally: bool | None = None
+    strict_local_evaluation: bool | None = None
 
 
 class AnalyticsConfig(BaseModel):

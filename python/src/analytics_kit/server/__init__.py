@@ -77,14 +77,16 @@ def create_server_analytics(
 
 
 def _attach_flags(analytics: Analytics, config: AnalyticsConfig) -> None:
-    """Populate the provider's ``flags`` slot when a flag-eval endpoint is configured.
+    """Populate the provider's ``flags`` slot when a flag-eval OR a local-eval endpoint is configured.
 
-    Builds the flag client from the ingest ``key`` + ``config.flags.flag_endpoint`` (and the
-    neutral bootstrap seed + taxonomy). Without a ``flags.flag_endpoint`` the slot stays the
-    ``None`` default — the flag client is only wired when the consumer opts in by config.
+    Builds the flag client from the ingest ``key`` + ``config.flags`` (the remote ``flag_endpoint``,
+    the local-eval knobs, the neutral bootstrap seed + taxonomy). The slot is attached when a
+    ``flag_endpoint`` OR a ``definitions_endpoint`` is present — the latter is the local-only posture
+    (in-process eval with no remote round-trip). Without either the slot stays the ``None`` default —
+    the flag client is only wired when the consumer opts in by config.
     """
     flags = config.flags
-    if flags is None or flags.flag_endpoint is None:
+    if flags is None or (flags.flag_endpoint is None and flags.definitions_endpoint is None):
         return
     analytics.flags = create_flag_client(
         FlagClientConfig(
@@ -92,5 +94,10 @@ def _attach_flags(analytics: Analytics, config: AnalyticsConfig) -> None:
             flag_endpoint=flags.flag_endpoint,
             bootstrap=flags.bootstrap,
             taxonomy=config.taxonomy,
+            definitions_endpoint=flags.definitions_endpoint,
+            definitions_key=flags.definitions_key,
+            poll_interval=flags.poll_interval,
+            only_evaluate_locally=flags.only_evaluate_locally,
+            strict_local_evaluation=flags.strict_local_evaluation,
         )
     )

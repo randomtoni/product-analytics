@@ -37,6 +37,15 @@ class FlagClientConfig(BaseModel):
     ``arbitrary_types_allowed``. ``transport`` is the injectable HTTP send hook the adapter
     routes the round-trip through (default ``None`` — the adapter supplies a stdlib transport
     when unset). Unknown keys are rejected loudly.
+
+    The local-eval knobs — ``definitions_endpoint``, ``definitions_key``, ``poll_interval``,
+    ``only_evaluate_locally``, ``strict_local_evaluation`` — are ADAPTER config, never neutral port
+    surface: a config supplying a definitions endpoint + the privileged ``definitions_key`` selects
+    the local-capable adapter (poll definitions, evaluate in-process, fall back to the remote
+    round-trip). ``definitions_key`` is the privileged (definition-reading) credential, named BY ROLE
+    and DISTINCT from the ingest write key and the flag-eval ``key``. Enabling/tuning local eval is
+    config-only (bar B). Because ``extra="forbid"``, these are real fields — a local-eval config with
+    an unknown key still raises loudly.
     """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -46,3 +55,8 @@ class FlagClientConfig(BaseModel):
     bootstrap: FlagBootstrap | None = None
     taxonomy: Taxonomy | None = None
     transport: FlagTransport | None = None
+    definitions_endpoint: str | None = None
+    definitions_key: str | None = None
+    poll_interval: float | None = None
+    only_evaluate_locally: bool | None = None
+    strict_local_evaluation: bool | None = None
