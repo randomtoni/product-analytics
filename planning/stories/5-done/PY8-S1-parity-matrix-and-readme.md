@@ -145,4 +145,16 @@ PY8-S3 (the probes) are the enforcement deliverables built alongside.
   provider's `capture`/`set`/`set_group_traits` — Python's provider IS server-shaped, so there is no
   separate browser-vs-node split to reconcile.
 
+> Reviewer suggestion (2026-07-10): (a) `README:129` "no const generics" is TS/Rust jargon in a consumer README — but it's consistent with `taxonomy.py:20`'s own "const-generic wall" docstring, so it's defensible as-is (leave unless matching the source phrasing is undesired). (b) `README:74-79` draws a 6-direct/3-idiomatic split of the 9 mapped verbs that `provider.py`'s docstring keeps flat ("nine mapped verbs"); the split is correct + useful — consider a one-clause note that it's the consumer-facing refinement of the docstring's flat "9 mapped", to preempt a reader diffing the two tables. Both polish, non-blocking. Improvement-pass call.
+
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files changed:** `python/README.md` (+202/-5 — added the capability-parity matrix, interface→implementation matrix, and adopt-in-a-new-app section to the existing thin scaffold)
+- **Files added:** none
+- **New public API:** none — docs only
+- **Tests added:** none (docs story; `uv run pytest` stays green at 384 passed — unaffected)
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** ship-ready, no critical issues. Reviewer cross-checked all 15 client-facade rows against `provider.py:13-32`'s Frozen-15 docstring (MATCHES VERBATIM: 9 mapped = 6 direct + 3 idiomatic, 4 N-A, 2 slots), verified every interface→implementation wire claim against the de-branded source (`assemble_batch_envelope` `{api_key, batch, sent_at}`, `_WIRE_UUID_KEY` `uuid`=`dedupe_id`, gzip-POST, Bearer query auth, the `WarehouseQueryAdapter` second-adapter stub), confirmed `flags?`/`replay?` are their own declared-slot category (not N-A), the carry-in N-A rows (empty reserved-event set + no `__ak_`, capture-only prop validation) + the taxonomy compile-time-gap row are present, and grepped the doc-dimension neutrality CLEAN (only two bare `examples/quillstream` path links; no `posthog`/`ph_`/`hogql`/vendor-hostname in prose). Zero `analytics_kit` src/tests edits (audit-not-patch holds). Two non-blocking polish suggestions captured above.
+- **Cross-story seams exposed:** the doc target is PINNED to `python/README.md` (no `PARITY.md` fork) — **PY8-S2's doc dimension scans exactly this one file** (zero `extra_doc_paths` coordination). PY8-S3's bar-A on-paper second-adapter design can lean on this matrix's interface→implementation cells + the `WarehouseQueryAdapter` stub reference.
