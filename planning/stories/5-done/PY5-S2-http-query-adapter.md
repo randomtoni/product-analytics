@@ -59,4 +59,13 @@ The first real query backend: maps each neutral primitive (and `raw_query`) to t
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added:** `python/src/analytics_kit/query/http_adapter.py` (`HttpQueryAdapter` + `create_http_query_adapter` + `_UrllibQueryTransport` default + `_QueryError` + all `_WIRE_*` vocab + poll/normalize), `tests/test_http_query_adapter.py`
+- **Files changed:** `query/factory.py` (`_build_http_query_client` now constructs the adapter), `tests/test_query_client.py` (S1 factory-branch test updated)
+- **New public API:** `HttpQueryAdapter` selected internally by `create_query_client` (keyed+endpointed); NO wire vocab exported
+- **Tests added:** per-primitive kind body + Bearer auth, bounded sync-poll (async-status→complete, attempts-exhausted, wire-error, completed-in-POST resolves 0 polls), fetch-failure normalization negative-controls, Pydantic decode (rows keyed, from_cache defensive), `_WIRE_*` confinement
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — `_WIRE_*` confinement verified at runtime + in `__all__` (neutral surface provably dialect-free); the always-async poll terminates at 20 attempts → neutral error (no infinite loop); async-detection keys on `complete != True` NOT `query_status` presence; normalization airtight both directions (`except _QueryError: raise` prevents double-wrap). **Neutrality bar corrected + ratified:** the confined `_WIRE_RAW_QUERY_KIND = "HogQLQuery"` literal is CORRECT (required wire vocab, TS-`dist`-matching); `posthog`/`ph_`/hostname is the forbidden class (clean). The story's `grep hogql` AC was a drafting over-reach — superseded by the vendor-name bar; **PY8 carry-in**: the Python neutrality scan must mirror the TS `FORBIDDEN_TOKENS` (permits confined `hogql`).
+- **Cross-story seams exposed:** **S3** completes the bar-A proof — feed BOTH `HttpQueryAdapter` AND `WarehouseQueryAdapter` through the shared `_conforms(AnalyticsQueryClient)` sink (reviewer suggestion #1: the HTTP adapter's bar-A proof is currently implicit via the factory return type; S3 makes "two adapters, one Protocol" explicit + co-located). S3 stays in `query/warehouse_adapter.py`, does NOT touch the factory (warehouse is a typed stub, not config-selected), and must match the SYNC `def` signatures.
+> Reviewer suggestion (2026-07-10): cosmetic — `test_a_completed_status_without_a_status_id_on_first_poll_is_neutral_error` gives up before any poll GET (0 polls), so "on first poll" is slightly misleading; behavior correct. (Improvement-pass rename.)

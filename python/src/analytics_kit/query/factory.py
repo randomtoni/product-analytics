@@ -8,15 +8,16 @@ mirrors the ingest factory's shape and the TS ``create-query-client`` split:
 - ``personal_key`` + ``query_endpoint`` present ⇒ the HTTP query adapter branch.
 
 The personal key is DISTINCT from the ingest write key and is read only here, server-side. The
-HTTP-adapter branch is the seam PY5-S2 fills: S1 wires the selection and the branch, S2 supplies
-the adapter body (spec→wire, POST, sync-blocking poll, Pydantic wire→result decode). Until then
-the branch raises loudly so a misconfiguration never silently degrades to a no-op.
+HTTP-adapter branch constructs the :class:`~analytics_kit.query.http_adapter.HttpQueryAdapter`
+(spec→wire, POST, sync-blocking poll, Pydantic wire→result decode); its wire vocabulary is sealed
+inside that module and never surfaces here.
 """
 
 from __future__ import annotations
 
 from .client import AnalyticsQueryClient
 from .config import QueryClientConfig
+from .http_adapter import create_http_query_adapter
 from .noop import QueryNoop
 
 
@@ -32,13 +33,10 @@ def create_query_client(config: QueryClientConfig) -> AnalyticsQueryClient:
 
 
 def _build_http_query_client(config: QueryClientConfig) -> AnalyticsQueryClient:
-    """The keyed + endpointed selection branch — the HTTP query adapter seam PY5-S2 fills.
+    """The keyed + endpointed selection branch — construct the HTTP query adapter.
 
-    S2 replaces this body with the ``HttpQueryAdapter`` construction (reading
-    ``query_endpoint``/``personal_key``/``project_id``/``transport`` off ``config``), returning
-    an :class:`AnalyticsQueryClient` unchanged. The factory's selection above is stable; only
-    this branch's body lands in S2.
+    Reads ``query_endpoint``/``personal_key``/``project_id``/``transport`` off ``config`` and
+    returns the ``HttpQueryAdapter`` as an :class:`AnalyticsQueryClient` (satisfied structurally).
+    All wire vocabulary is confined to the adapter module.
     """
-    raise NotImplementedError(
-        "analytics-kit: the HTTP query adapter is not implemented yet (PY5-S2)"
-    )
+    return create_http_query_adapter(config)

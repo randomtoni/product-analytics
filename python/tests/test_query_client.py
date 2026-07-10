@@ -360,13 +360,15 @@ def test_query_noop_primitives_return_empty_results() -> None:
 
 
 def test_keyed_and_endpointed_config_selects_the_http_adapter_branch() -> None:
-    # S1 wires the selection + branch; the HTTP adapter body lands in PY5-S2, so the branch
-    # is reached (and raises the not-yet-implemented seam marker) rather than degrading to a
-    # no-op — a misconfiguration never silently queries nothing.
-    with pytest.raises(NotImplementedError):
-        create_query_client(
-            QueryClientConfig(query_endpoint="https://query.example", personal_key="phx_read")
-        )
+    # Keyed + endpointed selects the HTTP query adapter (PY5-S2), not the no-op — a configured
+    # environment queries the endpoint. The adapter satisfies AnalyticsQueryClient structurally.
+    from analytics_kit.query.http_adapter import HttpQueryAdapter
+
+    client = create_query_client(
+        QueryClientConfig(query_endpoint="https://query.example", personal_key="phx_read")
+    )
+    assert isinstance(client, HttpQueryAdapter)
+    assert not isinstance(client, QueryNoop)
 
 
 # --- raw_query returns the result CONTRACT, only the LANGUAGE is a string -----------------
