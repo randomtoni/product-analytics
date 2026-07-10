@@ -56,6 +56,16 @@ Closes the epic: exercises the framework binding (PY6 — a request-scoped disti
 - **CONTRACT reference (port TO):** `ts/examples/fernly/src/{bar-b-config-only.test.ts, bar-a-adapter-swap.test.ts, app/*}` — the bar-B on-disk structural assertion (Fernly's no-`paths`-reroute check is the analog of the "no `../../src` reroute" + the import-audit), the framework wiring, config-only adoption. Server-shaped (no browser/JSX component tree — the middleware is the server analog of the React provider).
 - **Neutrality:** `examples/**` exempt from the scan; the two gates enforce public-API-only + config-only.
 
+> Reviewer suggestion (2026-07-10): the `REQUEST_TAGS` explanatory comment in `config.py` is **warranted** (the tag/allowlist-gate interaction is a genuine non-obvious gotcha — tags are bound via a separate `add_tag` API, so a reader could assume they bypass the property allowlist; they don't). Optional: tighten to one line. Improvement-pass call.
+
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files changed:** `python/examples/quillstream/src/quillstream/config.py` (+`REQUEST_TAGS` tuple, added to the consumer allowlist)
+- **Files added:** `python/examples/quillstream/README.md` (the bar-B two-gate proof note), `python/examples/quillstream/tests/test_framework_binding.py` (ASGI/Starlette exercise), `python/examples/quillstream/tests/test_bar_b_import_audit.py` (the AST import-audit enforcement gate)
+- **New public API:** none — `examples/**` consumer code only (zero `analytics_kit` edits; bar B holds by diff)
+- **Tests added:** `test_framework_binding.py` (3: request-bound distinct_id + tag into a recorded capture via Starlette+`httpx.ASGITransport` in `anyio.run`; scope-isolation; orphan/no-ambient-identity raise), `test_bar_b_import_audit.py` (6: FIVE-entry public allow-list, deep/`_`-prefixed/aliased/multi-line FAIL, parsed-string negative control, poisoned-real-file non-vacuity, positive control)
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — no critical issues. Reviewer ran the audit against 18 adversarial inputs (no prefix-match hole — exact-membership `module not in _PUBLIC_MODULES`; `.integrations.django`/`.asgi` FLAGGED; aliased/multi-line deep reaches bite; the `analytics_kit_extra` lookalike correctly passes via the dot-guard), poisoned a REAL file (`config.py`) to prove the file-walk fires (non-vacuous), and traced `REQUEST_TAGS` through `ScopedContextView.capture` → the unmodified provider's `enforce_allowlist` confirming it's genuine bar-B config-only adoption, NOT a masked seam bug. One non-blocking suggestion captured in Technical notes (see Reviewer suggestion). Both gates green: `uv run mypy .` 14 files clean · `uv run pytest` 33 passed.
+- **Cross-story seams exposed:** PY7 is COMPLETE — S1 (example project + taxonomy + config + RecordingAdapter) → S2 (capture/query/allowlist exercise + `typed_view.py` recipe) → S3 (framework binding + the two-gate bar-B proof). The **two-gate bar-B model is the load-bearing artifact for PY8's parity audit**: Python has no physical `dist` boundary (unlike TS Fernly's typecheck-against-`dist`), so bar-B splits into a **fidelity gate** (installed-dist mypy) + an **enforcement gate** (AST import-audit, five-entry public allow-list `{analytics_kit, .integrations, .query, .server, .taxonomy}`). PY8's neutrality-scan analog + capability-parity matrix build on this.

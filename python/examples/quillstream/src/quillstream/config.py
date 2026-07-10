@@ -21,6 +21,10 @@ SUPER_PROPERTIES: dict[str, object] = {
     "environment": "production",
 }
 
+# Request-scoped correlation tags Quillstream binds per request via the framework middleware.
+# Tags cross the same allowlist gate as any other property, so the product allows them explicitly.
+REQUEST_TAGS: tuple[str, ...] = ("request_id",)
+
 
 def quillstream_config(key: str | None = None) -> AnalyticsConfig:
     """Quillstream's ingest config. Passing no ``key`` yields the unkeyed (no-op) posture."""
@@ -30,6 +34,7 @@ def quillstream_config(key: str | None = None) -> AnalyticsConfig:
         allowlist=[
             *derive_allowlist_from_taxonomy(quillstream_taxonomy),
             *SUPER_PROPERTIES.keys(),
+            *REQUEST_TAGS,
         ],
         on_violation="throw",
         taxonomy=quillstream_taxonomy,
