@@ -301,6 +301,19 @@ describe('useFeatureFlags — absent flags slot (bar B: config-only adoption)', 
     expect(container.textContent).toBe('off');
   });
 
+  test('the absent-slot snapshot keeps a stable identity across re-renders (no per-render churn)', () => {
+    // The no-port path must return the SAME FlagSet reference on every render — a fresh
+    // emptyFlagSet() per render would re-fire consumer effects keyed on it and break React.memo
+    // children downstream. Force a re-render and assert reference identity is preserved.
+    const { result, rerender } = renderHook(() => useFeatureFlags(), {
+      wrapper: providerWith(clientWithFlags(undefined)),
+    });
+    const first = result.current;
+    rerender();
+    const second = result.current;
+    expect(second).toBe(first);
+  });
+
   test('with no flags slot the port is never subscribed to', async () => {
     const mock = makeFlagPort(makeFlagSet());
     await act(async () =>

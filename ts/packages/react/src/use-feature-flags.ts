@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import { emptyFlagSet } from 'analytics-kit';
 import type {
   DefaultTaxonomyShape,
@@ -25,6 +25,7 @@ export function useFeatureFlags<
   // cannot show the bootstrap set. This deterministic initializer also keeps SSR and the
   // client's first commit in lockstep — no hydration mismatch — before the effect promotes it.
   const [set, setSet] = useState<FlagSet<TX>>(() => emptyFlagSet<TX>());
+  const empty = useMemo(() => emptyFlagSet<TX>(), []);
 
   useEffect(() => {
     if (flags === undefined) {
@@ -54,5 +55,5 @@ export function useFeatureFlags<
     };
   }, [flags]);
 
-  return flags === undefined ? emptyFlagSet<TX>() : set;
+  return flags === undefined ? empty : set;
 }

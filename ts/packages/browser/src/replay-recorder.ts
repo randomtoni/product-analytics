@@ -5,15 +5,10 @@ import type { ReplayEvent, ReplayMaskingOptions, ReplayRecordingHandle } from '.
 import { createReplayDelivery, type ReplayDelivery } from './replay-transport';
 import { decideSampled, normalizeSampleRate } from './replay-sampling';
 
-// How often the recorder checks its live buffer to decide whether a size-triggered flush is
-// due (the reference arms a short fallback timer per buffered event; a fixed poll is the
-// simpler base-safe equivalent and also serves as the time-based flush fallback).
+// The flush cadence: every tick drains the live buffer and ships it as one segment (the
+// reference arms a short fallback timer per buffered event; a fixed poll is the simpler
+// base-safe equivalent). A large DOM snapshot ships on the next tick — acceptable for replay.
 const FLUSH_POLL_INTERVAL_MS = 2000;
-
-// Size-triggered flush threshold: a buffer whose encoded size crosses this flushes on its
-// own, independent of the poll cadence (de-branded from the reference RECORDING_MAX_EVENT_SIZE
-// ~0.9 MB). A single large DOM snapshot ships promptly rather than waiting for the timer.
-const FLUSH_SIZE_THRESHOLD_BYTES = 0.9 * 1024 * 1024;
 
 export interface ReplayRecorderOptions {
   // The current session-linkage id, single-sourced through the adapter (never minted here —
@@ -85,8 +80,8 @@ export class ReplayRecorder implements SessionReplayPort {
   // Removes the pagehide/visibilitychange teardown listeners bound on `start()`; undefined
   // in a non-DOM (SSR/test) context where none were bound.
   private detachLifecycleListeners: (() => void) | undefined;
-  // The size-poll timer that periodically checks the buffer for a size-triggered / time-based
-  // flush; cleared on `stop()` and on re-key (a fresh segment re-arms it).
+  // The poll timer that periodically drains the buffer on its flush cadence; cleared on
+  // `stop()` and on re-key (a fresh segment re-arms it).
   private flushTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(options: ReplayRecorderOptions) {
@@ -167,7 +162,13 @@ export class ReplayRecorder implements SessionReplayPort {
   // masking policy into `record()`. A `stop()` (or a re-key) racing the pending load is
   // honored — the resolved handle is discarded if the guard was cleared or a newer segment
   // started meanwhile. rrweb failing to initialize clears the guard so `isActive()` stays honest.
+  // A sampled-out (`false`) or PENDING (`undefined`) session records NOTHING — no rrweb handle,
+  // no buffer — so nothing accumulates for a session whose snapshots would never be delivered.
+  // A rotation that re-decides to sampled-in re-runs `beginSegment` and starts recording then.
   private beginSegment(): void {
+    if (this.sampled !== true) {
+      return;
+    }
     const token = ++this.segmentToken;
     void import('./replay').then(({ startRecording }) => {
       if (!this.started || token !== this.segmentToken) {
@@ -200,36 +201,16 @@ export class ReplayRecorder implements SessionReplayPort {
     this.delivery.send(events, this.getSessionId(), keepalive);
   }
 
-  // Arm the periodic flush poll (also the time-based fallback flush): each tick ships any
-  // accumulated segment, and a buffer already over the size threshold flushes on the same
-  // tick. Both honor the sampling flush-guard inside flushBuffer.
+  // Arm the periodic flush poll: each tick drains any accumulated segment (a large snapshot
+  // ships on the next tick — acceptable for replay). The flush honors the sampling flush-guard
+  // inside flushBuffer. A sampled-out session records nothing, so the poll drains an empty buffer.
   private armFlushTimer(): void {
     if (typeof setInterval === 'undefined') {
       return;
     }
     this.flushTimer = setInterval(() => {
-      this.checkSizeTrigger();
       this.flushBuffer(false);
     }, FLUSH_POLL_INTERVAL_MS);
-  }
-
-  // Size-triggered flush: a buffer whose encoded size crosses the threshold flushes on its
-  // own, independent of the poll cadence — a single large DOM snapshot ships promptly. A
-  // buffer under the threshold is left to accumulate (the poll ships it on its tick).
-  /** @internal Public only so a unit test can drive the size-trigger without waiting on the
-   * poll interval; not stable adapter API. */
-  checkSizeTrigger(): void {
-    const buffer = this.handle?.buffer;
-    if (buffer === undefined || buffer.length === 0) {
-      return;
-    }
-    if (this.encodedSize(buffer) >= FLUSH_SIZE_THRESHOLD_BYTES) {
-      this.flushBuffer(false);
-    }
-  }
-
-  private encodedSize(buffer: ReplayEvent[]): number {
-    return JSON.stringify(buffer).length;
   }
 
   private clearFlushTimer(): void {

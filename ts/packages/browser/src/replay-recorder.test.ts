@@ -379,31 +379,6 @@ describe('ReplayRecorder delivery path (E14-S4)', () => {
     expect(handle.buffer).toHaveLength(0);
   });
 
-  test('a size-triggered flush ships a large buffer independent of the poll cadence', async () => {
-    const { delivery, send } = mockDelivery();
-    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-big' });
-    const handle = await startWithHandle(recorder);
-
-    // A single event whose JSON crosses the ~0.9 MB size threshold flushes on its own.
-    handle.buffer.push({ blob: 'x'.repeat(1_000_000) } as never);
-    recorder.checkSizeTrigger();
-
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(handle.buffer).toHaveLength(0);
-  });
-
-  test('a small buffer does NOT size-trigger (accumulates until the poll ships it)', async () => {
-    const { delivery, send } = mockDelivery();
-    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-small' });
-    const handle = await startWithHandle(recorder);
-
-    handle.buffer.push({ timestamp: 1 } as never);
-    recorder.checkSizeTrigger();
-
-    expect(send).not.toHaveBeenCalled();
-    expect(handle.buffer).toHaveLength(1); // still buffered
-  });
-
   test('an empty buffer flushes nothing (no spurious delivery)', async () => {
     const { delivery, send } = mockDelivery();
     const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-empty' });
@@ -486,15 +461,19 @@ describe('ReplayRecorder teardown flush triggers (E14-S4)', () => {
 });
 
 describe('ReplayRecorder sampling flush-guard (E14-S4)', () => {
-  test('a sampled-OUT session delivers NOTHING on any flush (decide-before-flush)', async () => {
+  test('a sampled-OUT session records NOTHING and delivers NOTHING (never starts rrweb)', async () => {
     const { delivery, send } = mockDelivery();
+    replayMock.startRecording.mockReturnValue(fakeHandle().handle);
     // sampleRate 0 → every session is sampled out.
     const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-out', sampleRate: 0 });
-    const handle = await startWithHandle(recorder);
-    handle.buffer.push({ timestamp: 1 } as never);
 
-    // Neither a size-trigger, a teardown, nor stop flushes a sampled-out session.
-    recorder.checkSizeTrigger();
+    recorder.start();
+    // The sampled-out verdict short-circuits beginSegment: no rrweb recording is ever started,
+    // so there is no handle and no buffer to accumulate into.
+    await settleReplayLoad();
+    expect(replayMock.startRecording).not.toHaveBeenCalled();
+
+    // Neither a teardown nor stop flushes a sampled-out session (there is nothing to flush).
     window.dispatchEvent(new Event('pagehide'));
     recorder.stop();
 
@@ -512,31 +491,32 @@ describe('ReplayRecorder sampling flush-guard (E14-S4)', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  test('a PENDING decision (no session id yet) does not flush — no batch leaks', async () => {
+  test('a PENDING decision (no session id yet) records NOTHING and does not flush', async () => {
     const { delivery, send } = mockDelivery();
+    replayMock.startRecording.mockReturnValue(fakeHandle().handle);
     // getSessionId returns undefined at start → the sampling decision is pending.
     const recorder = new ReplayRecorder({
       delivery,
       getSessionId: () => undefined,
       sampleRate: 0.5,
     });
-    const handle = await startWithHandle(recorder);
-    handle.buffer.push({ timestamp: 1 } as never);
+
+    recorder.start();
+    // A pending verdict short-circuits beginSegment: no rrweb recording is started, so no batch
+    // can leak for a session the recorder has not yet decided to keep.
+    await settleReplayLoad();
+    expect(replayMock.startRecording).not.toHaveBeenCalled();
 
     recorder.stop();
 
-    // A pending decision must not flush — otherwise a batch could leak for a session the
-    // recorder then decides to drop.
     expect(send).not.toHaveBeenCalled();
   });
 
-  test('sampling is re-decided on rotation — an out→in rotation begins delivering', async () => {
+  test('sampling is re-decided on rotation — a sampled-out session records nothing across a rotation', async () => {
     const { delivery, send } = mockDelivery();
-    const first = fakeHandle();
-    const second = fakeHandle();
-    replayMock.startRecording.mockReturnValueOnce(first.handle).mockReturnValueOnce(second.handle);
+    replayMock.startRecording.mockReturnValue(fakeHandle().handle);
     // Rate 0 sampled the first session out; the re-decision on rotation is also rate 0, so it
-    // stays out — assert the guard holds ACROSS a rotation (no leak on either segment).
+    // stays out — assert the guard holds ACROSS a rotation (neither segment ever records).
     const source = fakeRotationSource('s1');
     const recorder = new ReplayRecorder({
       delivery,
@@ -546,15 +526,51 @@ describe('ReplayRecorder sampling flush-guard (E14-S4)', () => {
     });
 
     recorder.start();
-    await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(1));
-    first.handle.buffer.push({ timestamp: 1 } as never);
+    await settleReplayLoad();
 
     source.rotate('s2'); // re-decides sampling for s2 (still out at rate 0)
-    second.handle.buffer.push({ timestamp: 2 } as never);
+    await settleReplayLoad();
     recorder.stop();
 
-    // Neither segment leaked — the re-decided sampling verdict gated both.
+    // Neither segment recorded — the re-decided sampling verdict gated both, so no rrweb
+    // recording ever started and nothing could leak.
+    expect(replayMock.startRecording).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  // U1 regression: a sampled-out session driven across many poll ticks must not accumulate a
+  // buffer or do any per-tick work — it never records, so each tick drains nothing. Under the
+  // OLD behavior (beginSegment ran unconditionally + the poll JSON.stringify'd the buffer via
+  // the size-check) this session recorded forever into an unbounded buffer that never drained.
+  test('a sampled-out session across many poll ticks never records, accumulates, or serializes (U1)', async () => {
+    vi.useFakeTimers();
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      const { delivery, send } = mockDelivery();
+      replayMock.startRecording.mockReturnValue(fakeHandle().handle);
+      const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-out', sampleRate: 0 });
+
+      recorder.start();
+      await vi.runOnlyPendingTimersAsync(); // settle the (bailed) dynamic import
+
+      // No rrweb recording ever started, so there is no handle/buffer to accumulate into.
+      expect(replayMock.startRecording).not.toHaveBeenCalled();
+      expect(stringify).not.toHaveBeenCalled();
+
+      // Drive well past the size-trigger the old code would have hit, over several poll ticks.
+      for (let i = 0; i < 20; i++) {
+        await vi.advanceTimersByTimeAsync(2000); // one FLUSH_POLL_INTERVAL_MS tick
+      }
+
+      // Across all ticks: nothing recorded, nothing serialized, nothing delivered.
+      expect(replayMock.startRecording).not.toHaveBeenCalled();
+      expect(stringify).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+
+      recorder.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -86,8 +86,8 @@ SQL/warehouse fill-in is real, not hypothetical.
 
 ### Client — `AnalyticsProvider` (the 15-member frozen surface)
 
-Thirteen methods plus the two typed extension-point ports (`flags?` / `replay?`) — exactly the
-15 members of `keyof AnalyticsProvider`. The browser/root capture verb is **`track`** (the
+Thirteen methods plus the two optional ports (`flags?` / `replay?`, both now implemented — replay
+on the browser/TS target) — exactly the 15 members of `keyof AnalyticsProvider`. The browser/root capture verb is **`track`** (the
 server/adapter-level verb is `capture`). Every verb first passes the consumer allowlist, then
 delegates to the backing adapter's corresponding SPI method.
 
@@ -107,7 +107,7 @@ delegates to the backing adapter's corresponding SPI method.
 | `flush()` | Delegates to the live adapter's `flush`; the HTTP adapter force-sends the buffered batch immediately and resolves once the in-flight POST settles, staying usable afterward. | Implement `AnalyticsAdapter.flush(): Promise<void>`: force-send any buffered work and resolve when it settles. |
 | `shutdown()` | Delegates to the live adapter's `shutdown`; the HTTP adapter drains the buffer and quiesces for process/page exit. | Implement `AnalyticsAdapter.shutdown(): Promise<void>`: drain and quiesce for exit. |
 | `flags?` (feature-flag port) | **Implemented** — the `FeatureFlagPort` seam (`packages/analytics-kit/src/ports.ts`) is backed by real adapters: a browser remote-eval adapter, a node remote adapter, and node **local (in-process) eval** (poll flag definitions, evaluate cohort/rollout/hash rules against the `FlagContext`, fall back to remote for undecidable flags). Evaluation strategy is entirely adapter-internal behind the one `evaluate` method; `onlyEvaluateLocally`/poll-interval/definitions-endpoint are adapter config. | Another backend fills this by implementing `FeatureFlagPort` and attaching it as `flags`; a definition-reading backend may additionally supply the local poller/evaluator — the seam is unchanged either way. |
-| `replay?` (extension-point port) | **Declared-only this release** — the `SessionReplayPort` seam exists on the surface (`packages/analytics-kit/src/ports.ts`) but no implementation ships (per `planning/BRIEF.md` §"Explicitly OUT this release"). The row states the seam exists; no adapter fills it yet. | An adapter fills this by implementing `SessionReplayPort` and attaching it as `replay` — the seam is reserved so a future backend adds replay with zero surface change. |
+| `replay?` (session-replay port) | **Implemented** (browser/TS) — the `SessionReplayPort` seam (`packages/analytics-kit/src/ports.ts`) is backed by a real browser recorder (`ReplayRecorder implements SessionReplayPort` in `@analytics-kit/browser`): rrweb behind the adapter on a separate `@analytics-kit/browser/replay` entrypoint so a non-replay consumer never bundles it, enabled config-only via `sessionReplay` (sampling + privacy masking) and session-linked to captured events via `getReplayId`, with its own snapshot delivery path. Browser-shaped: there is no server analog (a server has no DOM to record). | Another backend fills this by implementing `SessionReplayPort` and attaching it as `replay` — the seam is unchanged whether an adapter fills it or leaves `replay` unset. |
 
 ### Node — `NodeAnalytics` (server-side capture)
 
