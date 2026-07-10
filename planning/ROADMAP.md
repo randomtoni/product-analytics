@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-10 — Python-parity cycle in flight; PY1 (scaffold) + PY2 (seam) + PY3 (taxonomy/allowlist) shipped
+Last updated: 2026-07-10 — Python-parity cycle in flight; PY1–PY4 shipped (scaffold · seam · taxonomy/allowlist · server capture)
 
 ## Status
 
@@ -52,7 +52,7 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
   Pydantic at boundaries.
 - **[PY3-CORE-taxonomy-allowlist](epics/done/PY3-CORE-taxonomy-allowlist.md)** *(done)* — the library's OWN surface:
   payload allowlist (1:1 port) + two-layer typed taxonomy (runtime registry + best-effort static).
-- **[PY4-NODE-server-capture](epics/PY4-NODE-server-capture.md)** *(active)* — server capture + set/set-group +
+- **[PY4-NODE-server-capture](epics/done/PY4-NODE-server-capture.md)** *(done)* — server capture + set/set-group +
   `queue.Queue`/daemon-thread consumer (**drop-oldest to match TS, NOT posthog-python's drop-newest**)
   + adapter-internal wire mapper + `dedupe_id`→`uuid` idempotency + retry classification + no-op.
 - **[PY5-QRY-query-client](epics/PY5-QRY-query-client.md)** — `AnalyticsQueryClient` `Protocol`
