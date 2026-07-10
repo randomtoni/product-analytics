@@ -80,14 +80,21 @@ class DefinitionPoller:
         # sees the just-loaded snapshot instead of issuing a second request.
         self._load_lock = threading.Lock()
         self._stopped = threading.Event()
+        # Set once the daemon thread's FIRST load attempt has completed (success OR failure). The
+        # deterministic "the fire-and-forget first load has drained" signal — the sync analog of
+        # awaiting the TS async `start()`. Production never blocks on it (is_ready() gates eval);
+        # only a test that needs the first load settled before asserting readiness waits on it.
+        self._first_load_done = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        """Kick off polling: an immediate first load, then a background loop that reloads every
+        """Kick off polling and RETURN AT ONCE — the daemon thread does the first load as its own
+        first step, so construction never blocks on the definitions round-trip (an unreachable
+        endpoint must not hang app boot). ``is_ready()`` gates local eval, so ``evaluate`` falls
+        through to remote/degraded until that first load lands. A background loop then reloads every
         ``poll_interval`` until :meth:`stop`. Idempotent — a second ``start`` is a no-op."""
         if self._thread is not None:
             return
-        self.load()
         self._thread = threading.Thread(
             target=self._run, name="analytics-kit-flag-poller", daemon=True
         )
@@ -97,6 +104,18 @@ class DefinitionPoller:
         """True once at least one successful load parsed a non-empty definition list — the "should I
         try local eval" gate."""
         return self._loaded_successfully_once and len(self._snapshot.flags) > 0
+
+    def wait_for_first_load(self, timeout: float | None = None) -> bool:
+        """Block until the daemon thread's FIRST load ATTEMPT has completed (success OR failure), then
+        report whether the wait actually observed that completion (``False`` on timeout).
+
+        The synchronous analog of awaiting the TS async ``start()``: since ``start()`` returns before
+        the fire-and-forget first load runs, a caller that needs the load settled (a test asserting
+        local eval, or the negative case) waits here. Completion is NOT the same as readiness — a
+        failed first load completes but leaves :meth:`is_ready` ``False``; check ``is_ready()``
+        separately after this returns (mirroring the TS ``await start(); expect(isReady())`` sequence).
+        Never called on the production path (eval falls through to remote until the load lands)."""
+        return self._first_load_done.wait(timeout)
 
     def get_snapshot(self) -> DefinitionSnapshot:
         """The current parsed definition snapshot, read atomically by the evaluator. Before the first
@@ -120,10 +139,17 @@ class DefinitionPoller:
             self._fetch_definitions()
 
     def _run(self) -> None:
-        # The reference daemon posture is a bare `threading.Thread` with `daemon=True` and no clean
-        # stop — the E12-S4 leak source. Here the loop is `Event`-gated: `wait(interval)` returns
-        # True the instant `stop()` sets the event, so the loop exits promptly and `stop()`'s join
-        # returns — no leaked thread.
+        # The first load runs HERE, on the thread — never on the caller's stack — so construction
+        # returns before any network I/O. The reference daemon posture is a bare `threading.Thread`
+        # with `daemon=True` and no clean stop (the E12-S4 leak source); here the loop is
+        # `Event`-gated: `wait(interval)` returns True the instant `stop()` sets the event, so the
+        # loop exits promptly and `stop()`'s join returns — no leaked thread.
+        try:
+            self.load()
+        finally:
+            # Signal completion in a `finally`, UNCONDITIONALLY — an unexpected raise in the first
+            # load must still release a `wait_for_first_load` waiter (else it hangs to its timeout).
+            self._first_load_done.set()
         while not self._stopped.wait(self._poll_interval):
             self.load()
 

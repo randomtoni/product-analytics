@@ -303,6 +303,8 @@ def test_non_2xx_round_trip_degrades_to_empty_flag_set() -> None:
 
     snapshot = adapter.evaluate({"distinct_id": "user-1"})
 
+    # The degraded-empty result is the canonical empty_flag_set() null-object (never a hand-rolled
+    # second empty): 'unresolved' for EVERY key, degraded True — the neutral degradation signal.
     assert snapshot is empty_flag_set()
     assert snapshot.degraded is True
     assert snapshot.reason("anything") == "unresolved"
@@ -383,7 +385,8 @@ def test_real_urllib_transport_non_2xx_degrades_evaluate_to_empty_flag_set(
     status_500_server: _StatusServer,
 ) -> None:
     # End-to-end over a real socket: the adapter wired to the DEFAULT transport degrades a 500 to
-    # empty_flag_set() (unresolved) rather than crashing evaluate with an escaped HTTPError.
+    # the canonical empty_flag_set() null-object (unresolved) rather than crashing evaluate with an
+    # escaped HTTPError.
     adapter = HttpFlagAdapter(key="k", flag_endpoint=status_500_server.host)
 
     snapshot = adapter.evaluate({"distinct_id": "user-1"})
@@ -391,6 +394,7 @@ def test_real_urllib_transport_non_2xx_degrades_evaluate_to_empty_flag_set(
     assert snapshot is empty_flag_set()
     assert snapshot.degraded is True
     assert snapshot.reason("anything") == "unresolved"
+    assert snapshot.get_all() == {}
     assert status_500_server.requests == 1
 
 
@@ -399,8 +403,78 @@ def test_malformed_body_degrades_to_empty_flag_set() -> None:
     adapter = _adapter(transport)
 
     snapshot = adapter.evaluate({"distinct_id": "user-1"})
+    assert snapshot is empty_flag_set()
     assert snapshot.degraded is True
     assert snapshot.reason("anything") == "unresolved"
+
+
+# --- a bounded request timeout: an unresponsive endpoint degrades, never hangs (U2) --------------
+
+
+def test_urllib_flag_transport_passes_a_bounded_timeout_to_urlopen() -> None:
+    # Every flag-eval request carries a bounded wall-clock cap, so an unresponsive endpoint can't
+    # hang the caller. Assert the transport actually threads a positive `timeout` into `urlopen`
+    # (a mutation dropping the timeout arg makes this fail).
+    import urllib.request
+
+    from analytics_kit.flags.transport import _UrllibFlagTransport
+
+    seen: dict[str, object] = {}
+    real_urlopen = urllib.request.urlopen
+
+    def _spy(request: object, *args: object, timeout: object = None, **kwargs: object) -> object:
+        seen["timeout"] = timeout
+        raise TimeoutError("timed out")
+
+    urllib.request.urlopen = cast("Any", _spy)
+    try:
+        # The send normalizes the raised TimeoutError to a degraded response; we only care that a
+        # positive `timeout` reached urlopen.
+        _UrllibFlagTransport().send(
+            "https://flags.example/flags/?v=2", "POST", {"Content-Type": "application/json"}, "{}"
+        )
+    finally:
+        urllib.request.urlopen = real_urlopen
+
+    assert isinstance(seen["timeout"], (int, float)) and seen["timeout"] > 0
+
+
+def test_urllib_flag_transport_normalizes_a_timeout_to_status_0_without_raising() -> None:
+    # A `TimeoutError` out of `urlopen` (the bounded-timeout expiry) must degrade exactly like a
+    # network failure — status 0, no raised exception crossing the seam.
+    import urllib.request
+
+    from analytics_kit.flags.transport import _UrllibFlagTransport
+
+    real_urlopen = urllib.request.urlopen
+
+    def _timeout(*_args: object, **_kwargs: object) -> object:
+        raise TimeoutError("timed out")
+
+    urllib.request.urlopen = cast("Any", _timeout)
+    try:
+        response = _UrllibFlagTransport().send(
+            "https://flags.example/flags/?v=2", "POST", {"Content-Type": "application/json"}, "{}"
+        )
+    finally:
+        urllib.request.urlopen = real_urlopen
+
+    assert response.status == 0
+    assert response.body == ""
+
+
+def test_a_timeout_out_of_the_transport_degrades_evaluate_to_empty_flag_set() -> None:
+    # End-to-end: a transport whose send times out (status 0) degrades `evaluate` to the canonical
+    # empty_flag_set() null-object rather than crashing — the same degrade path a non-2xx / network
+    # failure takes.
+    transport = _CannedTransport([NeutralResponse(status=0, body="")])
+    adapter = _adapter(transport)
+
+    snapshot = adapter.evaluate({"distinct_id": "user-1"})
+    assert snapshot is empty_flag_set()
+    assert snapshot.degraded is True
+    assert snapshot.reason("anything") == "unresolved"
+    assert snapshot.get_all() == {}
 
 
 def test_a_raising_transport_degrades_rather_than_crashing_evaluate() -> None:
@@ -414,10 +488,12 @@ def test_a_raising_transport_degrades_rather_than_crashing_evaluate() -> None:
         transport=cast("Any", _Boom()),
     )
     # A raised transport error is normalized to degradation — flags degrade, they never raise to
-    # the consumer. The evaluate returns the empty set, not a propagated RuntimeError.
+    # the consumer. The evaluate returns the canonical empty_flag_set(), not a propagated RuntimeError.
     snapshot = adapter.evaluate({"distinct_id": "user-1"})
     assert snapshot is empty_flag_set()
     assert snapshot.degraded is True
+    assert snapshot.reason("anything") == "unresolved"
+    assert snapshot.get_all() == {}
 
 
 def test_failed_round_trip_falls_back_to_bootstrap_seed_as_stale() -> None:

@@ -20,6 +20,12 @@ ConsentState = Literal["granted", "denied", "pending"]
 """Consent tri-state, declared for parity. Server consent is a weakened instance-level send
 switch (the ``pending`` state has no durable per-user store server-side)."""
 
+DEFAULT_HTTP_TIMEOUT_SECONDS = 30.0
+"""The bounded wall-clock cap on every stdlib ``urllib`` request in the library, so an
+unresponsive endpoint degrades on the same path a network failure takes instead of hanging the
+caller indefinitely. Neutral, config-free default shared by every transport (flag-eval, capture,
+query) — a backend that needs a different bound configures its own transport."""
+
 
 @dataclass
 class NeutralResponse:

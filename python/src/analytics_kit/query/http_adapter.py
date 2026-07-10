@@ -26,7 +26,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Literal
 
-from ..adapter import NeutralResponse
+from ..adapter import DEFAULT_HTTP_TIMEOUT_SECONDS, NeutralResponse
 from .client import (
     Aggregation,
     Duration,
@@ -195,7 +195,7 @@ class _UrllibQueryTransport:
         data = body.encode("utf-8") if body is not None else None
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request) as response:  # noqa: S310
+            with urllib.request.urlopen(request, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS) as response:  # noqa: S310
                 return NeutralResponse(status=response.status, body=response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             # urllib RAISES on non-2xx; return the real status so ``_post``'s status check classifies

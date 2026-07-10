@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from ..ports import (
     FeatureFlagPort,
@@ -96,54 +97,73 @@ _REASON_STALE: FlagReason = "stale"
 _REASON_UNRESOLVED: FlagReason = "unresolved"
 
 
+@dataclass(frozen=True, slots=True)
 class _Snapshot:
-    """The immutable resolved backing for one :class:`FlagSet`, plus the reason every read reports.
+    """The plain, immutable resolved backing the resolution layer passes around — the internal
+    data record, NOT the consumer FlagSet (that's :class:`_FlagSetView`, built at the ``evaluate``
+    boundary).
 
-    Wrapped by a :class:`FlagSet` on each ``evaluate``. ``reason`` is uniform across a snapshot's
-    keys — the snapshot-level state (freshly resolved, bootstrap seed/fallback, or degraded).
-    ``is_enabled`` collapses a missing flag to ``False``; ``get_flag``/``get_payload`` distinguish
-    missing (``None``) from disabled (``False``) — the neutralized server snapshot read contract.
+    ``reason`` is a UNIFORM snapshot-level field (freshly resolved, bootstrap seed/fallback, or
+    degraded) — read directly as a typed field at the merge site, never probed per-key. Mirrors the
+    TS ``Snapshot`` interface (a plain data shape) so ``_round_trip`` returns typed fields the merge
+    reads without a ``hasattr`` workaround, and a field rename fails typecheck.
     """
 
-    __slots__ = ("_flags", "_payloads", "_reason", "_degraded")
+    flags: dict[str, FlagValue]
+    payloads: dict[str, object]
+    reason: FlagReason
+    degraded: bool
 
-    def __init__(
-        self,
-        flags: dict[str, FlagValue],
-        payloads: dict[str, object],
-        reason: FlagReason,
-        degraded: bool,
-    ) -> None:
-        self._flags = flags
-        self._payloads = payloads
-        self._reason = reason
-        self._degraded = degraded
+
+class _FlagSetView:
+    """The consumer-facing :class:`FlagSet` built from a resolved-bearing :class:`_Snapshot` at the
+    ``evaluate`` boundary — the Python analog of the TS ``buildFlagSet`` wrapper.
+
+    Built only for a snapshot that HAS resolved data (freshly resolved, bootstrap seed, or stale
+    fallback); a degraded-EMPTY result is served by the canonical ``empty_flag_set()`` null-object
+    instead (never a hand-rolled second empty — the same rule the browser's ``currentSet`` follows).
+    ``is_enabled`` collapses a missing flag to ``False``; ``get_flag``/``get_payload`` distinguish
+    missing (``None``) from disabled (``False``); ``reason(key)`` reports the snapshot-uniform reason
+    for a PRESENT key and ``None`` for an absent one (the key-presence gate).
+    """
+
+    __slots__ = ("_snapshot",)
+
+    def __init__(self, snapshot: _Snapshot) -> None:
+        self._snapshot = snapshot
 
     def is_enabled(self, key: str) -> bool:
-        value = self._flags.get(key)
+        value = self._snapshot.flags.get(key)
         return value is not None and value is not False
 
     def get_flag(self, key: str) -> FlagValue | None:
-        return self._flags.get(key)
+        return self._snapshot.flags.get(key)
 
     def get_payload(self, key: str) -> object:
-        return self._payloads.get(key)
+        return self._snapshot.payloads.get(key)
 
     def get_all(self) -> dict[str, FlagValue]:
-        return dict(self._flags)
-
-    @property
-    def payloads(self) -> dict[str, object]:
-        return self._payloads
+        return dict(self._snapshot.flags)
 
     @property
     def degraded(self) -> bool:
-        return self._degraded
+        return self._snapshot.degraded
 
     def reason(self, key: str) -> FlagReason | None:
-        if key in self._flags or key in self._payloads:
-            return self._reason
+        if key in self._snapshot.flags or key in self._snapshot.payloads:
+            return self._snapshot.reason
         return None
+
+
+def _build_flag_set(snapshot: _Snapshot) -> FlagSet:
+    """Build the consumer :class:`FlagSet` from a resolved :class:`_Snapshot` at the ``evaluate``
+    boundary — the Python analog of the browser's ``currentSet``. A degraded-EMPTY snapshot (no
+    resolved flags/payloads) is served by the canonical ``empty_flag_set()`` null-object so every
+    degraded-empty path reads ``"unresolved"`` for every key consistently — never a hand-rolled second
+    empty. A resolved/seed/stale snapshot is wrapped in a :class:`_FlagSetView`."""
+    if not snapshot.flags and not snapshot.payloads and snapshot.degraded:
+        return empty_flag_set()
+    return _FlagSetView(snapshot)
 
 
 def _is_ok(status: int) -> bool:
@@ -215,22 +235,6 @@ def _seed_bootstrap(bootstrap: object) -> _Snapshot | None:
     flags = getattr(bootstrap, "flags", None) or {}
     payloads = getattr(bootstrap, "payloads", None) or {}
     return _Snapshot(dict(flags), dict(payloads), _REASON_BOOTSTRAP, degraded=False)
-
-
-def _remote_uniform_reason(
-    remote: FlagSet,
-    remote_flags: dict[str, FlagValue],
-    remote_payloads: dict[str, object],
-) -> FlagReason:
-    """Read the snapshot-uniform reason off a round-trip result for the merge. The remote is a
-    ``_Snapshot`` (``reason`` uniform across its present keys) or the canonical ``empty_flag_set()``
-    (every read ``unresolved``). Reading through any present key gives the uniform reason; a keyless
-    remote (a failed round-trip with no bootstrap) is ``unresolved`` — the neutral degraded state."""
-    for key in (*remote_flags, *remote_payloads):
-        reason = remote.reason(key)
-        if reason is not None:
-            return reason
-    return _REASON_UNRESOLVED
 
 
 def _resolve_local_payload(definition: FlagDefinition, value: FlagValue) -> object:
@@ -335,8 +339,9 @@ class HttpFlagAdapter:
         if not distinct_id:
             raise ValueError("analytics-kit: distinct_id is required to evaluate flags on the server")
         snapshot = self._resolve(context if context is not None else {})
-        self._fire_once(snapshot)
-        return snapshot
+        flag_set = _build_flag_set(snapshot)
+        self._fire_once(flag_set)
+        return flag_set
 
     def stop(self) -> None:
         """Halt the definition poller so no further loads are scheduled and no thread leaks (no-op
@@ -345,11 +350,11 @@ class HttpFlagAdapter:
         if self._local is not None:
             self._local.poller.stop()
 
-    def _resolve(self, context: FlagContext) -> FlagSet:
-        """Resolve a snapshot via the local-first strategy branch when local-capable and the poller
-        is ready; otherwise the pure remote path E12 shipped. This is the ONLY place the strategy is
-        decided — the returned :class:`FlagSet` is indistinguishable across strategies (same snapshot
-        shape, same neutral ``reason``/``degraded``)."""
+    def _resolve(self, context: FlagContext) -> _Snapshot:
+        """Resolve the internal :class:`_Snapshot` via the local-first strategy branch when
+        local-capable and the poller is ready; otherwise the pure remote path E12 shipped. This is the
+        ONLY place the strategy is decided — the snapshot is indistinguishable across strategies (same
+        shape, same neutral ``reason``/``degraded``); ``evaluate`` wraps it into the consumer FlagSet."""
         local = self._local
         if local is None or not local.poller.is_ready():
             # Not local-capable, or definitions haven't loaded yet. Under local-only there is no
@@ -399,13 +404,13 @@ class HttpFlagAdapter:
         # narrowed to the fallback set so the wire body only asks for what local eval couldn't decide.
         # Adopt the remote's snapshot-uniform reason/degraded (degraded-WINS on mixed, incl 'stale'):
         # a clean local flag reads the round-trip's reason, so a partial failure is one coherent state.
+        # `remote` is a typed `_Snapshot`, so its flags/payloads/reason/degraded read as fields — a
+        # field rename would fail typecheck, unlike the prior mypy-invisible ``hasattr`` probe.
         remote = self._round_trip({**context, "flag_keys": fallback_keys})
-        remote_flags = remote.get_all()
-        remote_payloads = remote.payloads if hasattr(remote, "payloads") else {}
         return _Snapshot(
-            {**flags, **remote_flags},
-            {**payloads, **remote_payloads},
-            _remote_uniform_reason(remote, remote_flags, remote_payloads),
+            {**flags, **remote.flags},
+            {**payloads, **remote.payloads},
+            remote.reason,
             degraded=remote.degraded,
         )
 
@@ -439,11 +444,13 @@ class HttpFlagAdapter:
             listener(snapshot)
         self._listeners.clear()
 
-    def _round_trip(self, context: FlagContext) -> FlagSet:
+    def _round_trip(self, context: FlagContext) -> _Snapshot:
         """One independent round-trip for THIS context's actor. Success ⇒ a freshly resolved
         snapshot; a failed round-trip degrades to the bootstrap seed (``stale``) when one is
-        configured, else the canonical ``empty_flag_set()`` (``unresolved``) — the neutral
-        degradation signal. Vendor eval-quality fields on the response are never read.
+        configured, else the neutral degraded-empty snapshot (``unresolved``) — the neutral
+        degradation signal. Returns the internal :class:`_Snapshot` (mirroring the TS ``roundTrip``
+        that returns its plain Snapshot), so the merge site reads its fields typed. Vendor
+        eval-quality fields on the response are never read.
 
         No remote endpoint configured (a local-only posture) ⇒ the remote path has nowhere to go;
         degrade to the neutral empty/seed snapshot rather than fetch. Reached only defensively — the
@@ -454,15 +461,15 @@ class HttpFlagAdapter:
             return _Snapshot(flags, payloads, _REASON_RESOLVED, degraded=False)
         if self._bootstrap is not None:
             # Re-tag the already-seeded bootstrap snapshot as a degraded 'stale' fallback, reusing
-            # its own flag AND payload maps — NOT re-derived from get_all() (flag keys only), which
-            # would drop a payload-only bootstrap key that has no matching flag value.
+            # its own flag AND payload maps — NOT re-derived from the flag map alone, which would drop
+            # a payload-only bootstrap key that has no matching flag value.
             return _Snapshot(
-                self._bootstrap.get_all(),
+                dict(self._bootstrap.flags),
                 dict(self._bootstrap.payloads),
                 _REASON_STALE,
                 degraded=True,
             )
-        return empty_flag_set()
+        return _Snapshot({}, {}, _REASON_UNRESOLVED, degraded=True)
 
     def _fetch(
         self, url: str, context: FlagContext

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import inspect
 import json
+import threading
+import time
 from collections.abc import Iterator
 from typing import Any, cast
 
@@ -27,6 +29,7 @@ from analytics_kit import (
     NeutralResponse,
     create_flag_client,
     create_server_analytics,
+    empty_flag_set,
 )
 from analytics_kit.flags.adapter import HttpFlagAdapter, LocalEvalCapability
 from analytics_kit.flags.local.definition_poller import DefinitionPoller
@@ -101,6 +104,9 @@ def _build_local_adapter(
         transport=cast("Any", transport),
         local=LocalEvalCapability(poller, only_locally),
     )
+    # start() is fire-and-forget (the first load runs on the poll thread) — drain it deterministically
+    # so the evaluate under test sees a ready poller, the sync analog of awaiting the TS async start().
+    poller.wait_for_first_load(timeout=5)
     try:
         yield adapter
     finally:
@@ -324,6 +330,8 @@ def test_mixed_local_plus_stale_bootstrap_fallback_reads_stale(local_adapter_fac
         transport=cast("Any", transport),
         local=LocalEvalCapability(poller, only_locally=False),
     )
+    # drain the fire-and-forget first load before the evaluate under test
+    assert poller.wait_for_first_load(timeout=5)
     try:
         snapshot = adapter.evaluate({"distinct_id": "distinct_id_0"})
         assert snapshot.get_flag("simple-flag") is True
@@ -385,10 +393,109 @@ def test_not_ready_falls_back_to_remote_with_the_original_context() -> None:
         transport=cast("Any", transport),
         local=LocalEvalCapability(poller, only_locally=False),
     )
+    # Drain the first load (which fails to parse the malformed body) so is_ready() is deterministically
+    # False by evaluate-time — the fall-to-remote path is exercised, not merely raced into. The load
+    # ATTEMPT completes (wait returns True) but leaves the poller not-ready (a failed parse).
+    assert poller.wait_for_first_load(timeout=5) is True
+    assert poller.is_ready() is False
     try:
         snapshot = adapter.evaluate({"distinct_id": "u"})
         assert snapshot.get_flag("remote-flag") is True
         assert transport.post_count == 1
+    finally:
+        adapter.stop()
+
+
+# --- construction never blocks on the first definitions fetch (U3 boot-hang) ---------------------
+
+
+class _BlockingTransport:
+    """A transport whose send BLOCKS until released — simulates an unreachable/never-responding
+    definitions endpoint. The poll thread parks in send; the constructor must NOT."""
+
+    def __init__(self) -> None:
+        self.released = threading.Event()
+        self.entered = threading.Event()
+
+    def send(self, url: str, method: str, headers: dict[str, str], body: str | None = None) -> NeutralResponse:
+        self.entered.set()
+        self.released.wait(timeout=10)
+        return NeutralResponse(status=200, body=_definitions_body(_local_flag("simple-flag", 100)))
+
+
+def test_construction_does_not_block_on_a_never_responding_first_fetch() -> None:
+    # The boot-hang regression: start() (run in the constructor) must be fire-and-forget — an
+    # unreachable definitions endpoint parks the POLL THREAD in send, never the constructor. With the
+    # old synchronous start()->load(), constructing this adapter would hang until the fetch returned.
+    transport = _BlockingTransport()
+    poller = DefinitionPoller(
+        definitions_endpoint="https://flags.example",
+        definitions_key="k",
+        token="proj-token",
+        poll_interval=60.0,
+        transport=cast("Any", transport),
+    )
+
+    started = time.monotonic()
+    adapter = HttpFlagAdapter(
+        key="proj-token",
+        flag_endpoint="https://flags.example",
+        transport=cast("Any", transport),
+        local=LocalEvalCapability(poller, only_locally=False),
+    )
+    # Construction returned promptly despite the in-flight (blocked) first fetch.
+    assert time.monotonic() - started < 2.0
+    # The poll thread actually reached the blocking send — the first load IS in flight on the thread.
+    assert transport.entered.wait(timeout=5)
+    # is_ready() is False while the first load is still blocked — eval falls through to remote/degraded.
+    assert poller.is_ready() is False
+
+    try:
+        # Release the fetch; the first load completes and the poller becomes ready.
+        transport.released.set()
+        assert poller.wait_for_first_load(timeout=5) is True
+        assert poller.is_ready() is True
+    finally:
+        adapter.stop()
+
+
+# --- degraded-empty reports 'unresolved' for EVERY key, consistently (U5+U6) ---------------------
+
+
+def test_local_only_not_ready_reports_unresolved_for_every_key_not_none() -> None:
+    # The local-only + poller-not-ready path resolves to the neutral degraded-empty snapshot. Its
+    # reason() must read 'unresolved' for ANY key (matching empty_flag_set()), NOT None — one
+    # consistent degraded-empty signal regardless of which key a consumer probes.
+    transport = _CountingTransport(
+        get_response=NeutralResponse(status=200, body="not json"),  # never parses -> not ready
+        post_response=_remote_response({}),
+    )
+    poller = DefinitionPoller(
+        definitions_endpoint="https://flags.example",
+        definitions_key="k",
+        token="proj-token",
+        poll_interval=60.0,
+        transport=cast("Any", transport),
+    )
+    # Local-only (no flag_endpoint) so there is no remote fallback — the not-ready path degrades empty.
+    adapter = HttpFlagAdapter(
+        key="proj-token",
+        flag_endpoint=None,
+        transport=cast("Any", transport),
+        local=LocalEvalCapability(poller, only_locally=True),
+    )
+    assert poller.wait_for_first_load(timeout=5) is True
+    assert poller.is_ready() is False
+    try:
+        snapshot = adapter.evaluate({"distinct_id": "u"})
+        # The degraded-empty result is the canonical empty_flag_set() null-object, so reason() reads
+        # 'unresolved' for EVERY key (not None) — one consistent signal across the degraded-empty paths.
+        assert snapshot is empty_flag_set()
+        assert snapshot.degraded is True
+        assert snapshot.reason("anything") == "unresolved"
+        assert snapshot.reason("another-key") == "unresolved"
+        assert snapshot.get_all() == {}
+        assert transport.post_count == 0  # local-only: no remote round-trip
     finally:
         adapter.stop()
 

@@ -24,7 +24,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Protocol
 
-from ..adapter import NeutralResponse
+from ..adapter import DEFAULT_HTTP_TIMEOUT_SECONDS, NeutralResponse
 from ..config import AnalyticsConfig
 from ..neutral_event import NeutralEvent
 from .consumer import DeliverBatch
@@ -84,7 +84,7 @@ class UrllibTransport:
     def post(self, url: str, headers: dict[str, str], body: bytes) -> NeutralResponse:
         request = urllib.request.Request(url, data=body, headers=headers, method=_WIRE_METHOD_POST)
         try:
-            with urllib.request.urlopen(request) as response:  # noqa: S310
+            with urllib.request.urlopen(request, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS) as response:  # noqa: S310
                 return NeutralResponse(status=response.status, body=response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             # urllib RAISES HTTPError for every non-2xx (unlike fetch, which resolves with the

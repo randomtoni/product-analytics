@@ -18,7 +18,7 @@ import urllib.request
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
-from ..adapter import ConsentState, NeutralResponse
+from ..adapter import DEFAULT_HTTP_TIMEOUT_SECONDS, ConsentState, NeutralResponse
 from ..neutral_event import NeutralEvent
 from .transport import Transport, UrllibTransport
 
@@ -116,7 +116,7 @@ class ServerAdapter:
         data = body.encode("utf-8") if body is not None else None
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request) as response:  # noqa: S310
+            with urllib.request.urlopen(request, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS) as response:  # noqa: S310
                 return NeutralResponse(status=response.status, body=response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             # Capture the status FIRST, then read the body defensively: send is self-contained (no
@@ -127,7 +127,7 @@ class ServerAdapter:
             except Exception:  # noqa: BLE001 — a body-read failure never crosses the seam.
                 error_body = ""
             return NeutralResponse(status=error.code, body=error_body)
-        except Exception:  # noqa: BLE001 — normalize any transport failure; no raw error crosses the seam.
+        except Exception:  # noqa: BLE001 — a timeout or any transport failure normalizes here; no raw error crosses the seam.
             return NeutralResponse(status=_STATUS_NO_RESPONSE, body="")
 
     def get_consent_state(self) -> ConsentState:

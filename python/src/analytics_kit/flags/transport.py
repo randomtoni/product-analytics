@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from typing import Protocol, runtime_checkable
 
-from ..adapter import NeutralResponse
+from ..adapter import DEFAULT_HTTP_TIMEOUT_SECONDS, NeutralResponse
 
 _STATUS_NO_RESPONSE = 0
 
@@ -69,7 +69,7 @@ class _UrllibFlagTransport:
         data = body.encode("utf-8") if body is not None else None
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request) as response:  # noqa: S310
+            with urllib.request.urlopen(request, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS) as response:  # noqa: S310
                 return NeutralResponse(status=response.status, body=response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             try:
@@ -77,5 +77,5 @@ class _UrllibFlagTransport:
             except Exception:  # noqa: BLE001 — a body-read failure never crosses the seam.
                 error_body = ""
             return NeutralResponse(status=error.code, body=error_body)
-        except Exception:  # noqa: BLE001 — normalize any network failure; no raw error crosses the seam.
+        except Exception:  # noqa: BLE001 — a timeout or any network failure normalizes here; no raw error crosses the seam.
             return NeutralResponse(status=_STATUS_NO_RESPONSE, body="")

@@ -214,8 +214,11 @@ def adapter_factory() -> Iterator[Any]:
             local=LocalEvalCapability(poller, only_locally=False),
         )
         adapters.append(adapter)
-        # start() (run in the constructor) already did a synchronous immediate first load, so the
-        # poller is ready here — no extra load needed before the evaluate under test.
+        # start() (run in the constructor) is fire-and-forget: the first load runs on the poll
+        # thread. Drain it deterministically before the evaluate under test — the sync analog of
+        # awaiting the TS async start() — then assert readiness separately (the TS
+        # `await start(); expect(isReady())` sequence).
+        assert poller.wait_for_first_load(timeout=5)
         assert poller.is_ready()
         return adapter
 
