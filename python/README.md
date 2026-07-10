@@ -75,7 +75,8 @@ Counts (matching `provider.py`'s Frozen-15 accounting exactly): **9 mapped verbs
 (`track`, `optIn`, `optOut`, `hasOptedOut`, `flush`, `shutdown`) + 3 idiomatic-adaptation (`identify`,
 `setTraits`, `group`) · **4 N-A-by-platform** (`page`, `reset`, `register`, `unregister`) · **2
 declared-but-unimplemented slots** (`flags`, `replay`) = the fifteen reference members, one disposition
-each. `register`'s **runtime verb** is N-A server-side; its **capability** survives as the
+each. (The docstring keeps the mapped nine flat; the 6-direct / 3-idiomatic split here is the
+consumer-facing refinement of that same "9 mapped" — not a separate accounting.) `register`'s **runtime verb** is N-A server-side; its **capability** survives as the
 construction-time `super_properties` lever (the idiomatic adaptation noted in its row).
 
 ### Query primitives — direct-analog

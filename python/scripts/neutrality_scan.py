@@ -153,7 +153,10 @@ def _confined_wire_literals(tree: ast.Module) -> set[int]:
     inside that assignment's VALUE (directly, or as an element of the value's collection/dict — a
     ``_WIRE_*`` dict/tuple of wire tokens is legit). A stray non-``_WIRE_`` binding that merely SHARES
     a physical source line with a ``_WIRE_*`` const is NOT confined — the exact spoof a line-based
-    check would miss. Mirrors the TS ``isConfinedWireLiteral`` (parent-binding, not line).
+    check would miss. Keys on the parent BINDING like the TS ``isConfinedWireLiteral``, but is
+    deliberately BROADER: it walks into the value's nested collection/expression (TS confines only the
+    direct initializer), so a ``_WIRE_*`` dict/tuple of wire tokens passes as one unit. The trust
+    boundary is unchanged — a leak must still be bound to a ``_WIRE_*``-named target to pass.
     """
     confined: set[int] = set()
     for node in tree.body:  # module-level statements only (direct children of the module body)
