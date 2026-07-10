@@ -52,7 +52,7 @@ Frozen-15. Source: `packages/analytics-kit/src/analytics-provider.ts`.
 | `register` / `unregister` (super-properties, E4-S7) | `AnalyticsProvider.register` / `.unregister` → `adapter.register/unregister` (gated at the one consumer super-prop source) | `packages/browser/src/posthog-core.ts:1721` `register(...)`, `:1817` `unregister(...)`; storage `posthog-persistence.ts:103` |
 | `optIn()` / `optOut()` / `hasOptedOut()` | `AnalyticsProvider.optIn` / `.optOut` / `.hasOptedOut` → `liveAdapter.setConsentState(...)` + active-adapter swap | `packages/browser/src/posthog-core.ts:3840`/`:3917`/`:3995`; manager `consent.ts:20` (`ConsentManager`) |
 | `flush()` / `shutdown()` | `AnalyticsProvider.flush` / `.shutdown` → `liveAdapter.flush()` / `.shutdown()` (`Promise<void>`) | `packages/browser/src/posthog-core.ts:3037` `shutdown(...)`; queue driver `request-queue.ts:60` |
-| `flags?` (declared-only, BY DESIGN) | `AnalyticsProvider.flags?: FeatureFlagPort` — declared, unimplemented this release | see §Explicitly OUT below |
+| `flags?` (IMPLEMENTED — E12 remote + E13 local) | `AnalyticsProvider.flags?: FeatureFlagPort` — declared on the frozen surface AND now backed by a real adapter (browser remote adapter + node/Python remote + local eval); see §Feature flags below | see §Feature flags below |
 | `replay?` (declared-only, BY DESIGN) | `AnalyticsProvider.replay?: SessionReplayPort` — declared, unimplemented this release | see §Explicitly OUT below |
 
 **Adjacent (not on the frozen-15, so no `keyof` pin): `context(name)`** — carried on `RootAnalytics`
@@ -159,29 +159,68 @@ Source: `packages/node/src/query/query-client.ts`. 5 methods.
 
 ---
 
+## 8. Feature flags — `FeatureFlagPort` (IMPLEMENTED — E12 remote + E13 local)
+
+> **Status change (E13-S4, 2026-07-10):** feature flags GRADUATED from the "Explicitly OUT" table
+> below into a shipped capability. The `FeatureFlagPort` seam (declared in E12-S1) is now backed by
+> real adapters across BOTH trees — remote eval (E12) on every target, local (in-process) eval (E13)
+> on the server targets. What was a typed extension point is now a realized primitive; the OUT table
+> keeps only the three that remain non-goals (session replay, surveys, heatmaps).
+
+Seam: `FeatureFlagPort` (`packages/analytics-kit/src/ports.ts`), surfaced as the optional `flags?`
+member of `AnalyticsProvider` (client) and as the standalone flag client (`create-flag-client` in
+`ts/packages/node`, `create_flag_client` in `python`). Evaluation strategy (remote round-trip vs.
+in-process local eval + remote fallback) is **entirely adapter-internal, behind the one unchanged
+`evaluate`** — the E12 seam was never touched (the E13 regression-check invariant).
+
+| Capability | Neutral surface | Present in | posthog-js reference (by role) |
+|---|---|---|---|
+| **Remote flag eval** (per-call round-trip against a flag-decision endpoint) | `FeatureFlagPort.evaluate(FlagContext) → FlagSet` | **browser** (fetch-on-init adapter, E12-S2) + **node** (per-call round-trip, E12-S3) + **Python server** (blocking round-trip, E12-S4) + **React** hook (E12-S5) | `packages/browser/src/posthog-featureflags.ts` (client) + `packages/node/src/extensions/feature-flags` remote path |
+| **Local (in-process) eval** (poll flag DEFINITIONS on an interval, evaluate cohort/rollout/hash rules in-process against `FlagContext` person/group properties, fall back to the remote path for undecidable flags) | SAME `FeatureFlagPort.evaluate` — local-vs-remote is adapter-internal; `onlyEvaluateLocally`/`strictLocalEvaluation`/poll-interval/definitions-endpoint are **adapter config** (bar B), never neutral port parameters | **node** (TS, E13-S1/S2) + **Python server** (E13-S3), at cross-tree hash parity — **absent-by-platform from the browser** (a browser fetches its flags; it does no local eval — a documented final boundary, not a gap) | `packages/node/src/extensions/feature-flags/feature-flags.ts` (`FeatureFlagsPoller` + `matchProperty` + rollout-hash bucketing) + the `posthog-python` server analog |
+
+**Ground-truth + parity proof (E13-S4):** local eval is proven CORRECT, not merely self-consistent —
+a loopback `http.Server`/`http.server` (a real socket, both trees) serves canned definitions to the
+poller AND a canned remote answer to the shipped round-trip, and the suites assert local eval agrees
+with the remote answer per-flag (value + variant + payload). Negative controls (a deliberately-wrong
+remote answer, a flipped rollout boundary, a zero-remote-POST assertion) prove the diff BITES. The
+**cross-tree hash anchor** — tier 1 `SHA1("some-flag.some_distinct_id") ==
+"e4ce124e800a818c63099f95fa085dc2b620e173"`, tier 2 the exact bucketing floats, tier 3 the
+`distinct_id_{0..9}` boolean/variant vectors — is asserted byte-for-byte in BOTH the TS-node and
+Python suites; a drift in either tree's hash fails its suite. A live privileged-key ground-truth
+(diffing local eval against a real backend's own bucketing) is a skip-if-no-key layer; the loopback +
+hash-anchor layers are the CC-reachable green path.
+
+**Both bars hold for local eval:** bar A — an adapter that supports only remote (or only local) still
+satisfies the one `evaluate`; local eval is a capability an adapter MAY add, never a contract every
+adapter must implement. Bar B — enabling/tuning local eval is config-only (a definitions endpoint + a
+privileged definition-reading credential select the local-capable adapter), zero library change.
+
+---
+
 ## Explicitly OUT this release — typed extension points, BY DESIGN (BRIEF §"Explicitly OUT")
 
 These are the **load-bearing** rows: each converts a raw gap ("we forgot replay") into
-documented-intentional scope ("replay is a non-goal with a declared extension seam"). BRIEF line
-139 lists exactly these four as OUT. Two have a declared port on the frozen surface today; all
-four map to a real posthog-js `Extension` (so the omission is deliberate, not an oversight).
+documented-intentional scope ("replay is a non-goal with a declared extension seam"). BRIEF line 139
+originally listed FOUR here; **feature flags / experiments graduated to implemented (E12 remote +
+E13 local — see §8 above)**, so THREE remain OUT. Session replay has a declared port on the frozen
+surface today; all three map to a real posthog-js `Extension` (so the omission is deliberate, not an
+oversight).
 
-Seams: `packages/analytics-kit/src/ports.ts` (`FeatureFlagPort`, `SessionReplayPort`), surfaced as
-the optional `flags?` / `replay?` members of `AnalyticsProvider`.
+Seams: `packages/analytics-kit/src/ports.ts` (`SessionReplayPort`), surfaced as the optional
+`replay?` member of `AnalyticsProvider`. (`FeatureFlagPort` / `flags?` is now IMPLEMENTED — §8.)
 
 | BRIEF §OUT capability | Status in library | Declared seam | posthog-js reference (by role) |
 |---|---|---|---|
 | **Session replay** | Typed extension point, NOT implemented — by design | `SessionReplayPort` (`ports.ts`) → `AnalyticsProvider.replay?` (declared-only; `keyof` includes `replay`, no instance carries it this release) | `packages/browser/src/extensions/replay/session-recording.ts:39` `class SessionRecording implements Extension` |
-| **Feature flags / experiments** | Typed extension point, NOT implemented — by design | `FeatureFlagPort` (`ports.ts`) → `AnalyticsProvider.flags?` (declared-only) | `packages/browser/src/posthog-featureflags.ts:216` `PostHogFeatureFlags implements Extension`; experiments `web-experiments.ts:34` |
 | **Surveys** | Typed extension point, NOT implemented — by design | no dedicated port yet — a future port lands as ONE additive `AnalyticsProvider` optional member (same pattern as `flags?`/`replay?`), zero break | `packages/browser/src/posthog-surveys.ts:36` `PostHogSurveys implements Extension` |
 | **Heatmaps** | Typed extension point, NOT implemented — by design | no dedicated port yet — future additive optional member (same pattern) | `packages/browser/src/heatmaps.ts:61` `Heatmaps implements Extension` |
 
-> All four omitted capabilities implement the SAME posthog-js `Extension` contract
+> All three remaining omitted capabilities implement the SAME posthog-js `Extension` contract
 > (`packages/browser/src/extensions/types.ts`) — evidence that the neutral seam's "declared
 > optional port" shape (`flags?`/`replay?`) is the right, uniform place they slot in additively
-> when a real adapter first ships one. Whether they should share one `Extension`-style neutral
-> contract vs stay bespoke optional ports is a future architect call; today they are a documented,
-> seam-backed non-goal, not a silent gap.
+> when a real adapter first ships one (as feature flags now have — §8). Whether the remaining three
+> should share one `Extension`-style neutral contract vs stay bespoke optional ports is a future
+> architect call; today they are a documented, seam-backed non-goal, not a silent gap.
 
 ---
 
@@ -195,7 +234,11 @@ the optional `flags?` / `replay?` members of `AnalyticsProvider`.
   `NodeAnalytics`, gated against `dist` types.
 - **§7 query:** all 5 methods present on `AnalyticsQueryClient` + both adapters (`HttpQueryAdapter`
   real, `WarehouseQueryAdapter` stub), gated against `dist` types.
-- **§Explicitly OUT:** the four non-goals (replay, flags/experiments, surveys, heatmaps) are
+- **§8 feature flags:** IMPLEMENTED — `FeatureFlagPort.evaluate` backed by real adapters across both
+  trees: remote eval on every target (E12) + local (in-process) eval on the server targets (E13), at
+  cross-tree hash parity, browser-absent-by-platform for local. Both bars hold (adapter-swap = zero
+  consumer change; config-only enablement).
+- **§Explicitly OUT:** the three remaining non-goals (replay, surveys, heatmaps) are
   documented-intentional omissions with declared/patterned extension seams — no silent gap.
 
 Every BRIEF §Capability-contract line resolves to a real shipped export or an explicit by-design

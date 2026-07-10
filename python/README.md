@@ -8,9 +8,10 @@ framework bindings; **no browser/DOM target**).
 The seam is built: a `Protocol`-based provider contract and adapter SPI, a typed taxonomy, the
 consumer-supplied allowlist, a config-selected factory, a server capture target, the query read
 client, and the optional framework bindings — all reachable through the public `analytics_kit`
-surface. The two capability slots (`flags?`/`replay?`) are declared but unfilled this release. The
-sections below map every capability to the TS surface, map every verb to its shipped implementation,
-and walk config-only adoption.
+surface. The `flags?` slot is **implemented** — a server flag client with remote eval and local
+(in-process) eval at cross-tree parity with the TS node client; the `replay?` slot stays declared
+but unfilled this release. The sections below map every capability to the TS surface, map every verb
+to its shipped implementation, and walk config-only adoption.
 
 ## Toolchain
 
@@ -68,16 +69,18 @@ The reference client facade has fifteen members. Their server disposition is the
 | `reset` | N-A by platform | no persisted server identity to re-anonymize |
 | `register` | N-A by platform (as a runtime verb) | no runtime super-property store server-side; the **capability** is preserved idiomatically as the construction-time `super_properties` dict, merged into every capture |
 | `unregister` | N-A by platform | no runtime super-property store to remove from server-side — no analog |
-| `flags` | declared-but-unimplemented slot | `FeatureFlagPort \| None`, defaulting to `None` this release (`ports.py`) |
+| `flags` | idiomatic-adaptation | **Implemented** — a server `FeatureFlagPort` client: `evaluate(FlagContext) -> FlagSet` with remote eval + local (in-process) eval at cross-tree parity with the TS node client. Strategy is adapter-internal; enabled config-only via `create_flag_client` / the provider `flags` slot |
 | `replay` | declared-but-unimplemented slot | `SessionReplayPort \| None`, defaulting to `None` this release (`ports.py`) |
 
-Counts (matching `provider.py`'s Frozen-15 accounting exactly): **9 mapped verbs** — 6 direct-analog
-(`track`, `optIn`, `optOut`, `hasOptedOut`, `flush`, `shutdown`) + 3 idiomatic-adaptation (`identify`,
-`setTraits`, `group`) · **4 N-A-by-platform** (`page`, `reset`, `register`, `unregister`) · **2
-declared-but-unimplemented slots** (`flags`, `replay`) = the fifteen reference members, one disposition
-each. (The docstring keeps the mapped nine flat; the 6-direct / 3-idiomatic split here is the
-consumer-facing refinement of that same "9 mapped" — not a separate accounting.) `register`'s **runtime verb** is N-A server-side; its **capability** survives as the
-construction-time `super_properties` lever (the idiomatic adaptation noted in its row).
+Counts: **10 mapped verbs** — 6 direct-analog (`track`, `optIn`, `optOut`, `hasOptedOut`, `flush`,
+`shutdown`) + 4 idiomatic-adaptation (`identify`, `setTraits`, `group`, `flags` — the last now backed
+by a real server flag client, remote + local eval) · **4 N-A-by-platform** (`page`, `reset`,
+`register`, `unregister`) · **1 declared-but-unimplemented slot** (`replay`) = the fifteen reference
+members, one disposition each. (`flags` graduated from a declared-only slot to an implemented
+capability with E12 remote eval + E13 local eval; `provider.py`'s docstring stays the source of truth
+for the frozen-15 accounting.) `register`'s **runtime verb** is N-A server-side; its **capability**
+survives as the construction-time `super_properties` lever (the idiomatic adaptation noted in its
+row).
 
 ### Query primitives — direct-analog
 
@@ -111,13 +114,13 @@ is a documented omission, not a gap:
 
 ### Declared-but-unimplemented capability slots
 
-Distinct from N-A: these are **declared** on the seam as optional capability ports, awaiting their
-owning cycle. The seam carries both as `Protocol` slots defaulting to `None` — parity-present as
-slots, exactly as the TS surface declares them unfilled this release.
+Distinct from N-A: `replay` is **declared** on the seam as an optional capability port, awaiting its
+owning cycle — a `Protocol` slot defaulting to `None`, parity-present as a slot exactly as the TS
+surface declares it unfilled this release. (`flags` was such a slot; it is now **implemented** —
+a server flag client with remote + local eval, populated config-only via the provider `flags` slot.)
 
 | Slot | Declared as | State |
 | --- | --- | --- |
-| `flags` | `FeatureFlagPort` (`ports.py`), `flags` attribute defaults to `None` (`provider.py`) | declared, unfilled — the upcoming feature-flags cycle fills it server-side |
 | `replay` | `SessionReplayPort` (`ports.py`), `replay` attribute defaults to `None` (`provider.py`) | declared, unfilled — browser-shaped in practice, held as a slot for surface parity |
 
 ### Taxonomy typing — a stated guarantee gap

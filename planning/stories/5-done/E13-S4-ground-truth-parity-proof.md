@@ -127,6 +127,17 @@ privileged (definition-reading) key — so it is split out and gated.
 - **This story is test + docs only — ZERO src/port change.** It consumes S2 + S3; both must be done
   first (`depends_on`). No new public API, no seam surface.
 
+> Reviewer suggestion (2026-07-10): `test_flag_parity.py` asserts `send_cohorts` via the private `poller._url` on a throwaway poller (white-box) rather than over the loopback socket — could record the GET path in the loopback `do_GET` for an over-the-wire assertion.
+> Reviewer suggestion (2026-07-10): Add a one-line comment distinguishing the fallback-fired layer-1 test from its zero-POST complement.
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this when the story moves to stories/5-done/. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added:** `python/tests/test_flag_parity.py`, `ts/packages/node/src/flags/local-parity.test.ts`
+- **Files changed:** `planning/audit/capability-completeness.md` (Feature-flags row → IMPLEMENTED; Session-replay row unchanged), `python/README.md` + `ts/README.md` (capability matrix `flags?` → implemented)
+- **New public API:** none — audit/proof only. **ZERO library-src edits** (`ts/packages/**` non-test + `python/src/**` untouched — audit-not-patch confirmed by reviewer via tracked+untracked git diff).
+- **Tests added:** TS `local-parity.test.ts` (10) + Python `test_flag_parity.py` (10 + 1 skip-if-no-key). Three layers: (1) LOOPBACK GROUND-TRUTH over a REAL socket (TS `node:http` `listen(0)`; Python `HTTPServer(127.0.0.1:0)` daemon), REAL default transport, definitions GET + remote `/flags` POST both cross the socket; (2) the cross-tree hash anchor (S1's exact 3-tier vector, byte-identical across both trees' suites); (3) the live-privileged-key diff (structured `skipif` — clean skip, not a silent pass). Negative controls: zero-POST for local-decidable (call-count asserted), wrong-remote (local≠remote), flipped-0%-rollout.
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review. Reviewer **PROVED the ground-truth diff bites** — mutated the pinned `multivariate-flag: second-variant→first-variant` in each tree → BOTH suites FAILED (`expected 'second-variant' to be 'first-variant'`), decisive non-vacuity (the PY8 "real path, prove it can fail" lesson). Confirmed real sockets (not self-consistent mocks), the cross-tree anchor is ONE shared identity (not two drifting copies), negative controls bite on observable state, the live-key layer cleanly skips, the matrix correction is truthful (Session-replay row left unchanged — E14), and ruled the README edits IN-SCOPE (an audit story keeps capability docs truthful the instant a capability ships; surgical `flags?`-only flips, neutral, Python 10+4+1=15 accounting consistent). 2 non-blocking suggestions. `send_cohorts` on the wire + `early_exit` deferral confirmed.
+- **Cross-story seams exposed / capability note:** **feature-flags is now COMPLETE — remote (E12) + local (E13), across both trees, at cross-tree HASH PARITY.** Both bars satisfied for local eval (A: local-vs-remote is adapter-internal behind the unchanged `evaluate` — zero consumer change; B: config-only local-eval adoption). E13 closes the flags area. The privileged definition-reading key remains the ONLY gated proof (live diff, layer 3); the loopback + cross-tree layers are the CC-reachable green path.
