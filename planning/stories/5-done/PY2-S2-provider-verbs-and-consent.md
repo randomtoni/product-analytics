@@ -89,4 +89,12 @@ The provider is the consumer-facing seam — the server-shaped verb surface base
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-09.
+
+- **Files added:** `python/src/analytics_kit/provider.py`, `python/tests/test_provider.py` (26 cases)
+- **Files changed:** `python/src/analytics_kit/client.py` (re-exports `Analytics`), `__init__.py` (re-export)
+- **New public API:** `Analytics(adapter, super_properties=None)` — `capture`/`set`/`set_group_traits`/`flush`/`shutdown`/`opt_in`/`opt_out`/`has_opted_out`, `flags`/`replay` `None`-slots; module docstring carries the durable frozen-15 accounting table. Wire-key constants at module top (`SET_KEY`/`SET_ONCE_KEY`/`GROUP_TYPE_KEY`/`GROUP_KEY_KEY`/`GROUP_SET_KEY` + event-name `SET_TRAITS_EVENT`/`SET_GROUP_TRAITS_EVENT`) — PY4's rename source.
+- **Tests added:** 26 provider cases via a recording capture-only adapter (verb minting, once-carrier, group wrapper, consent drop-and-discard, super-props-on-capture-only, minted event-name)
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** consent-drop + super-props isolation adversarially probed **clean** (both negative-controlled). Two suggestions **addressed inline before ship** (not deferred): the minted `event` NAME on set/group was `"set"`/`"group_set"` (reused wrapper-key constants) → fixed to `"set_traits"`/`"set_group_traits"` (PY4 carries the event name to the wire unchanged, so the mint site had to be right); added the missing `event.event` assertions that were the blind spot.
+- **Cross-story seams exposed:** **S3** factory builds `Analytics(adapter, super_properties=config.super_properties)`; unkeyed → inject `NoopAdapter` (whole-stack no-op, no provider change). **PY3** allowlist gate wires in at each verb call-boundary, AFTER the `if self._opted_out: return` guard, BEFORE minting; gate `properties`/`traits` only (routing `group_type`/`group_key` NOT gated). **PY4** renames the neutral wrapper keys → wire keys, keys off `internal_kind` (never event name); the minted event NAMES (`set_traits`/`set_group_traits`) already match the wire and pass through unchanged.

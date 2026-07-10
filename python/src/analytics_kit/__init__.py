@@ -18,6 +18,7 @@ from .neutral_event import (
     NeutralTraits,
 )
 from .ports import FeatureFlagPort, SessionReplayPort
+from .provider import Analytics
 
 __version__ = "0.0.0"
 
@@ -32,4 +33,5 @@ __all__ = [
     "AnalyticsAdapter",
     "FeatureFlagPort",
     "SessionReplayPort",
+    "Analytics",
 ]
