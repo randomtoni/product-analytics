@@ -12,6 +12,7 @@ import {
 } from 'analytics-kit';
 import { BrowserAdapter } from './browser-adapter';
 import { FlagClient } from './feature-flags';
+import { attachReplay } from './replay-recorder';
 
 export function cryptoRandomId(): string {
   return crypto.randomUUID();
@@ -123,5 +124,8 @@ export function createAnalytics(config: AnalyticsConfig): RootAnalytics {
   });
   registerCountry(analytics, config);
   attachFlags(analytics, adapter, config);
+  if (config.sessionReplay?.enabled === true) {
+    attachReplay(analytics, adapter);
+  }
   return analytics;
 }

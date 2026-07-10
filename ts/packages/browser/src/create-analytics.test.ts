@@ -65,6 +65,34 @@ describe('feature-flag adapter attaches to the provider.flags slot (E12-S2)', ()
   });
 });
 
+describe('replay recorder attaches to the provider.replay slot (E14-S2, bar B)', () => {
+  test('config.sessionReplay.enabled populates provider.replay synchronously (mirrors the flags slot)', () => {
+    const analytics = createAnalytics({ key: 'replay-key', sessionReplay: { enabled: true } });
+
+    // Populated at construction, not a tick later — the recorder shell is rrweb-free and
+    // attaches synchronously, exactly like provider.flags.
+    expect(analytics.replay).toBeDefined();
+    expect(typeof analytics.replay!.start).toBe('function');
+    expect(typeof analytics.replay!.isActive).toBe('function');
+    expect(analytics.replay!.isActive()).toBe(false);
+  });
+
+  test('sessionReplay disabled leaves provider.replay undefined', () => {
+    const analytics = createAnalytics({ key: 'replay-key', sessionReplay: { enabled: false } });
+    expect(analytics.replay).toBeUndefined();
+  });
+
+  test('absent sessionReplay leaves provider.replay undefined', () => {
+    const analytics = createAnalytics({ key: 'replay-key' });
+    expect(analytics.replay).toBeUndefined();
+  });
+
+  test('an unkeyed client leaves provider.replay undefined even when replay is enabled (no session to source)', () => {
+    const analytics = createAnalytics({ sessionReplay: { enabled: true } });
+    expect(analytics.replay).toBeUndefined();
+  });
+});
+
 test('unkeyed config resolves the NoopAdapter (whole-stack no-op)', () => {
   expect(resolveAdapter({})).toBeInstanceOf(NoopAdapter);
 });

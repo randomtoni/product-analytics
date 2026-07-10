@@ -9,6 +9,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
+    },
+    "./replay": {
+      "types": "./dist/replay.d.ts",
+      "import": "./dist/replay.mjs",
+      "require": "./dist/replay.js"
     }
   },
   "scripts": {
@@ -19,7 +24,8 @@
   },
   "dependencies": {
     "analytics-kit": "workspace:*",
-    "fflate": "^0.8.2"
+    "fflate": "^0.8.2",
+    "rrweb": "^2.1.0"
   },
   "devDependencies": {
     "jsdom": "^26.1.0"

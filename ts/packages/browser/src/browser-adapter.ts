@@ -1170,6 +1170,16 @@ export class BrowserAdapter implements AnalyticsAdapter {
     return this.resolvedIngestUrl;
   }
 
+  /** @internal The current session-linkage id the replay recorder reads so a recording
+   * stitches to the same session captured events carry (E14-S2). A PURE read of the last
+   * session id observed on a captured event — it does NOT advance the idle clock the way
+   * checkAndGetSessionId() would, because getReplayId() may be called arbitrarily. undefined
+   * before the first captured event mints a session. S3 upgrades this to the shared session
+   * read + rotation re-key; S2 supplies it as the recorder's placeholder id source. */
+  getReplaySessionId(): string | undefined {
+    return this.lastSeenSessionId;
+  }
+
   getLibraryId(): string {
     return LIBRARY_ID;
   }
