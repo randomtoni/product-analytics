@@ -14,6 +14,13 @@ from .adapter import AnalyticsAdapter, ConsentState, NeutralResponse
 from .allowlist import ViolationPolicy, enforce_allowlist
 from .config import AnalyticsConfig, FlagBootstrap, FlagsConfig
 from .factory import create_analytics
+from .flags import (
+    FlagClientConfig,
+    FlagNoop,
+    FlagTransport,
+    HttpFlagAdapter,
+    create_flag_client,
+)
 from .neutral_event import (
     InternalKind,
     NeutralEvent,
@@ -86,6 +93,11 @@ __all__ = [
     "FlagValue",
     "FlagReason",
     "empty_flag_set",
+    "FlagClientConfig",
+    "FlagTransport",
+    "FlagNoop",
+    "HttpFlagAdapter",
+    "create_flag_client",
     "Analytics",
     "AnalyticsConfig",
     "FlagsConfig",

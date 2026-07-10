@@ -15,6 +15,7 @@ from collections.abc import Mapping
 
 from ..config import AnalyticsConfig
 from ..factory import create_analytics
+from ..flags import FlagClientConfig, create_flag_client
 from ..provider import Analytics
 from ..version import __version__
 from .adapter import ServerAdapter
@@ -43,6 +44,13 @@ def create_server_analytics(
     ``urllib``). Without a key, the seam factory's own default applies — a whole-stack
     :class:`~analytics_kit.NoopAdapter`, so an unconfigured environment sends nothing (bar B)
     with zero library change.
+
+    The provider's ``flags`` slot is populated when a ``key`` is set alongside a
+    ``flags.flag_endpoint``: the flag client is built from the ingest ``key`` + the flag-eval
+    endpoint (a two-piece selection reading ``config.key`` here in the target, never in the
+    fenced seam factory) and set on the returned provider. Absent a flag endpoint the slot stays
+    the ``None`` default — feature-flags stay off by config alone (bar B). A consumer wanting a
+    distinct flag credential/endpoint uses the standalone :func:`~analytics_kit.create_flag_client`.
     """
     parsed = AnalyticsConfig.model_validate(config)
     if parsed.key is None:
@@ -63,4 +71,26 @@ def create_server_analytics(
         shutdown_timeout=parsed.shutdown_timeout,
     )
     adapter = ServerAdapter(version=__version__, sink=consumer, transport=transport)
-    return create_analytics(parsed, adapter=adapter)
+    analytics = create_analytics(parsed, adapter=adapter)
+    _attach_flags(analytics, parsed)
+    return analytics
+
+
+def _attach_flags(analytics: Analytics, config: AnalyticsConfig) -> None:
+    """Populate the provider's ``flags`` slot when a flag-eval endpoint is configured.
+
+    Builds the flag client from the ingest ``key`` + ``config.flags.flag_endpoint`` (and the
+    neutral bootstrap seed + taxonomy). Without a ``flags.flag_endpoint`` the slot stays the
+    ``None`` default — the flag client is only wired when the consumer opts in by config.
+    """
+    flags = config.flags
+    if flags is None or flags.flag_endpoint is None:
+        return
+    analytics.flags = create_flag_client(
+        FlagClientConfig(
+            key=config.key,
+            flag_endpoint=flags.flag_endpoint,
+            bootstrap=flags.bootstrap,
+            taxonomy=config.taxonomy,
+        )
+    )

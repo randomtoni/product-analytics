@@ -31,14 +31,20 @@ class FlagBootstrap(BaseModel):
 
 
 class FlagsConfig(BaseModel):
-    """Feature-flag settings. Only ``bootstrap`` this release — the server adapter reads it.
+    """Feature-flag settings the server flag adapter reads — ``flag_endpoint`` + ``bootstrap``.
 
-    Config shape only; nothing is wired here. A nested model so a typo'd key still trips
-    ``extra="forbid"``.
+    ``flag_endpoint`` is the flag-eval round-trip origin, kept SEPARATE from the ingest
+    ``ingest_host``: a flag decision endpoint differs from the ingest endpoint (mirroring the
+    query client's separate ``query_endpoint``), so the two never alias. A single endpoint (not
+    the split host/path of ingest). When present alongside a top-level ``key``, the server target
+    attaches a flag client to the provider's ``flags`` slot; absent, the slot stays ``None``.
+    ``bootstrap`` is the neutral server-rendered seed served as a fallback when a round-trip
+    fails. A nested model so a typo'd key still trips ``extra="forbid"``.
     """
 
     model_config = ConfigDict(extra="forbid")
 
+    flag_endpoint: str | None = None
     bootstrap: FlagBootstrap | None = None
 
 
@@ -65,9 +71,11 @@ class AnalyticsConfig(BaseModel):
     settles deterministically; ``retry_count``/``retry_delay`` bound the fixed-delay transient
     retry budget on delivery (``retry_count`` retries after the first attempt ⇒ ``retry_count + 1``
     total attempts, each spaced by ``retry_delay`` seconds). ``flags`` carries the feature-flag
-    settings — only ``flags.bootstrap`` this release (server-rendered flag data seeded at
-    construction, neutral ``flags``/``payloads`` field names); the server flag adapter reads it,
-    nothing is wired here. Unknown keys are rejected loudly — a config typo raises rather than
+    settings — ``flags.flag_endpoint`` (the flag-eval round-trip origin, distinct from
+    ``ingest_host``) and ``flags.bootstrap`` (server-rendered flag data seeded at construction,
+    neutral ``flags``/``payloads`` field names); when a ``flag_endpoint`` is set alongside a
+    ``key`` the server target attaches a flag client to the provider's ``flags`` slot, else the
+    slot stays ``None``. Unknown keys are rejected loudly — a config typo raises rather than
     silently degrading.
     """
 
