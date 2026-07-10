@@ -45,7 +45,7 @@ SOTA / `posthog-js`-capability bar.
   failure is distinguishable from a real "off") + `FlagContext` + taxonomy `flags` slot +
   config-supplied bootstrap + **remote-evaluation** adapters (browser fetch, node round-trip, Python
   server) across both trees + the React flag hook. `blocked_by: []`.
-- **[E13-FF-local-eval](epics/E13-FF-local-eval.md)** — **local (in-process) evaluation**, the
+- **[E13-FF-local-eval](epics/E13-FF-local-eval.md)** *(active)* — **local (in-process) evaluation**, the
   server-shaped specialization (definition polling + `matchProperty` cohort/rollout eval + fallback),
   TS-node + Python, **zero seam change** — the regression check that E12's port shape holds.
   `blocked_by: [E12]`.

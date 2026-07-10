@@ -1,0 +1,147 @@
+---
+id: E13-S2-node-local-remote-resolution-fallback
+epic: E13-FF-local-eval
+status: ready-for-dev
+area: feature-flags
+touches: [node]
+depends_on: [E13-S1]
+api_impact: additive
+---
+
+# E13-S2-node-local-remote-resolution-fallback — Local/remote resolution + fallback (TS node)
+
+## Why
+
+Wire S1's evaluator + poller into the node adapter as a **strategy branch behind the unchanged
+`evaluate` method**: try local eval first, fall back to E12's shipped remote round-trip when a flag
+can't be resolved locally, and gate that with `onlyEvaluateLocally`/`strictLocalEvaluation` **adapter
+config** (never neutral port parameters). The result must be **indistinguishable** from a pure remote
+eval — same `FlagSet`, same `degraded`/`reason` signal. This is the story that proves E12's port shape
+holds: local vs remote is entirely adapter-internal.
+
+## Scope
+
+### In
+
+- **Local-vs-remote resolution inside `HttpFlagAdapter.evaluate`** (`ts/packages/node/src/flags/
+  http-flag-adapter.ts` + the S1 `flags/local/` machinery) — a strategy branch, NOT a rewrite of the
+  remote path:
+  - When the adapter is configured for local eval (a definitions endpoint + privileged credential is
+    present and the S1 poller has loaded definitions), evaluate each requested flag **locally first**
+    against the `FlagContext`'s `personProperties`/`groupProperties`/`groups`/`distinctId`.
+  - On the S1 `InconclusiveMatchError`/`RequiresServerEvaluation` signal for a flag, **fall back to
+    E12's existing remote `roundTrip` path** for the unresolved flags — reuse the SHIPPED remote
+    machinery, do NOT fork a second remote client. Merge: locally-resolved flags kept, remotely-
+    resolved flags layered over the still-unresolved ones — a single coherent `FlagSet`.
+  - Assemble the merged result into a `FlagSet` via the EXISTING `buildFlagSet` with the EXISTING
+    `FlagReason` union (`resolved`/`bootstrap`/`stale`/`unresolved`) — no new reason, no new field.
+- **`onlyEvaluateLocally` / `strictLocalEvaluation` as adapter config** — added to `FlagClientConfig`
+  (`ts/packages/node/src/flags/config.ts`) + threaded into the adapter, NEVER onto the neutral
+  `FlagContext`/`FlagEvaluateOptions`/`FeatureFlagPort`:
+  - `strictLocalEvaluation` (client-level) makes local-only the default; `onlyEvaluateLocally`
+    suppresses the remote fallback — an inconclusive flag under local-only resolves to its degraded
+    neutral state (`unresolved`) rather than round-tripping. Resolve the effective value the same way
+    the reference does (`onlyEvaluateLocally ?? strictLocalEvaluation ?? false`).
+  - Poll interval + the definitions endpoint + the privileged credential are ALSO adapter config
+    fields (surfaced through `FlagClientConfig`), read by the factory, never neutral port parameters.
+- **Factory wiring** (`ts/packages/node/src/flags/create-flag-client.ts`) — when the config supplies a
+  definitions endpoint + privileged credential, construct the adapter with the S1 poller/evaluator
+  enabled (local-capable); otherwise the adapter stays remote-only exactly as E12 shipped. Unkeyed ⇒
+  still the `FlagNoop`. Config-only selection (bar B): enabling local eval is a config change, zero
+  library change. The `onChange` once-fire + `distinctId`-required contract is UNCHANGED — local eval
+  is behind the same `evaluate`, so `distinctId` is still required and validated pre-eval.
+- **Poller lifecycle on the adapter** — start the S1 poller when local-capable; expose a way to stop it
+  (fold into the adapter's existing teardown surface if one exists, else document the poller `stop()`
+  as internally managed). No leaked timers in tests (the E12-S4 daemon-thread-leak lesson's TS analog:
+  fake timers or an explicit stop in test teardown).
+- **Tests** — all mock/loopback (no live backend, no live key): local-first resolves a flag without a
+  round-trip (assert the remote fetch was NOT called); an inconclusive flag falls back to remote
+  (assert the round-trip WAS called for it) and the merged `FlagSet` carries both; `onlyEvaluateLocally`
+  suppresses the fallback (inconclusive ⇒ `unresolved`, no round-trip); `strictLocalEvaluation` sets
+  the default; a locally-resolved flag and a remotely-resolved flag are **indistinguishable** on the
+  snapshot (same `degraded`/`reason` semantics — a local failure reads identically to a remote
+  failure); `distinctId`-required still throws pre-eval; `onChange` still fires once.
+
+### Out
+
+- **The evaluator + poller machinery itself** — S1 (this story consumes it).
+- **Python analog** — S3.
+- **Ground-truth parity proof against a real remote eval** — S4 (needs the privileged key). This
+  story's "indistinguishable" tests assert the CONTRACT (same reason/degraded, remote-not-called),
+  not a byte-diff against a live backend.
+- **Any seam / port / `FlagContext` / `FlagSet` / `FlagReason` change** — the whole point is zero seam
+  change. `onlyEvaluateLocally`/`strictLocalEvaluation`/poll-interval/definitions-endpoint are ADAPTER
+  CONFIG on `FlagClientConfig`, never on the neutral port. If a new reason value or context field seems
+  needed, STOP — that's an E12-was-wrong escalation.
+- **`$feature_flag_called` auto-capture / flag-exposure events** — deferred at the E12 level; local
+  eval fires no capture.
+
+## Acceptance criteria
+
+- [ ] `evaluate` is UNCHANGED in signature and the neutral `FeatureFlagPort`/`FlagContext`/`FlagSet`/
+      `FlagReason` are untouched — local eval is a strategy branch inside the adapter, verified by a
+      diff that adds no seam surface (the E13 regression check: E12's port shape held).
+- [ ] With local eval configured, a locally-resolvable flag resolves WITHOUT a remote round-trip (a
+      test asserts the injected remote fetch was not called for it); an inconclusive flag falls back to
+      the SHIPPED remote path (the same `roundTrip`, not a second client) and the merged `FlagSet`
+      carries both flags coherently.
+- [ ] `onlyEvaluateLocally` (per the resolved default incl. `strictLocalEvaluation`) suppresses the
+      fallback — an inconclusive flag resolves to its degraded neutral state, no round-trip fires. All
+      three knobs are `FlagClientConfig` fields, NOT neutral port parameters.
+- [ ] A locally-resolved flag and a remotely-resolved flag are indistinguishable to the consumer: the
+      same `degraded`/`reason` signal, and the `isEnabled`/`getFlag`/`getPayload`/`getAll` reads behave
+      identically regardless of strategy (a test reads the same key both ways and asserts identical
+      surface behavior). A local eval failure reads identically to a remote failure.
+- [ ] `distinctId`-required still throws a neutral error pre-eval; `onChange` still fires exactly once;
+      the `FrozenNodeMembers` pin stays green (no `flags` member added to `NodeAnalytics`).
+- [ ] Enabling/tuning local eval is config-only (bar B): a definitions endpoint + privileged credential
+      + the knobs on `FlagClientConfig` select the local-capable adapter with zero library change; an
+      adapter given only a remote endpoint stays remote-only (bar A: local eval is a capability an
+      adapter MAY add, never one the port requires).
+- [ ] No leaked poll timer in the test suite (TS analog of the E12-S4 daemon-thread lesson: fake timers
+      or explicit stop; the suite is deterministic green with and without this file).
+- [ ] Neutrality: `grep -ri posthog ts/packages/node/src` clean; the knobs/endpoint/credential naming
+      carries no vendor token; `pnpm neutrality-scan` green.
+- [ ] Gates green: `pnpm --filter @analytics-kit/node build test typecheck lint`; all tests mock the
+      round-trip + poller fetch, never a live backend or live key.
+
+## Technical notes
+
+- **Fallback reuses E12's remote path EXACTLY (— architect 2026-07-10, epic Notes):** when local eval
+  can't resolve a flag, call the SAME remote machinery E12 shipped (`http-flag-adapter.ts`'s
+  `roundTrip`/`fetchFlags`), so a partly-local-partly-remote result is one coherent `FlagSet`. Do NOT
+  fork a second remote client. The remote path is already cleanly separable for exactly this — E12-S3's
+  `Shipped` note confirms local eval adds a strategy branch INSIDE the adapter, zero seam/port change.
+- **`onlyEvaluateLocally`/`strictLocalEvaluation` are adapter config, resolved from the config object,
+  never neutral port parameters (— architect 2026-07-10, epic Notes):** the node adapter reads them off
+  `FlagClientConfig`; a browser adapter would ignore them (no local mode). E13 is where E12's
+  "local-vs-remote is adapter-internal behind one method" decision is exercised. Effective value =
+  `onlyEvaluateLocally ?? strictLocalEvaluation ?? false` (the reference default). —
+  posthog-source-guide (2026-07-10).
+- **The returned `FlagSet` must be indistinguishable from E12's (— architect 2026-07-10, epic Notes):**
+  a consumer cannot tell whether a flag was served locally or remotely. Concretely the local path emits
+  the SAME neutral `degraded`/`reason` signal E12 defined (a flag that fell back and failed reads
+  identically to a remote failure), and the snapshot read surface behaves identically regardless of
+  strategy. This is what makes "local-vs-remote is adapter-internal" true rather than aspirational —
+  reuse the EXISTING `buildFlagSet` + the frozen `FlagReason` union; add no new reason value.
+- **Local eval reads person/group props straight off `FlagContext` (— architect 2026-07-10, epic
+  Notes):** E12's locked `FlagContext` already carries `personProperties`/`groupProperties`/`groups`/
+  `distinctId` — exactly what the S1 in-process matcher needs to evaluate without a round-trip. This is
+  the concrete reason E12's port shape holds for E13 with zero seam change: the context the remote path
+  forwards is the same context the local path matches against.
+- **The `getAllFlags` merge semantics (— posthog-source-guide 2026-07-10):** evaluate all requested
+  flags locally; the flags that threw inconclusive are the fallback set; fetch those remotely (unless
+  `onlyEvaluateLocally`) and layer the remote values OVER the locally-resolved ones. Locally-resolved
+  flags are kept; only the unresolved get remote values. This is per-flag, not all-or-nothing.
+- **Config surface: put the knobs on `FlagClientConfig`, not `NodeAnalyticsConfig`, not the seam.**
+  `FlagClientConfig` (`flags/config.ts`) already owns the flag-eval endpoint separate from the ingest
+  endpoint (E12-S3); add `definitionsEndpoint` + the privileged-credential field + `pollInterval` +
+  `onlyEvaluateLocally` + `strictLocalEvaluation` there. The seam `FlagsConfig.bootstrap` and the
+  neutral port stay untouched.
+- **E13's load-bearing invariant:** ZERO seam/port change. This is the regression check on E12 — the
+  whole story ships behind the unchanged `evaluate`. If the wiring seems to need a port change, that's
+  an E12-was-wrong escalation, not a story decision.
+
+## Shipped
+
+<!-- Empty at draft. /implement-epics fills this when the story moves to stories/5-done/. -->
