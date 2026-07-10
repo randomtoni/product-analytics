@@ -1,11 +1,11 @@
 ---
 id: PY4-NODE-server-capture
-status: planned
+status: active
 area: node
 touches: [capture, adapters, privacy]
 api_impact: additive
 blocked_by: [PY3-CORE-taxonomy-allowlist]
-updated: 2026-07-09
+updated: 2026-07-10
 ---
 
 # PY4-NODE-server-capture — Python server-side capture
@@ -26,12 +26,22 @@ Server capture is the beating heart of the Python port — the server-truth even
 
 ## Stories
 
-_Tentative slice (story files not yet written):_
+Chain — `S1 → S2 → S3 → S4`; topo-sortable via `depends_on`. Written to `stories/2-ready-for-dev/`. **Reconciled with the "provider already exists" reality:** PY2+PY3 already built the PROVIDER (verbs, event minting, `dedupe_id` fallback, allowlist gating, taxonomy typing) — it calls `adapter.capture(event)`. So PY4 builds the real server **ADAPTER** + the factory `config.key`→adapter selection; it does NOT re-create provider surface. The Python no-op is the already-shipped seam `NoopAdapter` (adapter-driven) — NOT a separate `NodeNoop` client like TS E7.
 
-- **S1** — the `capture` / `set` / `set_group_traits` surface over the PY2 seam: neutral event minting (dedupe_id fallback via `uuid`), allowlist-gated, taxonomy-typed; distinct_id required.
-- **S2** — the batch/consumer: bounded `queue.Queue` + background daemon `Thread`, size-OR-interval flush, drop-oldest, `atexit` join, `sync_mode` inline bypass.
-- **S3** — the adapter-internal wire mapper + transport: `{api_key, batch, sent_at}` gzip envelope, `dedupe_id`→wire `uuid`, `$set`/`$group` nested wire shape, config-supplied endpoint via an injectable HTTP send.
-- **S4** — reliability: retry classification (transient-only), fetch-failure normalization at the boundary, 413-halving, `flush()` force-drain + `shutdown()` timeout-drain + quiesce; the unkeyed whole-stack no-op + opt-out suppression.
+- **[PY4-S1](../stories/2-ready-for-dev/PY4-S1-server-adapter-capture-and-selection.md)** *(additive, no deps)* — the server `AnalyticsAdapter` impl (capture-entry = enqueue; `send`/consent/library-id) + the factory `config.key`→build+inject the server adapter (unkeyed ⇒ existing `NoopAdapter`). Thin: the provider already mints/gates/types.
+- **[PY4-S2](../stories/2-ready-for-dev/PY4-S2-batch-consumer-thread.md)** *(additive, depends on S1)* — bounded queue + background daemon `Thread` (block-with-timeout `get`), size-OR-interval flush, **drop-OLDEST** (⚠ the cross-port pin — NOT posthog-python's drop-newest; **this story OWNS the named drop-oldest test**), `max_batch_size` slicing, `sync_mode` inline bypass, `daemon=True`+`atexit`.
+- **[PY4-S3](../stories/2-ready-for-dev/PY4-S3-wire-mapper-and-transport.md)** *(additive, depends on S2)* — adapter-internal wire-mapper (`dedupe_id`→top-level `uuid` NOT `$insert_id`; `internal_kind`+wrapper keys→`$set`/`$set_once`/`$groups` nested) + `{api_key,batch,sent_at}` gzip envelope + injectable transport on the ADAPTER CONSTRUCTOR (architect: gzip stays below the seam `send(str)`); all wire vocab `_WIRE_*`-confined.
+- **[PY4-S4](../stories/2-ready-for-dev/PY4-S4-reliability-and-lifecycle.md)** *(additive, depends on S3)* — retry classification (transient-only `{network,0,408,429,5xx}`; non-413 4xx dropped), **fetch-failure normalization at the transport boundary** (no raw exception on the neutral surface), 413-halving, `flush()` force-drain + `shutdown()` timeout-drain+quiesce; unkeyed no-op + opt-out suppression (already shipped).
+
+Build topo order: `PY4-S1 → PY4-S2 → PY4-S3 → PY4-S4`.
+
+**Module map** (a new `server/` submodule under `analytics_kit`, or flat `server_adapter.py`/`consumer.py`/`wire_mapper.py` — builder's layout call; fills no PY1-skeleton file since capture lives in the new adapter, not the empty `client.py`):
+
+- the server `AnalyticsAdapter` impl — capture-entry/enqueue + lifecycle/consent/library-id (S1)
+- the batch queue + daemon-thread consumer (S2)
+- the wire-mapper (`NeutralEvent`→wire, `_WIRE_*`-confined) + the adapter-owned `Transport` Protocol + default transport (S3)
+- the reliability layer — retry/normalization/413/drain (S4, folded into the adapter/transport)
+- `config.py` extended additively (ingest endpoint/host/path, `flush_at`/`flush_interval`/`max_batch_size`/`max_queue_size`, `shutdown_timeout`, retry knobs); `factory.py` gains the `config.key`→server-adapter wiring via the target module
 
 ## Out of scope
 
