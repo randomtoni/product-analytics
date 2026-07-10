@@ -11,12 +11,15 @@ allowlist, config-selected factory) is implemented by the Python roadmap cycle.
 """
 
 from .adapter import AnalyticsAdapter, ConsentState, NeutralResponse
+from .config import AnalyticsConfig
+from .factory import create_analytics
 from .neutral_event import (
     InternalKind,
     NeutralEvent,
     NeutralProperties,
     NeutralTraits,
 )
+from .noop import NoopAdapter
 from .ports import FeatureFlagPort, SessionReplayPort
 from .provider import Analytics
 
@@ -34,4 +37,7 @@ __all__ = [
     "FeatureFlagPort",
     "SessionReplayPort",
     "Analytics",
+    "AnalyticsConfig",
+    "NoopAdapter",
+    "create_analytics",
 ]

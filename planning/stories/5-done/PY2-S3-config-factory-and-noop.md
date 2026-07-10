@@ -57,4 +57,12 @@ The config-selected factory is bar B ("new-app adoption = config only, zero libr
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-09.
+
+- **Files added:** `python/src/analytics_kit/config.py`, `factory.py`, `noop.py`, `tests/test_config_factory_noop.py`
+- **Files changed:** `python/src/analytics_kit/__init__.py` (re-exports `create_analytics`, `NoopAdapter`, `AnalyticsConfig`)
+- **New public API:** `AnalyticsConfig` (Pydantic, `extra="forbid"` — unknown keys raise loudly; `key`/`super_properties`), `create_analytics(config: AnalyticsConfig | Mapping[str, object], adapter=None)`, `NoopAdapter` (whole-stack silent null object over the full capture-only SPI)
+- **Tests added:** config/factory/noop suite incl. bar-B config-only silent-stack proof + unknown-key `ValidationError` tests
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** whole-stack no-op negative-controlled (nothing crosses the seam; silence is null-object not a `disabled` flag), full-SPI conformance proven at type level. Two suggestions **addressed inline before ship**: `ConfigDict(extra="forbid")` so a config typo (`super_props` vs `super_properties`) fails loudly instead of degrading to no-op (matches the project's loud-failure ethos); tightened `create_analytics` signature from `Any` to `AnalyticsConfig | Mapping[str, object]` (restores call-site type-checking).
+- **Cross-story seams exposed:** the factory is the config→provider wiring point — **S4**'s sync-client/thread scaffolding plugs into the adapter the factory injects. Two-piece target selection (**PY4**/**PY5** read `config.key` to build+inject their own adapter, falling back to `NoopAdapter`; the seam never imports a target). `AnalyticsConfig` extends **additively** (PY3 taxonomy/allowlist, PY4 ingest/queue, PY5 query) — `extra="forbid"` stays compatible since new fields become known.
