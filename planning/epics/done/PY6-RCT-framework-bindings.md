@@ -1,6 +1,6 @@
 ---
 id: PY6-RCT-framework-bindings
-status: active
+status: done
 area: react
 touches: [node]
 api_impact: additive
@@ -26,9 +26,9 @@ The framework bindings are the Python analog of the React binding — the option
 
 Chain — `S1 → {S2, S3}`; S2 and S3 both depend only on S1 (parallel — the two middlewares are the same `new_context` wrapper for WSGI vs ASGI). Written to `stories/2-ready-for-dev/`. Fills the empty PY1 `integrations/` package. **The #4 provider-context mechanism is architect-locked (Option B): the context supplies distinct_id + tags at the CALL SITE via a binding-layer view — the shipped `provider.py` is NOT modified.**
 
-- **[PY6-S1](../stories/2-ready-for-dev/PY6-S1-context-core-and-scoped-view.md)** *(additive, no deps)* — the `contextvars` core (`new_context()` @contextmanager + current-context accessor carrying `distinct_id` + tags + `add_tag`) + the `@scoped` decorator + the context-aware capture path (resolves distinct_id = arg-else-context, raises if neither; merges tags `super_properties → tags → call_properties`, tags gated). `provider.py` untouched.
-- **[PY6-S2](../stories/2-ready-for-dev/PY6-S2-django-middleware.md)** *(additive, depends on S1)* — the Django (WSGI) middleware opening a `new_context()` per request, lazy `try/except ImportError` behind `[django]`, consumer tags only (no library-computed metadata).
-- **[PY6-S3](../stories/2-ready-for-dev/PY6-S3-asgi-fastapi-middleware.md)** *(additive, depends on S1)* — the ASGI/FastAPI middleware (same `new_context` wrapper, `contextvars` is task-local ⇒ async-safe), lazy import behind `[fastapi]`; the sync client works inside an async server (delivery thread-offloaded).
+- **[PY6-S1](../../stories/5-done/PY6-S1-context-core-and-scoped-view.md)** *(done — `ca3d4ea`)* — the task-local `contextvars` core (`new_context()` + `ContextScope` + `add_tag`) + async-aware `@scoped` + the `context(analytics) -> ScopedContextView` capture path (Option B — resolves distinct_id = arg-else-context-else-raise; tags gated through the UNMUTATED provider; rejects posthog's personless-UUID). `provider.py` untouched (verified). Tag-gate-bypass proven impossible; async-`@scoped` negative-controlled.
+- **[PY6-S2](../../stories/5-done/PY6-S2-django-middleware.md)** *(done — `1559c78`)* — the Django WSGI `RequestContextMiddleware`, lazy `try/except ImportError` behind `[django]` (framework-free bare import proven via meta-path block), consumer-tags-only (the `_build_tags` flat bag NOT ported). `django` in the dev group; extras untouched.
+- **[PY6-S3](../../stories/5-done/PY6-S3-asgi-fastapi-middleware.md)** *(done — `55ece82`)* — the pure ASGI-3 `RequestContextASGIMiddleware` (framework-free — even stronger absence proof; task-local `contextvars` ⇒ async-safe, proven with an interleaved concurrent-request handshake). The `async def __call__` is the ASGI protocol handler, NOT an async client (fence held — sync client, thread-offloaded delivery).
 
 Build topo order: `PY6-S1 → PY6-S2` and `PY6-S1 → PY6-S3` (S2/S3 parallel).
 
