@@ -13,6 +13,17 @@ import { record, type eventWithTime } from 'rrweb';
 // threads these buffered events onto the replay delivery path.
 export type ReplayEvent = eventWithTime;
 
+// The DOM-content masking policy the recorder applies (E14-S4) — the NEW privacy surface,
+// orthogonal to the E3/E4 property-key allowlist. Neutral field names that the shell derives
+// from `config.sessionReplay.masking`; this module is the ONLY place they map onto rrweb's
+// own `record()` option names, keeping rrweb vocabulary confined to the body. Absent ⇒ the
+// privacy-safe default (`maskAllInputs: true`).
+export interface ReplayMaskingOptions {
+  maskAllInputs?: boolean;
+  maskTextSelector?: string;
+  blockSelector?: string;
+}
+
 // Handle returned by starting a recording: a stop function plus the live snapshot buffer
 // the started recording appends every emitted event to. S4 drains `buffer` on its flush
 // cadence; S2 only holds it (no delivery). Adapter-internal.
@@ -22,16 +33,20 @@ export interface ReplayRecordingHandle {
 }
 
 // Begin an rrweb recording. Each emitted DOM event is appended to the returned handle's
-// buffer (S4 owns the drain/flush; S2 only accumulates). Returns undefined when rrweb
-// fails to initialize (no DOM, unsupported environment) — the caller treats that as an
-// inactive start. Masking options (`maskAllInputs`/`maskTextSelector`/`blockSelector`)
-// are threaded here in S4; S2 records with rrweb's defaults, applying no masking config.
-export function startRecording(): ReplayRecordingHandle | undefined {
+// buffer (S4 owns the drain/flush). Returns undefined when rrweb fails to initialize (no
+// DOM, unsupported environment) — the caller treats that as an inactive start. The neutral
+// masking policy is mapped onto rrweb's `record()` options HERE (the rrweb option names
+// never leave this module); `maskAllInputs` defaults to `true` (privacy-safe) when the
+// consumer supplies no masking config.
+export function startRecording(masking?: ReplayMaskingOptions): ReplayRecordingHandle | undefined {
   const buffer: ReplayEvent[] = [];
   const stop = record({
     emit: (event) => {
       buffer.push(event);
     },
+    maskAllInputs: masking?.maskAllInputs ?? true,
+    maskTextSelector: masking?.maskTextSelector,
+    blockSelector: masking?.blockSelector,
   });
   if (stop === undefined) {
     return undefined;

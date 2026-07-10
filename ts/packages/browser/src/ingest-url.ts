@@ -3,6 +3,12 @@
 // envelope (E5-S2), not to the neutral surface, so it stays hidden in this module.
 const DEFAULT_WIRE_CAPTURE_PATH = '/batch/';
 
+// The [WIRE] path the session-replay delivery path POSTs snapshots to, appended to the
+// SAME `ingestHost` capture uses (the host is shared; only the path differs — E14-S4).
+// De-branded from the reference snapshot ingestion path; a plain (non-`$`) const, so it
+// stays adapter-internal and out of the neutral surface.
+const DEFAULT_WIRE_REPLAY_PATH = '/s/';
+
 export interface IngestUrlOptions {
   ingestHost?: string;
   ingestPath?: string;
@@ -18,14 +24,29 @@ export interface IngestUrlOptions {
 // endpoint-for-target switch + vendor-ingestion-domain defaulting all stripped):
 // an explicit host the consumer supplies, with no vendor host or region fallback.
 export function resolveIngestUrl(options: IngestUrlOptions): string | undefined {
-  if (options.ingestHost === undefined) {
+  return joinIngestUrl(options.ingestHost, options.ingestPath ?? DEFAULT_WIRE_CAPTURE_PATH);
+}
+
+// Resolve the replay-delivery URL from the SAME `ingestHost` capture uses plus the fixed
+// [WIRE] replay path — the host is shared with capture, only the path differs (E14-S4).
+// There is deliberately no consumer path override: the replay path is a fixed adapter
+// internal (unlike the capture path's `ingestPath` escape hatch), matching the epic's
+// reuse-host + fixed-replay-path decision. Returns undefined when no host is configured.
+export function resolveReplayIngestUrl(ingestHost: string | undefined): string | undefined {
+  return joinIngestUrl(ingestHost, DEFAULT_WIRE_REPLAY_PATH);
+}
+
+// Join a bare `ingestHost` origin to a [WIRE] path, normalizing the trailing slash on the
+// host and guaranteeing a leading slash on the path so the join is free of `//` and of a
+// missing separator. undefined host (or empty after trim) ⇒ no target.
+function joinIngestUrl(ingestHost: string | undefined, rawPath: string): string | undefined {
+  if (ingestHost === undefined) {
     return undefined;
   }
-  const host = options.ingestHost.trim().replace(/\/+$/, '');
+  const host = ingestHost.trim().replace(/\/+$/, '');
   if (host === '') {
     return undefined;
   }
-  const rawPath = options.ingestPath ?? DEFAULT_WIRE_CAPTURE_PATH;
   const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
   return `${host}${path}`;
 }

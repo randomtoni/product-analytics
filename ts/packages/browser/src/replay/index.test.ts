@@ -4,14 +4,21 @@ import { startRecording } from './index';
 
 // Mock rrweb's `record()` so the body's control wiring is testable without a real DOM
 // recording. The stub captures the passed `emit` (so a test can drive events into the
-// buffer) and returns a configurable stop fn / undefined (the rrweb-failed-to-init path).
+// buffer) and the full options object (so the masking tests can assert the record() options),
+// and returns a configurable stop fn / undefined (the rrweb-failed-to-init path).
+type RecordOptions = {
+  emit?: (e: unknown, isCheckout?: boolean) => void;
+  maskAllInputs?: boolean;
+  maskTextSelector?: string;
+  blockSelector?: string;
+};
 const rrwebMock = vi.hoisted(() => ({
-  record: vi.fn<(opts: { emit?: (e: unknown, isCheckout?: boolean) => void }) => (() => void) | undefined>(),
+  record: vi.fn<(opts: RecordOptions) => (() => void) | undefined>(),
   lastEmit: undefined as ((e: unknown, isCheckout?: boolean) => void) | undefined,
 }));
 
 vi.mock('rrweb', () => ({
-  record: (opts: { emit?: (e: unknown, isCheckout?: boolean) => void }) => {
+  record: (opts: RecordOptions) => {
     rrwebMock.lastEmit = opts.emit;
     return rrwebMock.record(opts);
   },
@@ -57,5 +64,48 @@ describe('startRecording rrweb body (E14-S2)', () => {
     rrwebMock.record.mockReturnValue(undefined);
 
     expect(startRecording()).toBeUndefined();
+  });
+});
+
+describe('startRecording masking → rrweb record() options (E14-S4)', () => {
+  test('defaults to maskAllInputs:true (privacy-safe) when no masking config is supplied', () => {
+    rrwebMock.record.mockReturnValue(vi.fn());
+
+    startRecording();
+
+    const opts = rrwebMock.record.mock.calls[0]![0] as {
+      maskAllInputs?: boolean;
+      maskTextSelector?: string;
+      blockSelector?: string;
+    };
+    expect(opts.maskAllInputs).toBe(true);
+    expect(opts.maskTextSelector).toBeUndefined();
+    expect(opts.blockSelector).toBeUndefined();
+  });
+
+  test('threads the neutral masking fields onto rrweb record() options', () => {
+    rrwebMock.record.mockReturnValue(vi.fn());
+
+    startRecording({ maskAllInputs: false, maskTextSelector: '.secret', blockSelector: '.pii' });
+
+    const opts = rrwebMock.record.mock.calls[0]![0] as {
+      maskAllInputs?: boolean;
+      maskTextSelector?: string;
+      blockSelector?: string;
+    };
+    // A consumer opt-out of maskAllInputs is honored; the selectors reach rrweb verbatim.
+    expect(opts.maskAllInputs).toBe(false);
+    expect(opts.maskTextSelector).toBe('.secret');
+    expect(opts.blockSelector).toBe('.pii');
+  });
+
+  test('a partial masking config keeps the maskAllInputs default true', () => {
+    rrwebMock.record.mockReturnValue(vi.fn());
+
+    startRecording({ maskTextSelector: '.only-text' });
+
+    const opts = rrwebMock.record.mock.calls[0]![0] as { maskAllInputs?: boolean };
+    // Absent maskAllInputs in a supplied masking object still defaults to the privacy-safe true.
+    expect(opts.maskAllInputs).toBe(true);
   });
 });

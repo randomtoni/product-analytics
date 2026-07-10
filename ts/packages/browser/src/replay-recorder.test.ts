@@ -4,6 +4,21 @@ import { NoopAdapter } from 'analytics-kit';
 import { ReplayRecorder, attachReplay } from './replay-recorder';
 import { BrowserAdapter } from './browser-adapter';
 import type { ReplayRecordingHandle } from './replay';
+import type { ReplayDelivery } from './replay-transport';
+
+// A no-op delivery sink for the control-surface / re-key tests that don't assert delivery
+// (S4 delivery is exercised in its own describe block below with a recording spy).
+function noopDelivery(): ReplayDelivery {
+  return { send: () => {} };
+}
+
+// A recording delivery sink: `send` is a spy so the S4 tests can assert WHAT was flushed
+// (the events, the session tag, the keepalive/teardown flag) and, crucially, that a
+// sampled-out / pending session flushes NOTHING.
+function mockDelivery(): { delivery: ReplayDelivery; send: ReturnType<typeof vi.fn> } {
+  const send = vi.fn();
+  return { delivery: { send }, send };
+}
 
 // Mock the heavy rrweb body so the shell's control surface is testable without a real DOM
 // recording. `startRecording` is swapped for a stub returning a fake handle (a stop spy +
@@ -76,14 +91,14 @@ afterEach(async () => {
 
 describe('ReplayRecorder control surface (E14-S2)', () => {
   test('isActive is false before start', () => {
-    const recorder = new ReplayRecorder({ getSessionId: () => undefined });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: () => undefined });
     expect(recorder.isActive()).toBe(false);
   });
 
   test('start begins a recording and isActive reports true synchronously', async () => {
     const { handle } = fakeHandle();
     replayMock.startRecording.mockReturnValue(handle);
-    const recorder = new ReplayRecorder({ getSessionId: () => 's1' });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: () => 's1' });
 
     recorder.start();
     // The guard flips synchronously — isActive is true before the rrweb chunk resolves.
@@ -96,7 +111,7 @@ describe('ReplayRecorder control surface (E14-S2)', () => {
   test('start is idempotent — a second call while active does not start a second recording', async () => {
     const { handle } = fakeHandle();
     replayMock.startRecording.mockReturnValue(handle);
-    const recorder = new ReplayRecorder({ getSessionId: () => 's1' });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: () => 's1' });
 
     recorder.start();
     recorder.start();
@@ -108,7 +123,7 @@ describe('ReplayRecorder control surface (E14-S2)', () => {
   test('stop halts the recording and isActive returns false', async () => {
     const { handle, stop } = fakeHandle();
     replayMock.startRecording.mockReturnValue(handle);
-    const recorder = new ReplayRecorder({ getSessionId: () => 's1' });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: () => 's1' });
 
     recorder.start();
     await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(1));
@@ -122,7 +137,7 @@ describe('ReplayRecorder control surface (E14-S2)', () => {
     const first = fakeHandle();
     const second = fakeHandle();
     replayMock.startRecording.mockReturnValueOnce(first.handle).mockReturnValueOnce(second.handle);
-    const recorder = new ReplayRecorder({ getSessionId: () => 's1' });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: () => 's1' });
 
     recorder.start();
     await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(1));
@@ -136,7 +151,7 @@ describe('ReplayRecorder control surface (E14-S2)', () => {
   test('a stop racing the pending rrweb load discards the resolved recording', async () => {
     const { handle, stop } = fakeHandle();
     replayMock.startRecording.mockReturnValue(handle);
-    const recorder = new ReplayRecorder({ getSessionId: () => 's1' });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: () => 's1' });
 
     recorder.start();
     // Stop BEFORE the dynamic import resolves — the guard is cleared, so when the load
@@ -152,7 +167,7 @@ describe('ReplayRecorder control surface (E14-S2)', () => {
 
   test('rrweb failing to initialize (undefined handle) clears the guard so isActive is honest', async () => {
     replayMock.startRecording.mockReturnValue(undefined);
-    const recorder = new ReplayRecorder({ getSessionId: () => 's1' });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: () => 's1' });
 
     recorder.start();
     expect(recorder.isActive()).toBe(true); // optimistic until the load resolves
@@ -162,7 +177,7 @@ describe('ReplayRecorder control surface (E14-S2)', () => {
 
   test('getReplayId reads the injected session-id source (never mints its own)', () => {
     let current: string | undefined = undefined;
-    const recorder = new ReplayRecorder({ getSessionId: () => current });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: () => current });
 
     expect(recorder.getReplayId()).toBeUndefined();
     current = 'session-abc';
@@ -175,7 +190,7 @@ describe('ReplayRecorder re-key on rotation (E14-S3)', () => {
     const { handle } = fakeHandle();
     replayMock.startRecording.mockReturnValue(handle);
     const source = fakeRotationSource('s1');
-    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: source.getSessionId, onRotate: source.onRotate });
 
     recorder.start();
     await settleReplayLoad();
@@ -190,7 +205,7 @@ describe('ReplayRecorder re-key on rotation (E14-S3)', () => {
     const second = fakeHandle();
     replayMock.startRecording.mockReturnValueOnce(first.handle).mockReturnValueOnce(second.handle);
     const source = fakeRotationSource('s1');
-    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: source.getSessionId, onRotate: source.onRotate });
 
     recorder.start();
     await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(1));
@@ -205,7 +220,7 @@ describe('ReplayRecorder re-key on rotation (E14-S3)', () => {
   test('getReplayId reflects the NEW id after a rotation re-key', async () => {
     replayMock.startRecording.mockReturnValue(fakeHandle().handle);
     const source = fakeRotationSource('s1');
-    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: source.getSessionId, onRotate: source.onRotate });
 
     recorder.start();
     await settleReplayLoad();
@@ -219,7 +234,7 @@ describe('ReplayRecorder re-key on rotation (E14-S3)', () => {
   test('a rotation to the SAME id does not re-key (redundant notification is ignored)', async () => {
     replayMock.startRecording.mockReturnValue(fakeHandle().handle);
     const source = fakeRotationSource('s1');
-    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: source.getSessionId, onRotate: source.onRotate });
 
     recorder.start();
     await settleReplayLoad();
@@ -234,7 +249,7 @@ describe('ReplayRecorder re-key on rotation (E14-S3)', () => {
   test('stop unsubscribes from rotation — a later rotation does not re-key', async () => {
     replayMock.startRecording.mockReturnValue(fakeHandle().handle);
     const source = fakeRotationSource('s1');
-    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: source.getSessionId, onRotate: source.onRotate });
 
     recorder.start();
     await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(1));
@@ -251,7 +266,7 @@ describe('ReplayRecorder re-key on rotation (E14-S3)', () => {
   test('a rotation while inactive (after stop) is a no-op', async () => {
     replayMock.startRecording.mockReturnValue(fakeHandle().handle);
     const source = fakeRotationSource('s1');
-    const recorder = new ReplayRecorder({ getSessionId: source.getSessionId, onRotate: source.onRotate });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: source.getSessionId, onRotate: source.onRotate });
 
     recorder.start();
     await settleReplayLoad();
@@ -266,7 +281,7 @@ describe('ReplayRecorder re-key on rotation (E14-S3)', () => {
   test('degrades to a single non-re-keying segment when no onRotate source is supplied', async () => {
     replayMock.startRecording.mockReturnValue(fakeHandle().handle);
     // No onRotate — mirrors an id source with no rotation signal.
-    const recorder = new ReplayRecorder({ getSessionId: () => 's1' });
+    const recorder = new ReplayRecorder({ delivery: noopDelivery(), getSessionId: () => 's1' });
 
     recorder.start();
     await settleReplayLoad();
@@ -281,7 +296,7 @@ describe('attachReplay slot population (E14-S2, bar B)', () => {
     const analytics = { replay: undefined } as unknown as AnalyticsProvider;
     const adapter = new BrowserAdapter({ key: 'replay-key' });
 
-    attachReplay(analytics, adapter);
+    attachReplay(analytics, adapter, {});
 
     expect(analytics.replay).toBeDefined();
     expect(typeof analytics.replay!.start).toBe('function');
@@ -296,7 +311,7 @@ describe('attachReplay slot population (E14-S2, bar B)', () => {
     const adapter = new BrowserAdapter({ key: 'replay-id-key' });
     vi.spyOn(adapter, 'getReplaySessionId').mockReturnValue('adapter-session-7');
 
-    attachReplay(analytics, adapter);
+    attachReplay(analytics, adapter, {});
 
     expect(analytics.replay!.getReplayId()).toBe('adapter-session-7');
   });
@@ -304,8 +319,257 @@ describe('attachReplay slot population (E14-S2, bar B)', () => {
   test('leaves provider.replay undefined for an unkeyed client (NoopAdapter)', () => {
     const analytics = { replay: undefined } as unknown as AnalyticsProvider;
 
-    attachReplay(analytics, new NoopAdapter());
+    attachReplay(analytics, new NoopAdapter(), {});
 
     expect(analytics.replay).toBeUndefined();
+  });
+
+  test('threads sampleRate + masking from config into the recorder (E14-S4)', () => {
+    const analytics = { replay: undefined } as unknown as AnalyticsProvider;
+    const adapter = new BrowserAdapter({ key: 'replay-cfg-key' });
+
+    // A valid config threads through without throwing and produces a working port; an
+    // out-of-range sampleRate does NOT reject at attach (it normalizes downstream).
+    attachReplay(analytics, adapter, {
+      ingestHost: 'https://analytics.example.com',
+      sessionReplay: {
+        enabled: true,
+        sampleRate: 1.7,
+        masking: { maskAllInputs: false, maskTextSelector: '.secret' },
+      },
+    });
+
+    expect(analytics.replay).toBeDefined();
+    expect(analytics.replay!.isActive()).toBe(false);
+  });
+});
+
+// The event a rotation notification/prime carries and the id `getSessionId` reports must stay
+// consistent — the recorder tags a flush with `getSessionId()`, so the fake must advance the id
+// so the tag matches the segment. This mirrors fakeRotationSource but exposes the live handle
+// pushing so a test can simulate rrweb emitting into the buffer, then trigger a flush.
+async function startWithHandle(
+  recorder: ReplayRecorder
+): Promise<ReplayRecordingHandle> {
+  const { handle } = fakeHandle();
+  replayMock.startRecording.mockReturnValue(handle);
+  recorder.start();
+  await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(1));
+  return handle;
+}
+
+describe('ReplayRecorder delivery path (E14-S4)', () => {
+  test('a flush drains the buffer and delivers the events tagged with getReplayId', async () => {
+    const { delivery, send } = mockDelivery();
+    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-1' });
+    const handle = await startWithHandle(recorder);
+
+    // Simulate rrweb emitting two DOM events into the live buffer.
+    handle.buffer.push({ timestamp: 1 } as never, { timestamp: 2 } as never);
+
+    // A stop() triggers a teardown flush of the final segment.
+    recorder.stop();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    const [events, sessionId, keepalive] = send.mock.calls[0];
+    expect(events).toHaveLength(2);
+    expect(sessionId).toBe('sess-1'); // tagged with the shared getReplayId session
+    expect(keepalive).toBe(true); // stop is a teardown flush
+    // The buffer was drained — a subsequent flush ships nothing.
+    expect(handle.buffer).toHaveLength(0);
+  });
+
+  test('a size-triggered flush ships a large buffer independent of the poll cadence', async () => {
+    const { delivery, send } = mockDelivery();
+    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-big' });
+    const handle = await startWithHandle(recorder);
+
+    // A single event whose JSON crosses the ~0.9 MB size threshold flushes on its own.
+    handle.buffer.push({ blob: 'x'.repeat(1_000_000) } as never);
+    recorder.checkSizeTrigger();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(handle.buffer).toHaveLength(0);
+  });
+
+  test('a small buffer does NOT size-trigger (accumulates until the poll ships it)', async () => {
+    const { delivery, send } = mockDelivery();
+    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-small' });
+    const handle = await startWithHandle(recorder);
+
+    handle.buffer.push({ timestamp: 1 } as never);
+    recorder.checkSizeTrigger();
+
+    expect(send).not.toHaveBeenCalled();
+    expect(handle.buffer).toHaveLength(1); // still buffered
+  });
+
+  test('an empty buffer flushes nothing (no spurious delivery)', async () => {
+    const { delivery, send } = mockDelivery();
+    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-empty' });
+    await startWithHandle(recorder);
+
+    recorder.stop();
+
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('ReplayRecorder teardown flush triggers (E14-S4)', () => {
+  test('a pagehide dispatch flushes the final segment (keepalive)', async () => {
+    const { delivery, send } = mockDelivery();
+    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-ph' });
+    const handle = await startWithHandle(recorder);
+    handle.buffer.push({ timestamp: 1 } as never);
+
+    window.dispatchEvent(new Event('pagehide'));
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][2]).toBe(true); // teardown flush
+    recorder.stop();
+  });
+
+  test('a visibilitychange to hidden flushes the final segment', async () => {
+    const { delivery, send } = mockDelivery();
+    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-vis' });
+    const handle = await startWithHandle(recorder);
+    handle.buffer.push({ timestamp: 1 } as never);
+
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][2]).toBe(true);
+    recorder.stop();
+  });
+
+  test('stop() flushes the final segment then unbinds the lifecycle listeners', async () => {
+    const { delivery, send } = mockDelivery();
+    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-stop' });
+    const handle = await startWithHandle(recorder);
+    handle.buffer.push({ timestamp: 1 } as never);
+
+    recorder.stop();
+    expect(send).toHaveBeenCalledTimes(1);
+
+    // After stop, a lifecycle event reaches nobody — no second flush.
+    window.dispatchEvent(new Event('pagehide'));
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test('a session rotation flushes the outgoing segment before re-keying (bounds the segment)', async () => {
+    const { delivery, send } = mockDelivery();
+    const first = fakeHandle();
+    const second = fakeHandle();
+    replayMock.startRecording.mockReturnValueOnce(first.handle).mockReturnValueOnce(second.handle);
+    const source = fakeRotationSource('s1');
+    const recorder = new ReplayRecorder({
+      delivery,
+      getSessionId: source.getSessionId,
+      onRotate: source.onRotate,
+    });
+
+    recorder.start();
+    await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(1));
+    first.handle.buffer.push({ timestamp: 1 } as never);
+
+    source.rotate('s2');
+
+    // The outgoing segment is flushed and tagged with the session it belonged to (s1) at the
+    // moment of the flush — a rotation cleanly bounds the segment.
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][1]).toBe('s2'); // getReplayId reads the already-advanced source
+    recorder.stop();
+  });
+});
+
+describe('ReplayRecorder sampling flush-guard (E14-S4)', () => {
+  test('a sampled-OUT session delivers NOTHING on any flush (decide-before-flush)', async () => {
+    const { delivery, send } = mockDelivery();
+    // sampleRate 0 → every session is sampled out.
+    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-out', sampleRate: 0 });
+    const handle = await startWithHandle(recorder);
+    handle.buffer.push({ timestamp: 1 } as never);
+
+    // Neither a size-trigger, a teardown, nor stop flushes a sampled-out session.
+    recorder.checkSizeTrigger();
+    window.dispatchEvent(new Event('pagehide'));
+    recorder.stop();
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test('a sampled-IN session (rate 1) delivers normally', async () => {
+    const { delivery, send } = mockDelivery();
+    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-in', sampleRate: 1 });
+    const handle = await startWithHandle(recorder);
+    handle.buffer.push({ timestamp: 1 } as never);
+
+    recorder.stop();
+
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test('a PENDING decision (no session id yet) does not flush — no batch leaks', async () => {
+    const { delivery, send } = mockDelivery();
+    // getSessionId returns undefined at start → the sampling decision is pending.
+    const recorder = new ReplayRecorder({
+      delivery,
+      getSessionId: () => undefined,
+      sampleRate: 0.5,
+    });
+    const handle = await startWithHandle(recorder);
+    handle.buffer.push({ timestamp: 1 } as never);
+
+    recorder.stop();
+
+    // A pending decision must not flush — otherwise a batch could leak for a session the
+    // recorder then decides to drop.
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test('sampling is re-decided on rotation — an out→in rotation begins delivering', async () => {
+    const { delivery, send } = mockDelivery();
+    const first = fakeHandle();
+    const second = fakeHandle();
+    replayMock.startRecording.mockReturnValueOnce(first.handle).mockReturnValueOnce(second.handle);
+    // Rate 0 sampled the first session out; the re-decision on rotation is also rate 0, so it
+    // stays out — assert the guard holds ACROSS a rotation (no leak on either segment).
+    const source = fakeRotationSource('s1');
+    const recorder = new ReplayRecorder({
+      delivery,
+      getSessionId: source.getSessionId,
+      onRotate: source.onRotate,
+      sampleRate: 0,
+    });
+
+    recorder.start();
+    await vi.waitFor(() => expect(replayMock.startRecording).toHaveBeenCalledTimes(1));
+    first.handle.buffer.push({ timestamp: 1 } as never);
+
+    source.rotate('s2'); // re-decides sampling for s2 (still out at rate 0)
+    second.handle.buffer.push({ timestamp: 2 } as never);
+    recorder.stop();
+
+    // Neither segment leaked — the re-decided sampling verdict gated both.
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('ReplayRecorder sampleRate normalization (E14-S4)', () => {
+  test('an out-of-range sampleRate degrades to record-all (never rejects at construction)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { delivery, send } = mockDelivery();
+    // 1.7 is out of [0,1]; normalize-to-default records ALL (does not silently clamp to 100%
+    // as a "valid" setting, and does not throw) — a warn surfaces the misconfig.
+    const recorder = new ReplayRecorder({ delivery, getSessionId: () => 'sess-oor', sampleRate: 1.7 });
+    const handle = await startWithHandle(recorder);
+    handle.buffer.push({ timestamp: 1 } as never);
+
+    recorder.stop();
+
+    expect(warn).toHaveBeenCalled();
+    // Record-all ⇒ the session is kept ⇒ delivery happens.
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

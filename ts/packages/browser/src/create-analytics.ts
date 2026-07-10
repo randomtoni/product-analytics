@@ -125,7 +125,7 @@ export function createAnalytics(config: AnalyticsConfig): RootAnalytics {
   registerCountry(analytics, config);
   attachFlags(analytics, adapter, config);
   if (config.sessionReplay?.enabled === true) {
-    attachReplay(analytics, adapter);
+    attachReplay(analytics, adapter, config);
   }
   return analytics;
 }

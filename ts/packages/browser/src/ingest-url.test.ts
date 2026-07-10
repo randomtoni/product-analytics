@@ -1,5 +1,5 @@
-import { expect, test } from 'vitest';
-import { resolveIngestUrl } from './ingest-url';
+import { describe, expect, test } from 'vitest';
+import { resolveIngestUrl, resolveReplayIngestUrl } from './ingest-url';
 
 test('no ingestHost resolves to undefined (an unkeyed / no-delivery client needs no target)', () => {
   expect(resolveIngestUrl({})).toBeUndefined();
@@ -58,4 +58,41 @@ test('a host with a sub-path (reverse proxy mount) keeps that path and appends t
   expect(resolveIngestUrl({ ingestHost: 'https://example.com/proxy' })).toBe(
     'https://example.com/proxy/batch/'
   );
+});
+
+describe('resolveReplayIngestUrl (E14-S4)', () => {
+  test('no ingestHost resolves to undefined (a no-delivery client needs no replay target)', () => {
+    expect(resolveReplayIngestUrl(undefined)).toBeUndefined();
+  });
+
+  test('a blank or whitespace-only host resolves to undefined', () => {
+    expect(resolveReplayIngestUrl('')).toBeUndefined();
+    expect(resolveReplayIngestUrl('   ')).toBeUndefined();
+  });
+
+  test('reuses the SAME host as capture but appends the fixed replay path (not the batch path)', () => {
+    expect(resolveReplayIngestUrl('https://analytics.example.com')).toBe(
+      'https://analytics.example.com/s/'
+    );
+    // The host is shared with capture; only the path differs — the delivery PATH stays separate.
+    expect(resolveReplayIngestUrl('https://analytics.example.com')).not.toBe(
+      resolveIngestUrl({ ingestHost: 'https://analytics.example.com' })
+    );
+  });
+
+  test('a trailing slash on the host is normalized — no double slash at the join', () => {
+    expect(resolveReplayIngestUrl('https://analytics.example.com/')).toBe(
+      'https://analytics.example.com/s/'
+    );
+  });
+
+  test('surrounding whitespace on the host is trimmed before the join', () => {
+    expect(resolveReplayIngestUrl('  https://analytics.example.com  ')).toBe(
+      'https://analytics.example.com/s/'
+    );
+  });
+
+  test('a host with a sub-path (reverse proxy mount) keeps it and appends the replay path', () => {
+    expect(resolveReplayIngestUrl('https://example.com/proxy')).toBe('https://example.com/proxy/s/');
+  });
 });
