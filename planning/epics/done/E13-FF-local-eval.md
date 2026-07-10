@@ -1,6 +1,6 @@
 ---
 id: E13-FF-local-eval
-status: active
+status: done
 area: feature-flags
 touches: [node, adapters]
 api_impact: additive
@@ -62,26 +62,30 @@ checkout (2026-07-10). See `E12-FF-flag-substrate-remote-eval.md`.
 
 ## Stories
 
-Sequence: the shared evaluator/poller substrate first (TS node), then the resolution/fallback wiring,
-then the Python analog at parity, then the ground-truth + parity proof. `depends_on`:
-`S1 → S2 → S3`; `S4` depends on `S2 + S3`.
+All four stories shipped (`stories/5-done/`). Sequence held: the shared evaluator/poller substrate (TS
+node) → the resolution/fallback wiring → the Python analog at parity → the ground-truth + parity proof.
+`depends_on`: `S1 → S2 → S3`; `S4` depends on `S2 + S3`. **Zero seam/port change across all four** — the
+E12 `FeatureFlagPort` held; local eval is a strategy branch inside the adapters behind the unchanged
+`evaluate`.
 
-- **[E13-S1](../stories/2-ready-for-dev/E13-S1-node-local-evaluator-poller.md)** *(additive, no deps)* —
-  the pure in-process `matchProperty` evaluator (rollout-hash bucketing + property operators + cohort/
-  variant matching + the two inconclusive signals) + the definition poller; adapter-internal (TS node),
-  nothing exported, no seam touch.
-- **[E13-S2](../stories/2-ready-for-dev/E13-S2-node-local-remote-resolution-fallback.md)** *(additive,
-  depends on E13-S1)* — wire the evaluator/poller into `HttpFlagAdapter.evaluate` as a strategy branch:
-  local-first, fall back to E12's shipped remote path, `onlyEvaluateLocally`/`strictLocalEvaluation`/
-  poll-interval/definitions-endpoint as adapter config; local-vs-remote indistinguishable; zero seam
-  change.
-- **[E13-S3](../stories/2-ready-for-dev/E13-S3-python-server-local-eval.md)** *(additive, depends on
-  E13-S2)* — the Python analog of S1+S2 at parity (evaluator + poller + fallback), sync-by-design, no
-  asyncio, same hash vector as S1, de-branded from `posthog-python`.
-- **[E13-S4](../stories/2-ready-for-dev/E13-S4-ground-truth-parity-proof.md)** *(additive, depends on
-  E13-S2 + E13-S3)* — ground-truth integration test diffing local-eval against a real remote eval (the
-  privileged key gates ONLY this; loopback/hash-vector path is key-less), negative controls per the PY8
-  lesson, parity-matrix update (local eval = server-target, both trees, browser-absent-by-platform).
+- **[E13-S1](../stories/5-done/E13-S1-node-local-evaluator-poller.md)** *(done — `797346e`)* — the pure
+  in-process `matchProperty` evaluator (rollout-hash bucketing + property operators + cohort/variant
+  matching + the two inconclusive signals) + the definition poller; adapter-internal (TS node), nothing
+  exported. Hash independently recomputed vs the reference — the cross-tree parity anchor.
+- **[E13-S2](../stories/5-done/E13-S2-node-local-remote-resolution-fallback.md)** *(done — `9f276dc`)* —
+  the local-first strategy branch inside the UNCHANGED `evaluate`: fall back to E12's shipped `roundTrip`
+  (ONE narrowed call for inconclusive keys), merge on the maps, no new `FlagReason`; `onlyEvaluateLocally`/
+  `strictLocalEvaluation`/poll-interval/definitions-endpoint as `FlagClientConfig` fields; local-vs-remote
+  indistinguishable. Narrowing to fallback keys is a deliberate improvement over the reference (zero POST
+  for locally-decidable flags).
+- **[E13-S3](../stories/5-done/E13-S3-python-server-local-eval.md)** *(done — `30b5724`)* — the Python
+  analog at parity (evaluator + poller + fallback), sync-by-design (no asyncio), the SAME hash vector as
+  S1 (float64-identical), de-branded from `posthog-python`. Poll daemon stoppable — no leaked thread
+  (the E12-S4 lesson).
+- **[E13-S4](../stories/5-done/E13-S4-ground-truth-parity-proof.md)** *(done — `4a3b25a`)* — the 3-layer
+  proof: loopback ground-truth over a REAL socket, the cross-tree hash anchor, a skip-if-no-key live diff;
+  negative controls PROVEN to bite (mutating the pinned variant failed both suites); parity-matrix + README
+  corrected (flags → IMPLEMENTED; replay row left for E14). Audit-not-patch — zero library-src edits.
 
 ## Out of scope
 

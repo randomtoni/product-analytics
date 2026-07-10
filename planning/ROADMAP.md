@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-10 — E12 (feature-flags substrate + remote eval) shipped + archived; E13 (local eval) next
+Last updated: 2026-07-10 — E12 + E13 shipped + archived (feature-flags COMPLETE: remote + local, both trees, hash-parity); E14 (session-replay) next
 
 ## Status
 
@@ -45,10 +45,10 @@ SOTA / `posthog-js`-capability bar.
   failure is distinguishable from a real "off") + `FlagContext` + taxonomy `flags` slot +
   config-supplied bootstrap + **remote-evaluation** adapters (browser fetch, node round-trip, Python
   server) across both trees + the React flag hook. `blocked_by: []`.
-- **[E13-FF-local-eval](epics/E13-FF-local-eval.md)** *(active)* — **local (in-process) evaluation**, the
+- **[E13-FF-local-eval](epics/done/E13-FF-local-eval.md)** *(done)* — **local (in-process) evaluation**, the
   server-shaped specialization (definition polling + `matchProperty` cohort/rollout eval + fallback),
-  TS-node + Python, **zero seam change** — the regression check that E12's port shape holds.
-  `blocked_by: [E12]`.
+  TS-node + Python, **zero seam change** — the regression check that E12's port shape holds. Shipped at
+  cross-tree hash parity behind the unchanged `evaluate`.
 
 **session-replay** (sequences after — narrower, browser-only, TS):
 
