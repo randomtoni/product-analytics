@@ -23,6 +23,7 @@ from .neutral_event import (
 from .noop import NoopAdapter
 from .ports import FeatureFlagPort, SessionReplayPort
 from .provider import Analytics
+from .server import ServerAdapter, create_server_analytics
 from .taxonomy import (
     PropDecl,
     PropType,
@@ -32,8 +33,7 @@ from .taxonomy import (
     define_taxonomy,
     derive_allowlist_from_taxonomy,
 )
-
-__version__ = "0.0.0"
+from .version import __version__
 
 __all__ = [
     "__version__",
@@ -49,7 +49,9 @@ __all__ = [
     "Analytics",
     "AnalyticsConfig",
     "NoopAdapter",
+    "ServerAdapter",
     "create_analytics",
+    "create_server_analytics",
     "enforce_allowlist",
     "ViolationPolicy",
     "define_taxonomy",

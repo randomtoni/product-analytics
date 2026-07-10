@@ -56,4 +56,12 @@ PY2 (seam) + PY3 (taxonomy/allowlist) already built the entire PROVIDER surface:
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added:** `python/src/analytics_kit/server/adapter.py` (`ServerAdapter` + `EventSink` + `_BufferSink`), `server/__init__.py` (`create_server_analytics` target-entry), `version.py`, `tests/test_server_adapter.py`
+- **Files changed:** `config.py` (+`ingest_host`/`ingest_path`), `__init__.py` (exports `ServerAdapter`, `create_server_analytics`, `__version__`)
+- **New public API:** `ServerAdapter` (implements the shipped `AnalyticsAdapter` SPI; `capture` enqueues to an injected `EventSink`), `create_server_analytics(config)` (the `config.key`→server-adapter target-entry; unkeyed ⇒ seam `NoopAdapter`, bar B), `EventSink = Callable[[NeutralEvent], None]`
+- **Tests added:** structural conformance, enqueue-without-re-minting, keyed-vs-unkeyed selection, config no-collision, neutral id/version
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — conformance has teeth (mutating a member breaks the build at the `create_analytics` injection site), the seam-import fence held (12/12; no `queue`/`threading` in fenced modules), `"granted"` default consent sound (inert SPI backing; the provider's `_opted_out` is the real gate), `send` stays string-bodied.
+- **Cross-story seams exposed:** **S2** injects a **queue-backed sink** into `ServerAdapter(sink=...)` BY CONSTRUCTION — no adapter reshaping; the `queue`/`threading`/`atexit` imports land in a NEW target module (NOT the fenced seam). **S2 (and S4) must wire `flush()`/`shutdown()` to the sink's drain** — they're empty passthroughs now, and the provider delegates straight to them. **S3**'s wire-mapper reads what `capture` enqueues (the already-minted `NeutralEvent`); the injectable `Transport` lands on the adapter constructor (gzip batch bypasses the neutral `send`). Config `ingest_host`/`ingest_path` are the endpoint the transport uses.

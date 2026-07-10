@@ -28,8 +28,11 @@ class AnalyticsConfig(BaseModel):
     ``taxonomy`` is the :func:`define_taxonomy` return value — an opaque, non-Pydantic
     object held via an ``isinstance(value, Taxonomy)`` check (``arbitrary_types_allowed``),
     so a raw dict fails at this boundary rather than with an ``AttributeError`` later.
-    Supplying a taxonomy never auto-activates the allowlist. Unknown keys are rejected
-    loudly — a config typo raises rather than silently degrading.
+    Supplying a taxonomy never auto-activates the allowlist. ``ingest_host``/``ingest_path``
+    are the split ingest-endpoint fields the server target reads (a host and a path, never a
+    single combined endpoint); there is no vendor default, so an absent ``ingest_host`` is a
+    consumer misconfiguration. Unknown keys are rejected loudly — a config typo raises rather
+    than silently degrading.
     """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -40,3 +43,5 @@ class AnalyticsConfig(BaseModel):
     allowlist: list[str] | None = None
     on_violation: ViolationPolicy = "throw"
     taxonomy: Taxonomy | None = None
+    ingest_host: str | None = None
+    ingest_path: str | None = None
