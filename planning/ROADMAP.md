@@ -36,9 +36,49 @@ SOTA / `posthog-js`-capability bar.
 - **session-replay** — implement `SessionReplayPort`: DOM capture. **Browser-shaped, TS-only in practice**
   (no server analog), so it advances a narrower slice and **sequences after** feature-flags.
 
-**Epics: not yet drafted.** `/roadmap promote` (or a direct PM dispatch) drafts each area's epics —
-architect-consulted against the `posthog-js` reference for load-bearing shape — before
-`/implement-epics all` builds them in `blocked_by` dependency order.
+### Epics
+
+**feature-flags** (sequences first — broadest surface, both trees):
+
+- **[E12-FF-flag-substrate-remote-eval](epics/E12-FF-flag-substrate-remote-eval.md)** — the neutral
+  `FeatureFlagPort` (async-first snapshot model) + `FlagContext` + taxonomy `flags` slot +
+  config-supplied bootstrap + **remote-evaluation** adapters (browser fetch, node round-trip, Python
+  server) across both trees + the React flag hook. `blocked_by: []`.
+- **[E13-FF-local-eval](epics/E13-FF-local-eval.md)** — **local (in-process) evaluation**, the
+  server-shaped specialization (definition polling + `matchProperty` cohort/rollout eval + fallback),
+  TS-node + Python, **zero seam change** — the regression check that E12's port shape holds.
+  `blocked_by: [E12]`.
+
+**session-replay** (sequences after — narrower, browser-only, TS):
+
+- **[E14-SR-session-replay](epics/E14-SR-session-replay.md)** — the neutral `SessionReplayPort`
+  (`start`/`stop`/`isActive`/`getReplayId`) + config-only adoption (sampling + privacy masking) +
+  rrweb-behind-the-adapter recorder (separate entrypoint) + session/event linkage + own snapshot
+  delivery path. **Python: N-A-BY-PLATFORM** (slot permanently `None` — a final documented boundary).
+  `blocked_by: []`.
+
+**Dependency graph:** `E12 → E13` (E13 needs E12's shipped port); `E14` is independent. A valid build
+order: **E12 → E13 → E14** (sequence flags before replay per the NOW framing; E14 could run in parallel
+with E13 but is scheduled after for a clean per-area push).
+
+**Exit criteria (cycle closes when all hold):** both ports finished additively on the seam with zero
+frozen-`AnalyticsProvider`-pin disturbance; **bar A** (provider-swap = one adapter, zero consumer
+change) and **bar B** (new-app = config only, zero library change) re-proven for flags (both trees) and
+replay (TS); parity matrix updated — feature-flags present in both trees (local eval server-shaped,
+browser-absent-by-platform), session-replay N-A-BY-PLATFORM on Python (final, not pending); the standing
+neutrality + gate suite green in both trees.
+
+## Development prerequisites
+
+External setup Claude Code cannot reach — gates the integration/real-stack proof of the epic noted,
+not its unit work.
+
+- **E13 (local eval)** — a live analytics project + a **privileged (definition-reading) API key** to
+  ground-truth local-eval results against a real remote eval (the PY8 lesson: the real path, not a
+  self-consistent mock). Unit-level rule-matching tests need no key.
+- **E14 (session replay)** — a live analytics project + an **ingest key that accepts session-recording
+  (`$snapshot`) payloads** to prove replay snapshots deliver end-to-end. Unit-level recorder/masking/
+  linkage tests need no key.
 
 ## UPCOMING
 
