@@ -10,4 +10,5 @@ export {
   type AnalyticsClientContextValue,
 } from './analytics-client-context';
 export { useAnalytics } from './use-analytics';
+export { useFeatureFlags } from './use-feature-flags';
 export { usePageView, type UsePageViewOptions } from './use-page-view';
