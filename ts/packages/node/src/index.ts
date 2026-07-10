@@ -15,3 +15,13 @@ export type {
 } from './query/query-client';
 export { createQueryClient } from './query/create-query-client';
 export type { QueryClientConfig } from './query/config';
+export { createFlagClient } from './flags/create-flag-client';
+export type { FlagClientConfig } from './flags/config';
+export type {
+  FeatureFlagPort,
+  FlagContext,
+  FlagEvaluateOptions,
+  FlagSet,
+  FlagValue,
+  FlagReason,
+} from 'analytics-kit';

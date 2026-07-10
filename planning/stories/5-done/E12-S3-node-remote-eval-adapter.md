@@ -53,6 +53,18 @@ The server half of remote eval: `evaluate(context)` → a remote round-trip retu
 - **`_recordAccess` / `$feature_flag_called` is the biggest leak risk in the epic (— architect 2026-07-10):** node's snapshot fires it on read, coupling flags to the capture pipeline and carrying `$`-shapes. Confirmed OUT of v1 — the node adapter's `evaluate`/snapshot reads must NOT trigger any capture. When flag-exposure auto-capture is added later it emits through the neutral capture surface with neutral property names, `$feature/*` shapes staying behind the adapter.
 - **E13 regression check:** local eval slots definition-polling + in-process evaluation entirely behind this `evaluate` method with ZERO seam change. Keep the remote path cleanly separable so E13 adds a strategy branch inside the adapter, not a port change.
 
+> Reviewer suggestion (2026-07-10): `FlagContext.flagKeys` maps to the wire `flag_keys` `[WIRE]` const, but posthog's stateless path names it `flag_keys_to_evaluate` (`posthog-core-stateless.ts:890`). Invisible on the neutral surface (a confined const, NOT a neutrality issue), but if this adapter meets a real PostHog `/flags/` endpoint the `flagKeys` filter would be silently ignored server-side. Latent — S3 tests only hit a mock. Confirm the intended wire contract before wiring a live endpoint (a dev-prerequisite-gated proof).
+> Reviewer suggestion (2026-07-10): The neutral-error test could also assert exclusion of `token`/`distinct_id` for symmetry with the `posthog`/`flags/` exclusion. Cosmetic.
+> Reviewer note (2026-07-10): the story's `capability-presence.ts:57` pointer refers to the fernly file `ts/examples/fernly/src/capability-presence.ts`, not a node-package file — doc imprecision in the story, not a code defect.
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this once, when the story moves to stories/5-done/. Do not hand-edit. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files changed:** `ts/packages/node/src/index.ts` (`createFlagClient` + `FeatureFlagPort` re-export)
+- **Files added:** `ts/packages/node/src/flags/{create-flag-client.ts,config.ts,http-flag-adapter.ts,flag-noop.ts}` + tests `flags/{create-flag-client.test.ts,http-flag-adapter.test.ts,flag-typing.test.ts}`
+- **New public API:** `createFlagClient(config): FeatureFlagPort<TX>` (node factory, mirrors `createQueryClient`) + `FlagClientConfig` + the re-exported `FeatureFlagPort` type. `HttpFlagAdapter`/wire types stay adapter-internal.
+- **Tests added:** 27 (`create-flag-client.test.ts` 10 — factory keyed/unkeyed/keyed-endpointless-warn-once + taxonomy carry; `http-flag-adapter.test.ts` 16 — `distinctId` required throws pre-network, per-call fetch (sequential + concurrent, bodies not shared), eval-quality metadata NOT on the snapshot; `flag-typing.test.ts` 1 — `FlagClientConfig` surface pins).
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review. Reviewer re-ran node tests (221 passed), confirmed the S2 in-flight-coalescing bug is NOT copied (per-call fetch genuinely asserted), `distinctId` throws pre-network with a neutral message, `FrozenNodeMembers` untouched, and eval-quality metadata (`errorsWhileComputing`/`quotaLimited`/`requestId`) excluded from the snapshot. 2 suggestions + 1 doc-note captured above.
+- **Cross-story seams exposed:** S4 (Python analog) — Python attaches via the `Analytics.flags` SLOT (not a factory), but the SERVER semantics carry over verbatim: `distinct_id` REQUIRED + validated (throw pre-network, neutral error), `on_change` fires-once, fetch-per-call (do NOT share a wire body across differing contexts). S6 (proof) — node bar-A swaps the standalone `createFlagClient` (unkeyed ⇒ `flag-noop` null-object). E13 — the remote path is cleanly separable; local eval adds a strategy branch INSIDE the adapter, ZERO seam/port change.
