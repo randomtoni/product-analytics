@@ -37,7 +37,9 @@ from .query import (
     RetentionSpec,
     TrendSpec,
     UniqueCountSpec,
+    WarehouseQueryAdapter,
     create_query_client,
+    create_warehouse_query_adapter,
 )
 from .server import (
     BatchConsumer,
@@ -100,4 +102,6 @@ __all__ = [
     "QueryClientConfig",
     "create_query_client",
     "QueryNoop",
+    "WarehouseQueryAdapter",
+    "create_warehouse_query_adapter",
 ]

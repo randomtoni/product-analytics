@@ -22,6 +22,7 @@ from .client import (
 from .config import QueryClientConfig
 from .factory import create_query_client
 from .noop import QueryNoop
+from .warehouse_adapter import WarehouseQueryAdapter, create_warehouse_query_adapter
 
 __all__ = [
     "AnalyticsQueryClient",
@@ -38,4 +39,6 @@ __all__ = [
     "QueryClientConfig",
     "create_query_client",
     "QueryNoop",
+    "WarehouseQueryAdapter",
+    "create_warehouse_query_adapter",
 ]

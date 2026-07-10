@@ -50,4 +50,13 @@ A second query backend that satisfies `AnalyticsQueryClient` unchanged — provi
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added:** `python/src/analytics_kit/query/warehouse_adapter.py` (`WarehouseQueryAdapter` + `create_warehouse_query_adapter` + documented per-method SQL mapping), `tests/test_warehouse_query_adapter.py`
+- **Files changed:** `query/__init__.py` + `__init__.py` (top-level export of the warehouse adapter — the constructable-not-config-selected extension point)
+- **New public API:** `WarehouseQueryAdapter`, `create_warehouse_query_adapter` (a typed sync-`def` stub satisfying `AnalyticsQueryClient`, raising a neutral not-implemented error)
+- **Tests added:** `test_both_query_adapters_satisfy_one_protocol_unchanged` (the consolidated bar-A proof — BOTH `Http` + `Warehouse` adapters through the `_conforms` sink) + warehouse conformance/sync/neutral-error/role-name/SQL-mapping-neutrality tests
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — bar-A proof **negative-controlled 3 ways** (`async def` / dropped member / wrong return → all fail at `_conforms`; the PY5-S1 Protocol is UNTOUCHED — it didn't move for a second backend). The SQL-mapping docstring dropped HogQL/Postgres/DuckDB/JSONB from the TS reference — a neutrality IMPROVEMENT (adapt, don't copy). Top-level warehouse export **endorsed**: the config-selected `HttpQueryAdapter` stays internal (a consumer never constructs it — hiding it protects the config seam), the not-selected warehouse adapter must be reachable to be usable (watch-item: retreat it to `query/`-only if config-driven HTTP↔warehouse selection lands later).
+> Reviewer suggestion (2026-07-10): cosmetic — one test line (`test_warehouse_query_adapter.py:113`) is 101 chars vs `line-length=100`; `ruff check` passes (E501 not enforced), so gates are legitimately green. `uv run ruff format` for consistency. (Improvement-pass.)
+- **Cross-story seams exposed:** PY5 query-client is COMPLETE — S1 (neutral read Protocol + specs + result + config + factory + no-op) → S2 (real HTTP backend, all wire vocab `_WIRE_*`-sealed) → S3 (a second structurally-unrelated backend satisfies the same UNMOVED Protocol). Both bars proven with teeth-bearing executable proofs. PY7's example exercises the query snapshot surface; PY8 audits it vs TS E8.
