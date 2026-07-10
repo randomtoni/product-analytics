@@ -5,11 +5,10 @@ implementation under [`../ts/`](../ts/); the two stay at **capability parity** �
 TS surface exposes must be reachable here, adapted idiomatically (server-shaped: a plain client +
 framework bindings; **no browser/DOM target**).
 
-**Status: scaffold.** The vendor-neutral seam is built by the Python roadmap cycle
-(architect-consulted, de-branded from `posthog-python`). Nothing here is implemented yet beyond the
-package skeleton — the seam design (`Protocol`s for contracts, Pydantic at boundaries, a typed
-taxonomy, the consumer-supplied allowlist, a config-selected factory) is deliberately deferred to
-that cycle.
+**Status: scaffold.** The vendor-neutral seam is built by the Python roadmap cycle. Nothing here is
+implemented yet beyond the package skeleton — the seam design (`Protocol`s for contracts, Pydantic
+at boundaries, a typed taxonomy, the consumer-supplied allowlist, a config-selected factory) is
+deliberately deferred to that cycle.
 
 ## Toolchain
 

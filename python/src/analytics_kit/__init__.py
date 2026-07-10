@@ -7,8 +7,7 @@ here, adapted idiomatically (server-shaped: a plain client + framework bindings,
 concerns).
 
 Scaffold only. The vendor-neutral seam (provider contract, adapter ``Protocol``, typed taxonomy,
-allowlist, config-selected factory) is implemented by the Python roadmap cycle — architect-consulted
-and de-branded from ``posthog-python``.
+allowlist, config-selected factory) is implemented by the Python roadmap cycle.
 """
 
 __version__ = "0.0.0"
