@@ -361,6 +361,59 @@ def test_shutdown_settles_deterministically_on_timeout_without_raising(
     assert any("some events may not have been sent" in r.message for r in caplog.records)
 
 
+def test_async_shutdown_join_timeout_settles_without_raising_and_leaks_no_thread() -> None:
+    # The async-mode counterpart: a REAL daemon thread is mid-in-flight delivery when shutdown() is
+    # called with a timeout that expires before the delivery returns. shutdown() must settle within
+    # ~the timeout (join times out, not hung) and not raise; the blocked daemon is orphaned by
+    # design. A single in-flight delivery cannot be interrupted (the sync posture) — so once the
+    # delivery is RELEASED the daemon dies and no thread leaks. Deterministic via events, no sleeps.
+    started = threading.Event()
+    release = threading.Event()
+
+    def deliver(batch: list[NeutralEvent]) -> None:
+        started.set()  # signal the daemon is inside the delivery (mid-POST analog)
+        assert release.wait(timeout=5.0), "the delivery was never released"
+
+    # flush_at=1 ⇒ the daemon picks up the single event and enters the (blocking) delivery, leaving
+    # the buffer empty; shutdown's drain finds nothing, so only the join races the short timeout.
+    consumer = BatchConsumer(
+        deliver, sync_mode=False, flush_at=1, flush_interval=1000.0, shutdown_timeout=0.1
+    )
+    try:
+        consumer.enqueue(_event("in-flight"))
+        assert started.wait(timeout=2.0), "the daemon never entered the in-flight delivery"
+
+        elapsed = _time_shutdown(consumer)
+
+        # Settled: shutdown returned bounded (near the 0.1s join timeout, not hung on the blocked
+        # delivery) without raising, and quiesced the handle. The daemon is still blocked — orphaned
+        # by design (daemon=True ⇒ it never blocks interpreter exit).
+        assert consumer._stopped is True
+        assert consumer._thread is None
+        assert elapsed < 2.0, f"shutdown hung on the in-flight delivery ({elapsed:.2f}s)"
+    finally:
+        release.set()  # let the orphaned daemon finish its delivery and die — no leaked thread
+
+    assert _await_no_consumer_thread(timeout=2.0), "the released daemon thread leaked"
+
+
+def _time_shutdown(consumer: BatchConsumer) -> float:
+    start = time.monotonic()
+    consumer.shutdown()  # must not raise
+    return time.monotonic() - start
+
+
+def _await_no_consumer_thread(*, timeout: float) -> bool:
+    """Poll (bounded) until no daemon named ``analytics-kit-consumer`` is alive — the released
+    daemon dies once its in-flight delivery returns, which is asynchronous to shutdown()."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not any(t.name == "analytics-kit-consumer" for t in threading.enumerate()):
+            return True
+        time.sleep(0.01)
+    return not any(t.name == "analytics-kit-consumer" for t in threading.enumerate())
+
+
 def test_double_shutdown_is_idempotent() -> None:
     consumer = BatchConsumer(
         create_send_batch(_config(), _ScriptedTransport([200]), wait=_CountingWait()),
