@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
+from .allowlist import ViolationPolicy
+
 
 class AnalyticsConfig(BaseModel):
     """The consumer-supplied configuration the factory parses.
@@ -20,6 +22,8 @@ class AnalyticsConfig(BaseModel):
     ``sync_mode`` selects the delivery posture: ``True`` delivers inline (no background
     thread); ``False`` (default) offloads delivery to a background daemon thread. The flag
     is the contract only — both delivery paths are wired in the server-capture cycle.
+    ``allowlist`` is the consumer-supplied payload allowlist (``None`` ⇒ inactive; an
+    explicit empty list ⇒ allow-nothing); ``on_violation`` selects the enforcement policy.
     Unknown keys are rejected loudly — a config typo raises rather than silently degrading.
     """
 
@@ -28,3 +32,5 @@ class AnalyticsConfig(BaseModel):
     key: str | None = None
     super_properties: dict[str, object] | None = None
     sync_mode: bool = False
+    allowlist: list[str] | None = None
+    on_violation: ViolationPolicy = "throw"

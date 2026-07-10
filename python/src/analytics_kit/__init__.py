@@ -11,6 +11,7 @@ allowlist, config-selected factory) is implemented by the Python roadmap cycle.
 """
 
 from .adapter import AnalyticsAdapter, ConsentState, NeutralResponse
+from .allowlist import ViolationPolicy, enforce_allowlist
 from .config import AnalyticsConfig
 from .factory import create_analytics
 from .neutral_event import (
@@ -40,4 +41,6 @@ __all__ = [
     "AnalyticsConfig",
     "NoopAdapter",
     "create_analytics",
+    "enforce_allowlist",
+    "ViolationPolicy",
 ]

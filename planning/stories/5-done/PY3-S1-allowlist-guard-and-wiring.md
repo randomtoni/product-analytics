@@ -69,4 +69,12 @@ The payload allowlist is the library's vendor-neutral privacy contract: only con
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files changed:** `python/src/analytics_kit/allowlist.py` (filled: `enforce_allowlist` + `ViolationPolicy` + `_emit_violation` log helper), `config.py` (+`allowlist`/`on_violation`), `provider.py` (`__init__` +`allowlist`/`on_violation`, `_allowed` helper, gate wired into all 3 verbs), `factory.py` (frozenset threading), `__init__.py` (exports)
+- **Files added:** `python/tests/test_allowlist.py` (32 cases)
+- **New public API:** `enforce_allowlist(allowlist, on_violation, *bags) -> bool`, `ViolationPolicy = Literal["throw","drop-and-error-log"]`, `AnalyticsConfig.allowlist`/`on_violation`, `Analytics(..., *, allowlist=None, on_violation="throw")`. `throw` raises `ValueError`.
+- **Tests added:** standalone `enforce_allowlist` semantics + provider-gating (merged super-props, inner-traits, routing/wrapper non-gating, both policy branches ×3 verbs, consent ordering)
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — merged-super-props leak class negative-controlled (a super-prop-only off-list key throws even when `properties is None`; no leak). One suggestion resolved with **no change**: keep plain `ValueError` for `throw` (parity with TS's plain `Error`; `throw` is a terminal config error — the `drop-and-error-log` policy is the graceful path, so a catchable bespoke type would invite swallowing the signal; `AllowlistViolationError(ValueError)` can be added later non-breaking if ever needed).
+- **Cross-story seams exposed:** **S2**'s `derive_allowlist_from_taxonomy` returns a container the factory folds into the same `frozenset` the gate consumes (empty result stays ACTIVE — activation is `is not None`). **Never-auto-derive boundary preserved**: the factory reads only `config.allowlist`; a `config.taxonomy` must NOT auto-populate it — S2's derive is an explicit consumer-side call. Deliberate limitation: **top-level keys only** (nested `{"user": {"ssn": ...}}` with `user` on-list passes `ssn` — by-design, noted in `allowlist.py`).

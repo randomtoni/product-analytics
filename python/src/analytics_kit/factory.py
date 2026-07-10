@@ -30,4 +30,10 @@ def create_analytics(
     """
     parsed = AnalyticsConfig.model_validate(config)
     resolved = adapter if adapter is not None else NoopAdapter()
-    return Analytics(resolved, super_properties=parsed.super_properties)
+    allowlist = frozenset(parsed.allowlist) if parsed.allowlist is not None else None
+    return Analytics(
+        resolved,
+        super_properties=parsed.super_properties,
+        allowlist=allowlist,
+        on_violation=parsed.on_violation,
+    )

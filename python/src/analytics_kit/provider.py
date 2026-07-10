@@ -55,6 +55,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from .adapter import AnalyticsAdapter
+from .allowlist import ViolationPolicy, enforce_allowlist
 from .neutral_event import NeutralEvent, NeutralProperties, NeutralTraits
 from .ports import FeatureFlagPort, SessionReplayPort
 
@@ -78,9 +79,14 @@ class Analytics:
         self,
         adapter: AnalyticsAdapter,
         super_properties: NeutralProperties | None = None,
+        *,
+        allowlist: frozenset[str] | None = None,
+        on_violation: ViolationPolicy = "throw",
     ) -> None:
         self._adapter = adapter
         self._super_properties = super_properties
+        self._allowlist = allowlist
+        self._on_violation = on_violation
         self._opted_out = False
         self.flags = None
         self.replay = None
@@ -97,6 +103,8 @@ class Analytics:
         if self._opted_out:
             return
         merged = self._merge_super_properties(properties)
+        if not self._allowed(merged):
+            return
         self._adapter.capture(
             NeutralEvent(
                 event=event,
@@ -116,6 +124,8 @@ class Analytics:
         """
         if self._opted_out:
             return
+        if not self._allowed(traits):
+            return
         key = SET_ONCE_KEY if once else SET_KEY
         self._adapter.capture(
             NeutralEvent(
@@ -132,6 +142,8 @@ class Analytics:
         """Update properties for a group. ``group_type``/``group_key`` are routing identifiers,
         not consumer properties; only ``traits`` carries consumer-supplied values."""
         if self._opted_out:
+            return
+        if not self._allowed(traits):
             return
         self._adapter.capture(
             NeutralEvent(
@@ -175,6 +187,14 @@ class Analytics:
     def has_opted_out(self) -> bool:
         """Read the instance send switch."""
         return self._opted_out
+
+    def _allowed(self, bag: NeutralProperties | None) -> bool:
+        """Gate a consumer-supplied bag through the payload allowlist.
+
+        Returns ``True`` to proceed and ``False`` to drop (the ``drop-and-error-log`` signal);
+        under the ``throw`` policy an off-list key raises out of the verb before any mint.
+        """
+        return enforce_allowlist(self._allowlist, self._on_violation, bag)
 
     def _merge_super_properties(
         self, properties: NeutralProperties | None
