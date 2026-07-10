@@ -50,7 +50,7 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
   `Protocol` SPI + server-shaped provider contract (frozen-15 = 13 methods + `flags?`/`replay?`
   declared `None`-slots) + config-selected factory + no-op; sync-client + background-thread posture;
   Pydantic at boundaries.
-- **[PY3-CORE-taxonomy-allowlist](epics/PY3-CORE-taxonomy-allowlist.md)** — the library's OWN surface:
+- **[PY3-CORE-taxonomy-allowlist](epics/PY3-CORE-taxonomy-allowlist.md)** *(active)* — the library's OWN surface:
   payload allowlist (1:1 port) + two-layer typed taxonomy (runtime registry + best-effort static).
 - **[PY4-NODE-server-capture](epics/PY4-NODE-server-capture.md)** — server capture + set/set-group +
   `queue.Queue`/daemon-thread consumer (**drop-oldest to match TS, NOT posthog-python's drop-newest**)
