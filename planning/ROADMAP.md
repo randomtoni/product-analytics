@@ -61,7 +61,7 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
 - **[PY6-RCT-framework-bindings](epics/done/PY6-RCT-framework-bindings.md)** *(done)* — the React analog:
   `contextvars` request scope + `@scoped` decorator + **Django + ASGI/FastAPI** middleware (Flask/Celery
   deferred), lazy-imported behind extras.
-- **[PY7-CORE-example-consumer](epics/PY7-CORE-example-consumer.md)** — generic server-shaped example
+- **[PY7-CORE-example-consumer](epics/PY7-CORE-example-consumer.md)** *(active)* — generic server-shaped example
   proving bar B (config-only adoption), type-checking against the installed distribution.
 - **[PY8-OBS-parity-audit](epics/PY8-OBS-parity-audit.md)** — capability-parity matrix vs the TS
   surface (browser-N-A rows AND `flags?`/`replay?` declared-slot rows documented, no silent gap) +

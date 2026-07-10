@@ -1,11 +1,11 @@
 ---
 id: PY7-CORE-example-consumer
-status: planned
+status: active
 area: core
 touches: [node, query, react]
 api_impact: additive
 blocked_by: [PY4-NODE-server-capture, PY5-QRY-query-client, PY6-RCT-framework-bindings]
-updated: 2026-07-09
+updated: 2026-07-10
 ---
 
 # PY7-CORE-example-consumer — Generic Python example consumer (bar B proof)
@@ -24,11 +24,19 @@ The example consumer is the executable proof of **bar B — new-app adoption = c
 
 ## Stories
 
-_Tentative slice (story files not yet written):_
+Chain — `S1 → S2 → S3`; topo-sortable via `depends_on`. Written to `stories/2-ready-for-dev/`. **The bar-B gate is architect-locked as a TWO-gate model** (Python has no physical `dist` boundary like TS): a fidelity gate (mypy against the installed distribution) + an enforcement gate (an AST import-audit for public-API-only). No seam defect surfaced — the example needs zero `analytics_kit` edits.
 
-- **S1** — the example's taxonomy + config: invented product's events/traits/groups, allowlist, identity mapping, ingest + query config — all consumer-supplied, no library edit.
-- **S2** — the capture + query exercise: server capture across the taxonomy (typed + gated), a query-client snapshot returning the expected flat shape, an allowlist-rejection demonstration.
-- **S3** — the framework-binding exercise (Django or FastAPI middleware carrying a request-scoped distinct_id) + the mypy-against-installed-distribution gate that IS the bar-B proof.
+- **[PY7-S1](../stories/2-ready-for-dev/PY7-S1-example-project-taxonomy-config.md)** *(additive, no deps)* — a SEPARATE uv project at `python/examples/<product>/` (own `pyproject.toml` + `[tool.mypy] strict` + editable `[tool.uv.sources]` dep on `analytics-kit`) + the invented product's `define_taxonomy(...)` + config + a full-Protocol recording `AnalyticsAdapter` (granting consent); harness adopts via `create_analytics(config, adapter)` (keyed ⇒ recorder, unkeyed ⇒ `NoopAdapter`).
+- **[PY7-S2](../stories/2-ready-for-dev/PY7-S2-capture-query-allowlist-exercise.md)** *(additive, depends on S1)* — server-capture exercise across the taxonomy (typed + gated) + query exercise via a fake `QueryTransport` returning a flat `QueryResult` + the allowlist off-list-key loud-failure (compile-vs-runtime routing) + drop-and-error-log branch + unkeyed whole-stack no-op. All in-memory, no socket.
+- **[PY7-S3](../stories/2-ready-for-dev/PY7-S3-framework-binding-and-bar-b-gate.md)** *(additive, depends on S1+S2)* — framework-binding exercise (Django/ASGI test client carrying a request-scoped distinct_id into a recorded capture) + **the two-gate bar-B proof**: fidelity (installed-dist mypy, zero library edits) + enforcement (AST import-audit — public namespaces only, no internals/`_WIRE_*`/`_`-prefixed).
+
+Build topo order: `PY7-S1 → PY7-S2 → PY7-S3`.
+
+**Location map** (`python/examples/<invented-product>/` — a SEPARATE uv project, NOT under the main `analytics_kit`; `examples/**` is neutrality-scan-exempt):
+
+- the example's `pyproject.toml` (editable dep on `analytics-kit`, own strict mypy, `[django]`/`[fastapi]` dev-deps) + `define_taxonomy` + config module + the recording `AnalyticsAdapter` (S1)
+- the capture + query exercise + allowlist + unkeyed-no-op tests (S2)
+- the framework-binding exercise + the fidelity (installed-dist mypy) + enforcement (AST import-audit) gates (S3)
 
 ## Out of scope
 
