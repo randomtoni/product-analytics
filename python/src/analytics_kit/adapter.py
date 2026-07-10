@@ -56,7 +56,12 @@ class AnalyticsAdapter(Protocol):
         headers: dict[str, str],
         body: str | None = None,
     ) -> NeutralResponse:
-        """Neutral HTTP send primitive — transport-agnostic, no framework binding."""
+        """Neutral HTTP send primitive — transport-agnostic, no framework binding.
+
+        The neutral STRING-bodied primitive: gzipped batch delivery deliberately bypasses it
+        and runs through the target adapter's own (binary-bodied) transport path, so ``body``
+        stays ``str`` and no compression concern leaks onto the seam.
+        """
         ...
 
     def get_consent_state(self) -> ConsentState:

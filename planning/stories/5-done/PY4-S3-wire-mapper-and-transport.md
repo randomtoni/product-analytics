@@ -54,4 +54,12 @@ Turns the buffered queue into real delivery: an adapter-internal wire-mapper lay
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added:** `python/src/analytics_kit/server/wire_mapper.py` (`NeutralEvent`→wire + envelope, all `_WIRE_*`-confined), `server/transport.py` (`Transport` Protocol + default `UrllibTransport` + `create_send_batch` gzip→POST delivery), `tests/test_server_wire.py` (24), `tests/test_server_transport.py` (19)
+- **Files changed:** `server/adapter.py` (+`transport` ctor param), `adapter.py` (docstring-only note on `send`), `server/__init__.py` (real delivery callback wired into the consumer), `__init__.py` (`Transport`/`UrllibTransport` exports)
+- **New public API:** `Transport` (Protocol, `post(url, headers, body: bytes) -> NeutralResponse`), `UrllibTransport` (stdlib default), `ServerAdapter(..., transport=None)`
+- **Tests added:** wire-mapper (dedupe→uuid idempotent, no `$insert_id`, trait/group present-only nesting, internal_kind-not-name), transport (gzip + raw fallback, envelope, no-vendor-default endpoint, injected-transport, seam-`send`-bypass, `_WIRE_*` confinement)
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — **internal_kind-not-name negative-controlled** (an event named `set_traits` with `internal_kind=None` passes through untouched; the kinded one is normalized), no `requests` leak (stdlib `urllib` default), `_WIRE_*` fully confined (neutral surface grep-clean), `send` stays string-bodied. **Wire keys match TS `wire-mapper.ts` byte-for-byte** (the TS lib de-brands the `$` out — `set`/`set_once`/`group_type`/`group_key`/`group_set`/`uuid`; `$groups` was a story-prose slip the builder correctly rejected, architect-confirmed).
+- **Cross-story seams exposed:** **S4** hardens the transport failure paths at THIS boundary — `UrllibTransport.post` currently lets network/`HTTPError` propagate; S4 normalizes to `NeutralResponse(status=0/…)` (no raw exception on the neutral surface), adds transient retry `{0,408,429,5xx}` (non-413 4xx dropped) + 413-halving of the in-flight slice + fixed-delay budget, and hardens the consumer's minimal `flush`/`shutdown`. The seam is already `NeutralResponse`-shaped — S4's classifier consumes `post`'s `.status`, no reshaping. **Provenance note (for PY8):** code stays grep-clean (no `# de-branded from posthog…` comments) matching the PY1–PY3 Python convention; whether to adopt the TS `//`-provenance-comment exemption for Python `#`-comments is a PY8 scan decision.

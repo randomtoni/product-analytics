@@ -18,8 +18,15 @@ from ..provider import Analytics
 from ..version import __version__
 from .adapter import ServerAdapter
 from .consumer import BatchConsumer
+from .transport import Transport, UrllibTransport, create_send_batch
 
-__all__ = ["BatchConsumer", "ServerAdapter", "create_server_analytics"]
+__all__ = [
+    "BatchConsumer",
+    "ServerAdapter",
+    "Transport",
+    "UrllibTransport",
+    "create_server_analytics",
+]
 
 
 def create_server_analytics(
@@ -28,19 +35,23 @@ def create_server_analytics(
     """Build a server provider by config alone: keyed ⇒ the server adapter, unkeyed ⇒ silent.
 
     ``config.key`` presence drives selection. With a key, the :class:`ServerAdapter` is built
-    and injected into the provider through the seam factory. Without one, the seam factory's
-    own default applies — a whole-stack :class:`~analytics_kit.NoopAdapter`, so an unconfigured
-    environment sends nothing (bar B) with zero library change.
+    and injected into the provider through the seam factory; the batch consumer's delivery
+    callback is the gzip→POST path built from the adapter-owned transport (default stdlib
+    ``urllib``). Without a key, the seam factory's own default applies — a whole-stack
+    :class:`~analytics_kit.NoopAdapter`, so an unconfigured environment sends nothing (bar B)
+    with zero library change.
     """
     parsed = AnalyticsConfig.model_validate(config)
     if parsed.key is None:
         return create_analytics(parsed)
+    transport = UrllibTransport()
     consumer = BatchConsumer(
+        create_send_batch(parsed, transport),
         sync_mode=parsed.sync_mode,
         flush_at=parsed.flush_at,
         flush_interval=parsed.flush_interval,
         max_batch_size=parsed.max_batch_size,
         max_queue_size=parsed.max_queue_size,
     )
-    adapter = ServerAdapter(version=__version__, sink=consumer)
+    adapter = ServerAdapter(version=__version__, sink=consumer, transport=transport)
     return create_analytics(parsed, adapter=adapter)

@@ -23,7 +23,13 @@ from .neutral_event import (
 from .noop import NoopAdapter
 from .ports import FeatureFlagPort, SessionReplayPort
 from .provider import Analytics
-from .server import BatchConsumer, ServerAdapter, create_server_analytics
+from .server import (
+    BatchConsumer,
+    ServerAdapter,
+    Transport,
+    UrllibTransport,
+    create_server_analytics,
+)
 from .taxonomy import (
     PropDecl,
     PropType,
@@ -51,6 +57,8 @@ __all__ = [
     "NoopAdapter",
     "ServerAdapter",
     "BatchConsumer",
+    "Transport",
+    "UrllibTransport",
     "create_analytics",
     "create_server_analytics",
     "enforce_allowlist",

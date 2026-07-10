@@ -18,6 +18,7 @@ from typing import Protocol, runtime_checkable
 
 from ..adapter import ConsentState, NeutralResponse
 from ..neutral_event import NeutralEvent
+from .transport import Transport, UrllibTransport
 
 LIBRARY_ID = "analytics-kit"
 
@@ -54,6 +55,11 @@ class ServerAdapter:
     injected sink — it never re-mints, re-gates, or re-types (the provider did that). Consent
     is an instance-level field backing the SPI getters/setter; ``send`` stays the neutral
     string-bodied transport primitive (batch delivery is adapter-internal and bypasses it).
+
+    The gzipped batch delivery is an adapter-owned path below the neutral ``send``: the adapter
+    holds an injectable :class:`~analytics_kit.server.transport.Transport` (default stdlib
+    ``urllib``), typed against the adapter's own protocol so no vendor/library handle crosses
+    the seam. The target-entry builds the batch consumer's delivery callback from this transport.
     """
 
     def __init__(
@@ -62,10 +68,17 @@ class ServerAdapter:
         version: str,
         sink: EventSink | None = None,
         consent: ConsentState = "granted",
+        transport: Transport | None = None,
     ) -> None:
         self._sink: EventSink = sink if sink is not None else _BufferSink()
         self._version = version
         self._consent: ConsentState = consent
+        self._transport: Transport = transport if transport is not None else UrllibTransport()
+
+    @property
+    def transport(self) -> Transport:
+        """The adapter-owned transport the gzipped batch delivery POSTs through."""
+        return self._transport
 
     def capture(self, event: NeutralEvent) -> None:
         """Enqueue the already-minted event onto the delivery seam."""
