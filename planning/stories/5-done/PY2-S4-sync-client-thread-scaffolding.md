@@ -63,3 +63,11 @@ The Python client posture is locked as **sync with a background flush thread** (
 - **Commit:** `core-cycle` (message = story title)
 - **Reviewer notes:** `see Technical notes` — clean/ship; 2 suggestions captured for the improvement pass (widen the AST guard to `client.py`; clarify it fences seam modules not the package)
 - **Cross-story seams exposed:** **PY4** fills the pre-shaped hole — the existing `AnalyticsAdapter.capture`/`flush`/`shutdown` trio is the plug-point (Option A, no new SPI member); PY4 owns the `queue.Queue` + daemon `Thread` + `atexit` join + **drop-oldest** overflow (to match TS, NOT posthog-python's drop-newest) + size/interval flush + the `sync_mode` inline-vs-thread paths. The AST guard fences delivery OUT of the seam modules; PY4's adapter is where queue/threading legitimately land.
+
+## Follow-up
+
+> PY2 post-close improvement pass, 2026-07-10.
+
+- **Widened the AST seam-guard to cover `client.py`** — `_SEAM_MODULES` now includes `"client"` (the public re-export module was omitted, so a stray `import threading`/`async def` there would have slipped the fence). Negative-controlled: planting `import threading` in `client.py` fails the guard with the right message; reverted → 12 seam-guard tests pass.
+- **Clarified the guard's scope** — a `#`-comment now records that `_FORBIDDEN_IMPORTS` fences the SEAM modules only, not the whole package (PY4's delivery adapter legitimately imports `queue`/`threading`/`atexit`).
+- Touched only `python/tests/test_sync_seam.py`; gates green (mypy strict 18 · ruff · pytest 71 · neutrality clean).

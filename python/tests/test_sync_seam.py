@@ -142,8 +142,10 @@ def test_flush_returns_after_the_delegated_drain_returns() -> None:
 # --- seam guard: no threading / asyncio delivery has leaked in yet -----------------------
 
 
-_SEAM_MODULES = ("provider", "config", "factory", "noop", "adapter")
+_SEAM_MODULES = ("provider", "config", "factory", "noop", "adapter", "client")
 
+# The fence applies to the SEAM modules above ONLY, not the whole package — the later
+# server-capture cycle's delivery adapter will legitimately import queue/threading/atexit.
 _FORBIDDEN_IMPORTS = {"asyncio", "threading", "queue", "atexit", "concurrent.futures"}
 _FORBIDDEN_TOP = {name.split(".")[0] for name in _FORBIDDEN_IMPORTS}
 
