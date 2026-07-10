@@ -51,4 +51,12 @@ The epic's success bar is not "the layout exists" but "the locked toolchain runs
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-09.
+
+- **Files changed:** `python/tests/test_scaffold.py` (added `test_submodules_import` + submodule imports)
+- **Files added:** none
+- **New public API:** `none — gate/build proof only`
+- **Tests added:** `test_submodules_import` (trivial import-wiring proof for the 5 S2 submodules); existing `test_package_imports_with_version` unchanged
+- **Commit:** `core-cycle` (message = story title; find via `git log --grep`)
+- **Reviewer notes:** `none` — approved first pass; reviewer negative-controlled mypy-strict (injected an untyped def → confirmed failure) and independently rebuilt + full-extraction-grepped both artifacts
+- **Epic bar met:** locked toolchain (pytest · ruff · mypy-strict) green on the empty seam; `uv build` produces a valid wheel + sdist shipping `py.typed` + all five submodules (incl. load-bearing `integrations/__init__.py`); **both built artifacts full-extraction posthog-clean** (the real neutrality bar, not just a source grep). This is the signal that PY1 is done.
