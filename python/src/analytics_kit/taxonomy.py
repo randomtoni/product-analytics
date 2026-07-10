@@ -36,7 +36,7 @@ so taking those two from ``typing`` keeps the pattern lint-clean::
 
     from typing import Literal, overload
     from analytics_kit.taxonomy import Protocol, TypedDict, cast
-    from analytics_kit import Analytics, create_analytics
+    from analytics_kit import create_analytics
 
     class SignedUp(TypedDict):
         plan: str
