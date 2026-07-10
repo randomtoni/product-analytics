@@ -99,6 +99,7 @@ interface RemoteResponse {
 interface Loopback {
   origin: string;
   posts: Array<{ distinct_id?: string; flag_keys_to_evaluate?: string[] }>;
+  definitionPaths: string[];
   close: () => Promise<void>;
 }
 
@@ -107,9 +108,11 @@ async function startLoopback(opts: {
   remote: RemoteResponse;
 }): Promise<Loopback> {
   const posts: Loopback['posts'] = [];
+  const definitionPaths: string[] = [];
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? '';
     if (req.method === 'GET' && url.startsWith('/flags/definitions')) {
+      definitionPaths.push(url);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ flags: opts.definitions, group_type_mapping: {}, cohorts: {} }));
       return;
@@ -135,6 +138,7 @@ async function startLoopback(opts: {
   return {
     origin: `http://127.0.0.1:${port}`,
     posts,
+    definitionPaths,
     close: () =>
       new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
   };
@@ -249,6 +253,26 @@ describe('layer 1 — loopback ground-truth: local eval agrees with the remote a
     local.stop();
     poller.stop();
   });
+
+  test('the definitions GET carries send_cohorts + token on the wire (over the real socket)', async () => {
+    // The S1/S3 forward-note: confirm send_cohorts on the wire — OVER THE SOCKET, not on the poller's
+    // private URL. The definitions GET carries the send_cohorts query param (asking the endpoint to
+    // include the cohort map so a static-cohort flag is locally decidable rather than an inconclusive
+    // RequiresServerEvaluation). The loopback records the path of every definitions GET it actually
+    // serves, so we assert the query param on the REAL request the poller issued.
+    const server = await loopback({
+      definitions: KNOWN_DEFINITIONS,
+      remote: { featureFlags: GROUND_TRUTH_FLAGS, featureFlagPayloads: GROUND_TRUTH_PAYLOADS },
+    });
+    const { adapter: local, poller } = await makeLocalAdapterAgainst(server.origin);
+
+    expect(server.definitionPaths.length).toBeGreaterThanOrEqual(1);
+    expect(server.definitionPaths[0]).toContain('send_cohorts');
+    expect(server.definitionPaths[0]).toContain('token=project-token');
+
+    local.stop();
+    poller.stop();
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -256,6 +280,8 @@ describe('layer 1 — loopback ground-truth: local eval agrees with the remote a
 // ---------------------------------------------------------------------------------------------
 
 describe('negative controls — the diff is non-vacuous', () => {
+  // The zero-POST complement of layer 1's fallback-FIRED test: there one flag was inconclusive so a
+  // POST crossed the socket; here every flag decides locally so NONE does — the deliberate opposites.
   test('a fully-local-decidable set issues ZERO remote POSTs over the socket', async () => {
     const server = await loopback({
       definitions: KNOWN_DEFINITIONS,

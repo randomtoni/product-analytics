@@ -118,7 +118,7 @@ afterEach(() => {
 
 describe('local-first resolves a decidable flag with no remote round-trip', () => {
   test('a 100%-rollout flag resolves locally; the remote POST is never called for it', async () => {
-    const { adapter, posts, poller } = await makeLocalAdapter({ definitions: [LOCAL_TRUE] });
+    const { adapter, posts } = await makeLocalAdapter({ definitions: [LOCAL_TRUE] });
 
     const set = await adapter.evaluate({ distinctId: 'u_1' });
 
@@ -130,14 +130,14 @@ describe('local-first resolves a decidable flag with no remote round-trip', () =
     expect(set.reason('local_on')).toBe('resolved');
     // No POST fired — the remote path was NOT reached.
     expect(posts).toHaveLength(0);
+    // adapter.stop() delegates to poller.stop() — the adapter owns this poller.
     adapter.stop();
-    poller.stop();
   });
 });
 
 describe('an inconclusive flag falls back to the SHIPPED remote path', () => {
   test('InconclusiveMatchError ⇒ one narrowed round-trip; the merged FlagSet carries both flags', async () => {
-    const { adapter, posts, poller } = await makeLocalAdapter({
+    const { adapter, posts } = await makeLocalAdapter({
       definitions: [LOCAL_TRUE, INCONCLUSIVE],
       remote: { featureFlags: { needs_remote: 'variant_x' }, featureFlagPayloads: { needs_remote: { via: 'remote' } } },
     });
@@ -154,11 +154,10 @@ describe('an inconclusive flag falls back to the SHIPPED remote path', () => {
     expect(posts).toHaveLength(1);
     expect(posts[0].flag_keys_to_evaluate).toEqual(['needs_remote']);
     adapter.stop();
-    poller.stop();
   });
 
   test('RequiresServerEvaluation (static cohort) ALSO drives the same fallback', async () => {
-    const { adapter, posts, poller } = await makeLocalAdapter({
+    const { adapter, posts } = await makeLocalAdapter({
       definitions: [STATIC_COHORT],
       remote: { featureFlags: { static_cohort: true }, featureFlagPayloads: {} },
     });
@@ -169,13 +168,12 @@ describe('an inconclusive flag falls back to the SHIPPED remote path', () => {
     expect(posts).toHaveLength(1);
     expect(posts[0].flag_keys_to_evaluate).toEqual(['static_cohort']);
     adapter.stop();
-    poller.stop();
   });
 });
 
 describe('onlyEvaluateLocally suppresses the fallback', () => {
   test('an inconclusive flag resolves to its degraded neutral state, no round-trip fires', async () => {
-    const { adapter, posts, poller } = await makeLocalAdapter({
+    const { adapter, posts } = await makeLocalAdapter({
       definitions: [LOCAL_TRUE, INCONCLUSIVE],
       onlyLocally: true,
     });
@@ -193,11 +191,10 @@ describe('onlyEvaluateLocally suppresses the fallback', () => {
     // No POST — the remote path was suppressed.
     expect(posts).toHaveLength(0);
     adapter.stop();
-    poller.stop();
   });
 
   test('local-only with every flag decidable resolves clean (no degrade, no round-trip)', async () => {
-    const { adapter, posts, poller } = await makeLocalAdapter({
+    const { adapter, posts } = await makeLocalAdapter({
       definitions: [LOCAL_TRUE],
       onlyLocally: true,
     });
@@ -209,7 +206,6 @@ describe('onlyEvaluateLocally suppresses the fallback', () => {
     expect(set.reason('local_on')).toBe('resolved');
     expect(posts).toHaveLength(0);
     adapter.stop();
-    poller.stop();
   });
 
   test('local-only with the poller not ready resolves to degraded-empty, no round-trip', async () => {
@@ -241,7 +237,7 @@ describe('local and remote are indistinguishable to the consumer', () => {
       active: true,
       filters: { groups: [{ properties: [], rollout_percentage: 100 }], payloads: { true: { p: 1 } } },
     };
-    const { adapter: localAdapter, poller } = await makeLocalAdapter({ definitions: [localDef] });
+    const { adapter: localAdapter } = await makeLocalAdapter({ definitions: [localDef] });
     const localSet = await localAdapter.evaluate({ distinctId: 'u_1' });
 
     // A remote-only adapter resolving the same `k` = true + same payload.
@@ -260,12 +256,11 @@ describe('local and remote are indistinguishable to the consumer', () => {
     expect(localSet.degraded).toBe(remoteSet.degraded);
     expect(localSet.reason('k')).toBe(remoteSet.reason('k'));
     localAdapter.stop();
-    poller.stop();
   });
 
   test('a local fallback-that-failed reads identically to a remote failure (degraded, unresolved)', async () => {
     // Local adapter whose only flag is inconclusive and whose fallback round-trip FAILS.
-    const { adapter: localAdapter, posts, poller } = await makeLocalAdapter({
+    const { adapter: localAdapter, posts } = await makeLocalAdapter({
       definitions: [INCONCLUSIVE],
       remoteOk: false,
     });
@@ -287,7 +282,32 @@ describe('local and remote are indistinguishable to the consumer', () => {
     expect(localSet.getFlag('needs_remote')).toBe(remoteSet.getFlag('needs_remote'));
     expect(localSet.reason('needs_remote')).toBe(remoteSet.reason('needs_remote'));
     localAdapter.stop();
-    poller.stop();
+  });
+
+  test("a failed fallback WITH a bootstrap seed stamps the WHOLE merged set 'stale' — even the clean local flag", async () => {
+    // A clean local flag resolves locally; a second flag is inconclusive so it falls back. The
+    // fallback round-trip FAILS, but a bootstrap seed is present → roundTrip serves the 'stale'
+    // bootstrap snapshot. The merge adopts the remote reason/degraded WHOLESALE (snapshot-uniform),
+    // so BOTH flags — including the cleanly-resolved local one — read 'stale' + degraded. This pins
+    // the degraded-wins/snapshot-uniform contract: a partial fallback failure degrades the whole set.
+    const { adapter, posts } = await makeLocalAdapter({
+      definitions: [LOCAL_TRUE, INCONCLUSIVE],
+      remoteOk: false,
+      bootstrap: { flags: { needs_remote: 'seeded' }, payloads: { needs_remote: { via: 'seed' } } },
+    });
+
+    const set = await adapter.evaluate({ distinctId: 'u_1' });
+
+    // The fallback fired then failed; the bootstrap seed was served in its place.
+    expect(posts).toHaveLength(1);
+    expect(set.degraded).toBe(true);
+    // The whole snapshot is uniformly 'stale' — the clean local flag adopts the degraded reason too.
+    expect(set.getFlag('local_on')).toBe(true);
+    expect(set.reason('local_on')).toBe('stale');
+    // The fallback key resolves off the 'stale' bootstrap seed with the same reason.
+    expect(set.getFlag('needs_remote')).toBe('seeded');
+    expect(set.reason('needs_remote')).toBe('stale');
+    adapter.stop();
   });
 });
 
@@ -323,7 +343,7 @@ describe('flagKeys narrowing on the local pass', () => {
       active: true,
       filters: { groups: [{ properties: [], rollout_percentage: 100 }] },
     };
-    const { adapter, posts, poller } = await makeLocalAdapter({ definitions: [LOCAL_TRUE, other] });
+    const { adapter, posts } = await makeLocalAdapter({ definitions: [LOCAL_TRUE, other] });
 
     const set = await adapter.evaluate({ distinctId: 'u_1', flagKeys: ['local_on', 'ghost'] });
 
@@ -334,7 +354,6 @@ describe('flagKeys narrowing on the local pass', () => {
     expect(posts).toHaveLength(0);
     expect(set.degraded).toBe(false);
     adapter.stop();
-    poller.stop();
   });
 });
 
@@ -356,7 +375,7 @@ describe('distinctId-required + onChange contracts are unchanged under local eva
   });
 
   test('onChange fires exactly once even when the resolution used the local branch', async () => {
-    const { adapter, poller } = await makeLocalAdapter({ definitions: [LOCAL_TRUE] });
+    const { adapter } = await makeLocalAdapter({ definitions: [LOCAL_TRUE] });
     const seen: number[] = [];
     adapter.onChange(() => seen.push(1));
 
@@ -366,6 +385,5 @@ describe('distinctId-required + onChange contracts are unchanged under local eva
 
     expect(seen).toHaveLength(1);
     adapter.stop();
-    poller.stop();
   });
 });

@@ -134,6 +134,7 @@ class _FlagLoopbackServer:
 
     def __init__(self, definitions: list[dict[str, Any]], remote_body: dict[str, Any]) -> None:
         self.posts: list[dict[str, Any]] = []
+        self.definition_paths: list[str] = []
         defs_payload = json.dumps({"flags": definitions, "group_type_mapping": {}, "cohorts": {}}).encode("utf-8")
         remote_payload = json.dumps(remote_body).encode("utf-8")
         recorder = self
@@ -141,6 +142,7 @@ class _FlagLoopbackServer:
         class _Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802
                 if self.path.startswith("/flags/definitions"):
+                    recorder.definition_paths.append(self.path)
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
@@ -278,22 +280,18 @@ def test_layer1_inconclusive_flag_hits_the_real_remote_transport(loopback_factor
 
 
 def test_layer1_send_cohorts_query_rides_the_definitions_fetch_on_the_wire(loopback_factory: Any, adapter_factory: Any) -> None:
-    # The S1/S3 forward-note: confirm send_cohorts on the wire. The definitions URL carries the
-    # send_cohorts query param (which asks the endpoint to include the cohort map so a static-cohort
-    # flag is locally decidable rather than an inconclusive RequiresServerEvaluation). Assert it is on
-    # the URL the poller actually resolves against the loopback origin.
-    poller = DefinitionPoller(
-        definitions_endpoint="https://flags.example",
-        definitions_key="k",
-        token="project-token",
-        poll_interval=60.0,
-    )
-    try:
-        # The resolved URL is adapter-internal; assert the query param is present + token-scoped.
-        assert "send_cohorts=" in poller._url
-        assert "token=project-token" in poller._url
-    finally:
-        poller.stop()
+    # The S1/S3 forward-note: confirm send_cohorts on the wire — OVER THE SOCKET, not on the poller's
+    # private _url. The definitions GET carries the send_cohorts query param (which asks the endpoint
+    # to include the cohort map so a static-cohort flag is locally decidable rather than an
+    # inconclusive RequiresServerEvaluation). The loopback records the path of every definitions GET
+    # it actually serves, so we assert the query param on the REAL request the poller issued.
+    server = loopback_factory(_known_definitions(), _remote_v2_body(GROUND_TRUTH_FLAGS, GROUND_TRUTH_PAYLOADS))
+    adapter_factory["local"](server.origin)  # constructing it drives the poller's real definitions GET
+
+    assert len(server.definition_paths) >= 1
+    requested_path = server.definition_paths[0]
+    assert "send_cohorts=" in requested_path
+    assert "token=project-token" in requested_path
 
 
 # ---------------------------------------------------------------------------------------------
