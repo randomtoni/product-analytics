@@ -58,4 +58,12 @@ A server process can't POST one HTTP request per event — it buffers and flushe
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added:** `python/src/analytics_kit/server/consumer.py` (`BatchConsumer`), `tests/test_server_consumer.py` (25 cases)
+- **Files changed:** `server/adapter.py` (`LifecycleSink` protocol — adapter flush/shutdown drive the sink), `server/__init__.py` (queue-backed sink injected by construction), `config.py` (+`flush_at`/`flush_interval`/`max_batch_size`/`max_queue_size`), `__init__.py`
+- **New public API:** `BatchConsumer` (bounded deque buffer + daemon-thread block-with-timeout drain, size-OR-interval trigger, drop-OLDEST overflow, `max_batch_size` slicing, `sync_mode` bypass, minimal flush/shutdown); the 4 config knobs
+- **Tests added:** the named drop-oldest test (the pin) + no-leak/lifecycle/sync-mode/slicing/floor/trigger tests
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — **drop-oldest negative-controlled** (mutating the buffer to drop-newest, and reproducing the literal posthog-python `put(block=False)`/`except Full` trap, both FAIL the named test — reads buffered state so a flush can't mask it); thread hygiene clean (no leaked daemons, double-run); the single-armed interval deadline (notify shortens, never resets) handles a sub-threshold trickle correctly. **Contract honored** (`deque(maxlen)` = TS `batch-queue.ts:61-65` evict-oldest, NOT posthog-python drop-newest).
+- **Cross-story seams exposed:** **S3** slots the real gzip POST into the consumer's **injected delivery callback** (a stub records batches now); the wire-mapper reads the `NeutralEvent`s the consumer batches. **S4** hardens the minimal `flush`/`shutdown` (configurable `shutdown_timeout`, quiesce-flag-first, no-re-arm) — the current minimal versions are drain-once + stop-flag+join (sufficient for S2 hygiene, explicitly deferred-hardening in docstrings). `daemon=True` + `atexit`-join present.

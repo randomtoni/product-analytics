@@ -17,8 +17,9 @@ from ..factory import create_analytics
 from ..provider import Analytics
 from ..version import __version__
 from .adapter import ServerAdapter
+from .consumer import BatchConsumer
 
-__all__ = ["ServerAdapter", "create_server_analytics"]
+__all__ = ["BatchConsumer", "ServerAdapter", "create_server_analytics"]
 
 
 def create_server_analytics(
@@ -34,5 +35,12 @@ def create_server_analytics(
     parsed = AnalyticsConfig.model_validate(config)
     if parsed.key is None:
         return create_analytics(parsed)
-    adapter = ServerAdapter(version=__version__)
+    consumer = BatchConsumer(
+        sync_mode=parsed.sync_mode,
+        flush_at=parsed.flush_at,
+        flush_interval=parsed.flush_interval,
+        max_batch_size=parsed.max_batch_size,
+        max_queue_size=parsed.max_queue_size,
+    )
+    adapter = ServerAdapter(version=__version__, sink=consumer)
     return create_analytics(parsed, adapter=adapter)

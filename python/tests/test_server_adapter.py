@@ -250,6 +250,7 @@ def test_config_extra_forbid_still_bites_unknown_keys() -> None:
 def test_keyed_config_routes_to_a_server_adapter() -> None:
     provider = create_server_analytics(AnalyticsConfig(key="k1"))
     assert isinstance(provider._adapter, ServerAdapter)
+    provider.shutdown()  # join the injected consumer's daemon thread (no leak)
 
 
 def test_keyed_provider_captures_reach_the_server_adapter_sink() -> None:
@@ -283,6 +284,7 @@ def test_unkeyed_provider_is_whole_stack_silent() -> None:
 def test_target_entry_accepts_a_dict_config() -> None:
     provider = create_server_analytics({"key": "k1"})
     assert isinstance(provider._adapter, ServerAdapter)
+    provider.shutdown()  # join the injected consumer's daemon thread (no leak)
 
 
 def test_target_entry_validates_config_and_raises_on_bad_input() -> None:
@@ -291,15 +293,18 @@ def test_target_entry_validates_config_and_raises_on_bad_input() -> None:
 
 
 def test_target_entry_threads_config_through_to_the_provider() -> None:
+    # sync_mode so the injected batch consumer buffers inline (no live thread to join); the
+    # event stays buffered under the default flush_at, so its merged properties are readable.
     provider = create_server_analytics(
-        AnalyticsConfig(key="k1", super_properties={"app_version": "1.2.3"})
+        AnalyticsConfig(key="k1", super_properties={"app_version": "1.2.3"}, sync_mode=True)
     )
     adapter = provider._adapter
     assert isinstance(adapter, ServerAdapter)
 
     provider.capture("u1", "signed_up", {"plan": "pro"})
 
-    assert adapter._sink.events[0].properties == {  # type: ignore[attr-defined]
+    buffered = list(adapter._sink._buffer)  # type: ignore[attr-defined]
+    assert buffered[0].properties == {
         "app_version": "1.2.3",
         "plan": "pro",
     }

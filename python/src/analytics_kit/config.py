@@ -31,8 +31,10 @@ class AnalyticsConfig(BaseModel):
     Supplying a taxonomy never auto-activates the allowlist. ``ingest_host``/``ingest_path``
     are the split ingest-endpoint fields the server target reads (a host and a path, never a
     single combined endpoint); there is no vendor default, so an absent ``ingest_host`` is a
-    consumer misconfiguration. Unknown keys are rejected loudly — a config typo raises rather
-    than silently degrading.
+    consumer misconfiguration. ``flush_at``/``flush_interval``/``max_batch_size``/
+    ``max_queue_size`` tune the server batch consumer (buffer size trigger, interval trigger in
+    seconds, max records per delivery, max buffered events); unset uses the locked defaults.
+    Unknown keys are rejected loudly — a config typo raises rather than silently degrading.
     """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -45,3 +47,7 @@ class AnalyticsConfig(BaseModel):
     taxonomy: Taxonomy | None = None
     ingest_host: str | None = None
     ingest_path: str | None = None
+    flush_at: int = 20
+    flush_interval: float = 10.0
+    max_batch_size: int = 100
+    max_queue_size: int = 1000

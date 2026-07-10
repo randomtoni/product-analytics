@@ -14,6 +14,7 @@ server-capture cycle, dropped in by construction with no reshaping of this adapt
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Protocol, runtime_checkable
 
 from ..adapter import ConsentState, NeutralResponse
 from ..neutral_event import NeutralEvent
@@ -23,6 +24,17 @@ LIBRARY_ID = "analytics-kit"
 EventSink = Callable[[NeutralEvent], None]
 """The enqueue seam: the adapter routes ``capture`` to this callable. The default in-memory
 buffer is replaced by the queue-backed consumer later in the cycle, injected by construction."""
+
+
+@runtime_checkable
+class LifecycleSink(Protocol):
+    """A sink that also owns delivery lifecycle. When the injected sink is the batch consumer,
+    the adapter's ``flush``/``shutdown`` drive its drain; a plain-callable sink has neither and
+    the lifecycle verbs are inert (the default in-memory buffer needs no drain)."""
+
+    def flush(self) -> None: ...
+
+    def shutdown(self) -> None: ...
 
 
 class _BufferSink:
@@ -60,10 +72,15 @@ class ServerAdapter:
         self._sink(event)
 
     def flush(self) -> None:
-        """Force-send buffered events; the real drain lands with the queue consumer."""
+        """Force-send buffered events by driving the injected sink's drain, when it owns one."""
+        if isinstance(self._sink, LifecycleSink):
+            self._sink.flush()
 
     def shutdown(self) -> None:
-        """Drain and quiesce for process exit; the real drain lands with the queue consumer."""
+        """Drain and quiesce for process exit by driving the injected sink's shutdown, when it
+        owns one."""
+        if isinstance(self._sink, LifecycleSink):
+            self._sink.shutdown()
 
     def send(
         self,
