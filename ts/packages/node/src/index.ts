@@ -16,6 +16,7 @@ export type {
 export { createQueryClient } from './query/create-query-client';
 export type { QueryClientConfig } from './query/config';
 export { createFlagClient } from './flags/create-flag-client';
+export type { NodeFlagClient } from './flags/create-flag-client';
 export type { FlagClientConfig } from './flags/config';
 export type {
   FeatureFlagPort,

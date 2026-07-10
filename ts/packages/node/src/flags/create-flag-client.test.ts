@@ -1,7 +1,8 @@
 import type { DefaultTaxonomyShape, FeatureFlagPort, ShapeOf } from 'analytics-kit';
 import { defineTaxonomy } from 'analytics-kit';
-import { afterEach, expect, expectTypeOf, test, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, test, vi } from 'vitest';
 import { createFlagClient } from './create-flag-client';
+import type { NodeFlagClient } from './create-flag-client';
 import type { FlagClientConfig } from './config';
 import { FlagNoop } from './flag-noop';
 import { HttpFlagAdapter } from './http-flag-adapter';
@@ -107,14 +108,19 @@ test('keyed + endpointed: an evaluate POSTs to the flag path via the injected fe
   expect(body['distinct_id']).toBe('u_7');
 });
 
-test('taxonomy overload returns FeatureFlagPort<ShapeOf<T>>; bare widens to DefaultTaxonomyShape', () => {
+test('taxonomy overload returns NodeFlagClient<ShapeOf<T>> (neutral port + stop); bare widens to DefaultTaxonomyShape', () => {
   const typed = createFlagClient({ key: 'k', flagEndpoint: 'https://flags.example', taxonomy });
-  expectTypeOf(typed).toEqualTypeOf<FeatureFlagPort<ShapeOf<(typeof taxonomy)['decl']>>>();
+  expectTypeOf(typed).toEqualTypeOf<NodeFlagClient<ShapeOf<(typeof taxonomy)['decl']>>>();
 
   const bare = createFlagClient({});
-  expectTypeOf(bare).toEqualTypeOf<FeatureFlagPort<DefaultTaxonomyShape>>();
+  expectTypeOf(bare).toEqualTypeOf<NodeFlagClient<DefaultTaxonomyShape>>();
+
+  // The node client stays assignable to the neutral FeatureFlagPort — stop() is ADDITIVE, so the
+  // vendor-neutral seam is still satisfied (a consumer can hold it as a plain FeatureFlagPort).
+  expectTypeOf(typed).toMatchTypeOf<FeatureFlagPort<ShapeOf<(typeof taxonomy)['decl']>>>();
 
   expect(typeof typed.evaluate).toBe('function');
+  expect(typeof typed.stop).toBe('function');
 });
 
 test('FlagClientConfig has no query-style personalKey/queryEndpoint on its own surface', () => {
@@ -196,4 +202,82 @@ test('the local-eval knobs live on FlagClientConfig, never on the neutral port',
   };
   void _cfg;
   expect(true).toBe(true);
+});
+
+describe('stop() releases the background poller (a short-lived process can exit)', () => {
+  function okResponse(body: unknown) {
+    return { ok: true, status: 200, json: async () => body };
+  }
+  const DEFS = { flags: [{ key: 'a', active: true, filters: { groups: [{ properties: [], rollout_percentage: 100 }] } }] };
+
+  // Spy on the fake-timer handle's unref so we can assert the poller unref'd its reschedule timer,
+  // mirroring batch-queue.test.ts's timer-unref proof.
+  function spyUnref() {
+    const unref = vi.fn();
+    const original = globalThis.setTimeout;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: () => void, timeout?: number) => {
+      const handle = original(handler, timeout) as unknown as { unref?: () => void };
+      handle.unref = unref;
+      return handle as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+    return { unref };
+  }
+
+  test('a local-capable client exposes stop(); calling it schedules no further definition loads', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchSpy = vi.fn(async () => okResponse(DEFS));
+      const client = createFlagClient({
+        key: 'k',
+        definitionsEndpoint: 'https://flags.example',
+        definitionsKey: 'k_privileged',
+        pollInterval: 5000,
+        fetch: fetchSpy as never,
+      });
+
+      // stop() is on the node return type (not the neutral port).
+      expect(typeof client.stop).toBe('function');
+
+      // The constructor fired the first definition load; let it settle.
+      await vi.advanceTimersByTimeAsync(0);
+      const loadsBeforeStop = fetchSpy.mock.calls.length;
+      expect(loadsBeforeStop).toBeGreaterThanOrEqual(1);
+
+      client.stop();
+      // After stop(), advancing well past the poll interval schedules no further load.
+      await vi.advanceTimersByTimeAsync(50000);
+      expect(fetchSpy).toHaveBeenCalledTimes(loadsBeforeStop);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('the reschedule timer is unref\'d so a captured-then-exited process is not held open', async () => {
+    vi.useFakeTimers();
+    try {
+      const { unref } = spyUnref();
+      const fetchSpy = vi.fn(async () => okResponse(DEFS));
+      const client = createFlagClient({
+        key: 'k',
+        definitionsEndpoint: 'https://flags.example',
+        definitionsKey: 'k_privileged',
+        pollInterval: 5000,
+        fetch: fetchSpy as never,
+      });
+
+      // Settle the first load; scheduling the next poll unref's its timer.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(unref).toHaveBeenCalled();
+
+      client.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('the no-op flag client also honors stop() (an unconfigured env releases cleanly)', () => {
+    const noop = createFlagClient({});
+    expect(noop).toBeInstanceOf(FlagNoop);
+    expect(() => noop.stop()).not.toThrow();
+  });
 });

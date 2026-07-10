@@ -1,6 +1,7 @@
 import type { NeutralEvent } from 'analytics-kit';
 import type { NodeAnalyticsConfig } from './config';
 import { gzip } from './gzip';
+import { joinHostPath } from './ingest-url';
 import { assembleBatchEnvelope } from './wire-mapper';
 
 // The real gzipped-wire delivery that fills the queue's `send` seam. It owns the wire
@@ -52,9 +53,8 @@ export interface SendBatchDeps {
 const DEFAULT_INGEST_PATH = '/batch/';
 
 function resolveEndpoint(config: NodeAnalyticsConfig): string {
-  const host = (config.ingestHost ?? '').replace(/\/$/, '');
   const path = config.ingestPath ?? DEFAULT_INGEST_PATH;
-  return `${host}${path}`;
+  return joinHostPath(config.ingestHost ?? '', path);
 }
 
 // POST one wire envelope. Gzip by default; on a null/empty gzip result fall back to raw

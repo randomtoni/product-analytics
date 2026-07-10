@@ -4,6 +4,7 @@ import type {
   ShapeOf,
   Taxonomy,
   TaxonomyDecl,
+  TaxonomyShape,
 } from 'analytics-kit';
 import type { FlagClientConfig } from './config';
 import { FlagNoop } from './flag-noop';
@@ -13,15 +14,21 @@ import { DefinitionPoller } from './local';
 // The default definition poll interval (ms) when the config omits `pollInterval`.
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 
+// The node flag client's return type: the neutral FeatureFlagPort plus a node-local `stop()` that
+// releases the background definition poller (a no-op on the remote-only / no-op branches). `stop()`
+// lives HERE, on the node client, never on the neutral `FeatureFlagPort` seam — a short-lived server
+// process (CLI/cron) needs to release the poller so it can exit; a browser consumer has no such verb.
+export type NodeFlagClient<TX extends TaxonomyShape> = FeatureFlagPort<TX> & { stop(): void };
+
 export function createFlagClient<const T extends TaxonomyDecl>(
   config: FlagClientConfig & { taxonomy: Taxonomy<T> }
-): FeatureFlagPort<ShapeOf<T>>;
+): NodeFlagClient<ShapeOf<T>>;
 export function createFlagClient(
   config: FlagClientConfig
-): FeatureFlagPort<DefaultTaxonomyShape>;
+): NodeFlagClient<DefaultTaxonomyShape>;
 export function createFlagClient(
   config: FlagClientConfig
-): FeatureFlagPort<DefaultTaxonomyShape> {
+): NodeFlagClient<DefaultTaxonomyShape> {
   // Unkeyed ⇒ a silent no-op flag client: the null object evaluates nothing, never constructs an
   // adapter or touches the network, and `evaluate` resolves the seam's 'unresolved' empty snapshot
   // (bar B — config-only adoption, an unconfigured environment reads flags-off). The `key`

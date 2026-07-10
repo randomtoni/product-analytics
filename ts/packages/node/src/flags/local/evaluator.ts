@@ -32,7 +32,6 @@ export function evaluateFlagLocally(
   definition: FlagDefinition,
   bucketingValue: string,
   personProperties: PropertyBag,
-  _groupProperties: Record<string, PropertyBag>,
   cohorts: DefinitionSnapshot['cohorts']
 ): FlagValue {
   // An inactive flag is always false, regardless of continuity. Order matters: checking continuity
@@ -211,11 +210,5 @@ export function computeFlagLocally(
   if (resolved === 'group-not-supplied') {
     return false;
   }
-  return evaluateFlagLocally(
-    definition,
-    resolved.bucketingValue,
-    resolved.properties,
-    context.groupProperties ?? {},
-    snapshot.cohorts
-  );
+  return evaluateFlagLocally(definition, resolved.bucketingValue, resolved.properties, snapshot.cohorts);
 }

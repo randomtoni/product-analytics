@@ -9,6 +9,7 @@ import {
   emptyFlagSet,
 } from 'analytics-kit';
 import type { FetchLike } from '../config';
+import { joinHostPath } from '../ingest-url';
 import {
   DefinitionPoller,
   InconclusiveMatchError,
@@ -389,6 +390,5 @@ function seedBootstrap(bootstrap: FlagsConfig['bootstrap']): Snapshot | undefine
 // path. The factory only constructs this adapter when a non-empty endpoint is configured, so the
 // origin is present here.
 function resolveFlagUrl(flagEndpoint: string): string {
-  const host = flagEndpoint.trim().replace(/\/+$/, '');
-  return `${host}${FLAG_ENDPOINT_WIRE_PATH}`;
+  return joinHostPath(flagEndpoint, FLAG_ENDPOINT_WIRE_PATH);
 }

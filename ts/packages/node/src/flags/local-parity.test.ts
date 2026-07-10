@@ -372,7 +372,7 @@ describe('layer 2 — cross-tree hash anchor: the single pinned parity vector (i
     };
     const out: Array<string | boolean> = [];
     for (let i = 0; i < 10; i++) {
-      out.push(evaluateFlagLocally(def, `distinct_id_${i}`, {}, {}, {}));
+      out.push(evaluateFlagLocally(def, `distinct_id_${i}`, {}, {}));
     }
     expect(out).toEqual([false, true, true, false, true, false, false, true, false, true]);
   });

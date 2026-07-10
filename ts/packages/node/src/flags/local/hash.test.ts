@@ -71,7 +71,7 @@ function multivariateFlag(): FlagDefinition {
 function evalOver(def: FlagDefinition, count: number): Array<string | boolean> {
   const out: Array<string | boolean> = [];
   for (let i = 0; i < count; i++) {
-    out.push(evaluateFlagLocally(def, `distinct_id_${i}`, {}, {}, {}));
+    out.push(evaluateFlagLocally(def, `distinct_id_${i}`, {}, {}));
   }
   return out;
 }
@@ -109,8 +109,8 @@ describe('tier 3 — end-to-end consistency vectors', () => {
 
   test('the same actor lands in the same value deterministically across repeated runs', () => {
     const def = multivariateFlag();
-    const first = evaluateFlagLocally(def, 'distinct_id_2', {}, {}, {});
-    const second = evaluateFlagLocally(def, 'distinct_id_2', {}, {}, {});
+    const first = evaluateFlagLocally(def, 'distinct_id_2', {}, {});
+    const second = evaluateFlagLocally(def, 'distinct_id_2', {}, {});
     expect(first).toBe(second);
     expect(first).toBe('first-variant');
   });

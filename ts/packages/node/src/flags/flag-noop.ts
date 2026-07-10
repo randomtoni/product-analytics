@@ -24,4 +24,8 @@ export class FlagNoop<TX extends TaxonomyShape> implements FeatureFlagPort<TX> {
     listener(emptyFlagSet<TX>());
     return () => {};
   }
+
+  // A no-op client owns no poller/timer, so releasing it is a no-op — present so the node flag
+  // client's return type honestly surfaces `stop()` on BOTH branches (the real adapter and this).
+  stop(): void {}
 }

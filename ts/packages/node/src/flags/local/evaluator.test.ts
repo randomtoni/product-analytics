@@ -27,7 +27,7 @@ describe('active / continuity', () => {
       active: false,
       filters: { groups: [{ properties: [], rollout_percentage: 100 }] },
     };
-    expect(evaluateFlagLocally(def, 'u1', {}, {}, {})).toBe(false);
+    expect(evaluateFlagLocally(def, 'u1', {}, {})).toBe(false);
   });
 
   test('experience continuity throws inconclusive', () => {
@@ -37,7 +37,7 @@ describe('active / continuity', () => {
       ensure_experience_continuity: true,
       filters: { groups: [{ properties: [], rollout_percentage: 100 }] },
     };
-    expect(() => evaluateFlagLocally(def, 'u1', {}, {}, {})).toThrow(InconclusiveMatchError);
+    expect(() => evaluateFlagLocally(def, 'u1', {}, {})).toThrow(InconclusiveMatchError);
   });
 });
 
@@ -58,9 +58,9 @@ describe('condition groups — OR across groups, AND within a group', () => {
         ],
       },
     };
-    expect(evaluateFlagLocally(def, 'u1', { plan: 'pro', country: 'us' }, {}, {})).toBe(true);
+    expect(evaluateFlagLocally(def, 'u1', { plan: 'pro', country: 'us' }, {})).toBe(true);
     // One filter fails ⇒ AND fails ⇒ no match ⇒ false.
-    expect(evaluateFlagLocally(def, 'u1', { plan: 'pro', country: 'gb' }, {}, {})).toBe(false);
+    expect(evaluateFlagLocally(def, 'u1', { plan: 'pro', country: 'gb' }, {})).toBe(false);
   });
 
   test('a later OR group can match when an earlier one does not', () => {
@@ -74,7 +74,7 @@ describe('condition groups — OR across groups, AND within a group', () => {
         ],
       },
     };
-    expect(evaluateFlagLocally(def, 'u1', { plan: 'pro' }, {}, {})).toBe(true);
+    expect(evaluateFlagLocally(def, 'u1', { plan: 'pro' }, {})).toBe(true);
   });
 
   test('a group with empty properties falls straight to the rollout gate', () => {
@@ -83,7 +83,7 @@ describe('condition groups — OR across groups, AND within a group', () => {
       active: true,
       filters: { groups: [{ properties: [], rollout_percentage: 100 }] },
     };
-    expect(evaluateFlagLocally(def, 'u1', {}, {}, {})).toBe(true);
+    expect(evaluateFlagLocally(def, 'u1', {}, {})).toBe(true);
   });
 
   test('an inconclusive earlier group does not poison a later matching group', () => {
@@ -99,7 +99,7 @@ describe('condition groups — OR across groups, AND within a group', () => {
         ],
       },
     };
-    expect(evaluateFlagLocally(def, 'u1', { plan: 'pro' }, {}, {})).toBe(true);
+    expect(evaluateFlagLocally(def, 'u1', { plan: 'pro' }, {})).toBe(true);
   });
 
   test('inconclusive in the ONLY group throws inconclusive out of the evaluator', () => {
@@ -110,7 +110,7 @@ describe('condition groups — OR across groups, AND within a group', () => {
         groups: [{ properties: [{ key: 'missing', value: 'x', operator: 'exact' }], rollout_percentage: 100 }],
       },
     };
-    expect(() => evaluateFlagLocally(def, 'u1', {}, {}, {})).toThrow(InconclusiveMatchError);
+    expect(() => evaluateFlagLocally(def, 'u1', {}, {})).toThrow(InconclusiveMatchError);
   });
 });
 
@@ -129,11 +129,11 @@ describe('variant bands (contiguous, half-open, declared order, first-match)', (
         },
       },
     };
-    const v = evaluateFlagLocally(def, 'distinct_id_0', {}, {}, {});
+    const v = evaluateFlagLocally(def, 'distinct_id_0', {}, {});
     expect(typeof v).toBe('string');
     expect(['first-variant', 'second-variant']).toContain(v);
     // Deterministic.
-    expect(evaluateFlagLocally(def, 'distinct_id_0', {}, {}, {})).toBe(v);
+    expect(evaluateFlagLocally(def, 'distinct_id_0', {}, {})).toBe(v);
   });
 
   test('a hash landing in a gap (variant percentages sum < 100) resolves to bare true', () => {
@@ -147,7 +147,7 @@ describe('variant bands (contiguous, half-open, declared order, first-match)', (
       },
     };
     // distinct_id_0's variant-salt hash is ~0.62 → outside the [0, 0.01) band → bare true.
-    expect(evaluateFlagLocally(def, 'distinct_id_0', {}, {}, {})).toBe(true);
+    expect(evaluateFlagLocally(def, 'distinct_id_0', {}, {})).toBe(true);
   });
 
   test('a hard condition.variant override wins over the banded variant', () => {
@@ -164,7 +164,7 @@ describe('variant bands (contiguous, half-open, declared order, first-match)', (
         },
       },
     };
-    expect(evaluateFlagLocally(def, 'distinct_id_0', {}, {}, {})).toBe('second-variant');
+    expect(evaluateFlagLocally(def, 'distinct_id_0', {}, {})).toBe('second-variant');
   });
 
   test('a condition.variant that is not a declared variant is ignored (falls to banding)', () => {
@@ -176,7 +176,7 @@ describe('variant bands (contiguous, half-open, declared order, first-match)', (
         multivariate: { variants: [{ key: 'only', rollout_percentage: 100 }] },
       },
     };
-    expect(evaluateFlagLocally(def, 'distinct_id_0', {}, {}, {})).toBe('only');
+    expect(evaluateFlagLocally(def, 'distinct_id_0', {}, {})).toBe('only');
   });
 });
 
@@ -286,7 +286,7 @@ describe('the two inconclusive signals are distinct and both propagate out', () 
       active: true,
       filters: { groups: [{ properties: [{ key: 'other-flag', value: true, type: 'flag' }], rollout_percentage: 100 }] },
     };
-    expect(() => evaluateFlagLocally(def, 'u1', {}, {}, {})).toThrow(InconclusiveMatchError);
+    expect(() => evaluateFlagLocally(def, 'u1', {}, {})).toThrow(InconclusiveMatchError);
   });
 });
 
@@ -334,5 +334,46 @@ describe('group-aggregation bucketing via resolveBucketingValue / computeFlagLoc
     };
     const snap = snapshot();
     expect(() => resolveBucketingValue(def, {}, snap.groupTypeMapping)).toThrow(InconclusiveMatchError);
+  });
+
+  test('a group-aggregated flag filters on the focused group properties with no separate group-props arg', () => {
+    // Group properties reach the matcher via resolveBucketingValue → the single `properties` bag, so
+    // computeFlagLocally decides a group-property filter WITHOUT the evaluator ever taking a
+    // group-properties parameter (parity with the Python evaluate_flag_locally, which has none).
+    const def: FlagDefinition = {
+      key: 'f',
+      active: true,
+      filters: {
+        aggregation_group_type_index: 0,
+        groups: [{ properties: [{ key: 'tier', value: 'gold', operator: 'exact' }], rollout_percentage: 100 }],
+      },
+    };
+    const snap = snapshot({ groupTypeMapping: { '0': 'org' } });
+    expect(
+      computeFlagLocally(def, { distinctId: 'u1', groups: { org: 'acme' }, groupProperties: { org: { tier: 'gold' } } }, snap)
+    ).toBe(true);
+    // A non-matching group property fails the AND ⇒ false (the group-props filter is honored).
+    expect(
+      computeFlagLocally(def, { distinctId: 'u1', groups: { org: 'acme' }, groupProperties: { org: { tier: 'silver' } } }, snap)
+    ).toBe(false);
+  });
+});
+
+describe('evaluator surface arity (F3 parity)', () => {
+  test('evaluateFlagLocally takes exactly (definition, bucketingValue, personProperties, cohorts)', () => {
+    // Pins the de-branded evaluator to 4 params — the dead group-properties parameter is gone, so the
+    // exported surface matches the Python twin. A reintroduced 5th param would fail typecheck at every
+    // call site; this length assertion is the runtime backstop.
+    expect(evaluateFlagLocally.length).toBe(4);
+  });
+
+  test('person properties still drive property filters through arg 3', () => {
+    const def: FlagDefinition = {
+      key: 'f',
+      active: true,
+      filters: { groups: [{ properties: [{ key: 'plan', value: 'pro', operator: 'exact' }], rollout_percentage: 100 }] },
+    };
+    expect(evaluateFlagLocally(def, 'u1', { plan: 'pro' }, {})).toBe(true);
+    expect(evaluateFlagLocally(def, 'u1', { plan: 'free' }, {})).toBe(false);
   });
 });

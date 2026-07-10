@@ -1,4 +1,5 @@
 import type { FetchLike } from '../../config';
+import { joinHostPath } from '../../ingest-url';
 import type {
   DefinitionSnapshot,
   FlagDefinition,
@@ -132,6 +133,11 @@ export class DefinitionPoller {
     this.timer = setTimeout(() => {
       void this.load();
     }, this.pollIntervalMs);
+    // Node's timer handle carries .unref() — call it so a short-lived process (CLI/cron/test) that
+    // builds a local-capable flag client isn't held open up to the poll interval by the pending
+    // reschedule (mirrors batch-queue's armInterval; browser/edge setTimeout returns a bare number,
+    // where the optional-chain makes this a no-op).
+    this.timer?.unref?.();
   }
 
   private async fetchDefinitions(): Promise<void> {
@@ -165,8 +171,7 @@ export class DefinitionPoller {
 // Resolve the definitions URL from the consumer's bare flag origin: append the [WIRE] definitions
 // path and the token + send-cohorts query params.
 function resolveDefinitionsUrl(definitionsEndpoint: string, token: string): string {
-  const host = definitionsEndpoint.trim().replace(/\/+$/, '');
   const params = new URLSearchParams({ [TOKEN_WIRE_QUERY]: token });
   params.set(SEND_COHORTS_WIRE_QUERY, '');
-  return `${host}${DEFINITIONS_ENDPOINT_WIRE_PATH}?${params.toString()}`;
+  return `${joinHostPath(definitionsEndpoint, DEFINITIONS_ENDPOINT_WIRE_PATH)}?${params.toString()}`;
 }
