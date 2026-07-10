@@ -1,6 +1,6 @@
 ---
 id: E14-SR-session-replay
-status: planned
+status: active
 area: session-replay
 touches: [browser, core, react]
 api_impact: additive
@@ -93,30 +93,15 @@ the port is purely additive: `replay?` is already an optional member of `Analyti
 
 ## Stories
 
-_Tentative slice — final decomposition happens at `/implement-epics` time. Sequence: the neutral port +
-config substrate first, then the recorder-behind-adapter (with the entry boundary), then linkage +
-delivery, then the example proof carrying the Python N-A row._
+Drafted to `stories/2-ready-for-dev/` at `/implement-epics` time. Sequence is a linear chain (each
+story builds on the prior): **S1 → S2 → S3 → S4 → S5**. `depends_on`: S1 `[]`, S2 `[S1]`, S3 `[S2]`,
+S4 `[S3]`, S5 `[S4]`.
 
-- **S1 — Neutral port + config substrate (seam).** Widen `SessionReplayPort` to
-  `{ start, stop, isActive, getReplayId }`; add `AnalyticsConfig.sessionReplay?` + Zod boundary
-  validation (sampleRate 0–1, masking shape). Pure neutral seam — no rrweb, no browser code. The
-  bar-A/bar-B-defining story.
-- **S2 — Recorder + rrweb behind the adapter (substrate).** Add the replay module to
-  `@analytics-kit/browser` as a **separate entrypoint** (rrweb isolated here; base import doesn't pull
-  it); wire `start/stop/isActive`; populate `provider.replay`; depend on upstream MIT `rrweb`. Verify
-  the neutrality-scan dep dimension.
-- **S3 — Session/event linkage (specialization).** Recorder reads the shared `SessionIdManager` (no
-  separate id); `getReplayId()` returns it; **re-key on rotation** (the one moving part — an explicit
-  acceptance criterion). May fold into S2/S4 if the linkage invariant is asserted somewhere.
-- **S4 — Snapshot buffering + delivery + masking (specialization).** Own buffer + flush cadence to a
-  configured ingest path (reusing the adapter's `fetch`/gzip primitives, NOT the capture queue — replay
-  is high-volume, size-sensitive); size-triggered flush; **flush-on-teardown** (unload/visibility-hidden/
-  stop/rotation); the **sampling flush-guard** (no flush while the per-session sampling decision is
-  pending, decided on start + re-decided on rotation); apply masking config to the recorder.
-- **S5 — Example proof + Python N-A row (recipe).** Fernly enables replay by config alone + swaps to a
-  mock replay adapter (bar A + bar B); update the parity matrix + `provider.py` docstring moving
-  `replay` from "declared slot, awaiting cycle" to **"N-A-BY-PLATFORM, slot permanently `None`"** — an
-  explicit acceptance criterion, not an afterthought.
+- **[E14-S1](../stories/2-ready-for-dev/E14-S1-neutral-replay-port-config-substrate.md)** *(additive, no deps)* — widen `SessionReplayPort` to `{ start, stop, isActive, getReplayId }` + add `AnalyticsConfig.sessionReplay?` (enabled/sampleRate 0–1/masking) with boundary validation; pure neutral seam, the bar-A/bar-B-defining story.
+- **[E14-S2](../stories/2-ready-for-dev/E14-S2-recorder-rrweb-behind-adapter.md)** *(additive, depends on E14-S1)* — replay module in `@analytics-kit/browser` driving upstream MIT `rrweb` behind the adapter as a **separate entrypoint** (base import stays rrweb-free); wire `start/stop/isActive`, populate `provider.replay`, verify the neutrality-scan dep dimension.
+- **[E14-S3](../stories/2-ready-for-dev/E14-S3-session-event-linkage-rekey.md)** *(additive, depends on E14-S2)* — recorder reads the shared `SessionIdManager` (no separate id), `getReplayId()` returns it, **re-key on rotation** reusing the adapter's existing rotation verdict — the epic's one hard correctness invariant.
+- **[E14-S4](../stories/2-ready-for-dev/E14-S4-snapshot-buffering-delivery-masking.md)** *(additive, depends on E14-S3)* — own snapshot buffer + delivery path (reuse `ingestHost`+fixed path + the adapter `fetch`/gzip primitives, NOT the capture queue): size-triggered flush, flush-on-teardown, the sampling flush-guard (decide-before-flush + re-decide-on-rotation), and threading masking config into the recorder.
+- **[E14-S5](../stories/2-ready-for-dev/E14-S5-example-proof-python-na-row.md)** *(additive, depends on E14-S4)* — Fernly enables replay by config alone + swaps to a mock replay adapter (bar A + bar B) + capability-presence pin; move the Python `replay` disposition from "declared slot, awaiting cycle" to **N-A-BY-PLATFORM (slot permanently `None`)** in the parity matrix + `provider.py` docstring. Real-stack `$snapshot` probe gated by the live-ingest-key dev prerequisite.
 
 ## Out of scope
 

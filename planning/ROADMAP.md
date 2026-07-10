@@ -52,7 +52,7 @@ SOTA / `posthog-js`-capability bar.
 
 **session-replay** (sequences after — narrower, browser-only, TS):
 
-- **[E14-SR-session-replay](epics/E14-SR-session-replay.md)** — the neutral `SessionReplayPort`
+- **[E14-SR-session-replay](epics/E14-SR-session-replay.md)** *(active)* — the neutral `SessionReplayPort`
   (`start`/`stop`/`isActive`/`getReplayId`) + config-only adoption (sampling + privacy masking) +
   rrweb-behind-the-adapter recorder (separate entrypoint) + capture-side session/event linkage
   (re-key on rotation) + own snapshot delivery path (size-triggered flush, flush-on-teardown, a
