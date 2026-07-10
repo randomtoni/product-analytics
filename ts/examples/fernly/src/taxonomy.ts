@@ -23,6 +23,16 @@ export const fernlyTaxonomy = defineTaxonomy({
     path: 'string',
     referrer: 'string',
   },
+  flags: {
+    // A variant flag with a typed payload — exercises getFlag narrowing (to the variant
+    // union | boolean) and getPayload narrowing (to the declared payload shape).
+    review_ai_summary: {
+      variants: ['control', 'concise', 'detailed'],
+      payload: { model: 'string', maxTokens: 'number' },
+    },
+    // A bare on/off flag (no variants, no payload) — getFlag narrows to boolean.
+    bulk_review_actions: {},
+  },
 });
 
 export type FernlyTaxonomy = typeof fernlyTaxonomy;

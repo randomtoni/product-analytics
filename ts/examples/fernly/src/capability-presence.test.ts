@@ -31,6 +31,11 @@ describe('capability-presence — runtime value exports (proves tsup emitted the
     // createQueryClient's config-selection (bar A: a consumer never couples to a named backend).
     expect(typeof node.createAnalytics).toBe('function');
     expect(typeof node.createQueryClient).toBe('function');
+    // createFlagClient — the standalone node flag-client factory (E12-S3). A standalone factory,
+    // NOT a NodeAnalytics member (node has no flags slot), so its presence is asserted here as a
+    // value export — the flag capability reachable on the built node dist. The concrete remote
+    // adapter (+ the no-op) are INTERNAL, reached only through createFlagClient's config-selection.
+    expect(typeof node.createFlagClient).toBe('function');
   });
 
   it('the typecheck-time presence assertion is wired into the graph and all-true', () => {

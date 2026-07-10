@@ -28,5 +28,14 @@ quillstream_taxonomy: Taxonomy = define_taxonomy(
             "workspace": {"name": "string", "seats": "number"},
             "team": {"name": "string"},
         },
+        "flags": {
+            # A variant flag with a typed payload — exercised through the neutral FlagSet reads.
+            "ai_draft_assist": {
+                "variants": ["control", "concise", "detailed"],
+                "payload": {"model": "string", "max_tokens": "number"},
+            },
+            # A bare on/off flag (no variants, no payload).
+            "bulk_publish": {},
+        },
     }
 )

@@ -1,10 +1,26 @@
 import { useState, type ReactNode } from 'react';
-import { AnalyticsClientProvider, useAnalytics, usePageView } from '@analytics-kit/react';
+import {
+  AnalyticsClientProvider,
+  useAnalytics,
+  useFeatureFlags,
+  usePageView,
+} from '@analytics-kit/react';
 import type { AnalyticsConfig, RootAnalytics } from '@analytics-kit/browser';
 import type { ShapeOf } from 'analytics-kit';
 import { fernlyTaxonomy, type FernlyTaxonomy } from '../taxonomy';
 
 type FernlyShape = ShapeOf<FernlyTaxonomy['decl']>;
+
+// Reads the AI-summary flag through the neutral hook and renders the resolved variant. On the
+// first synchronous paint the async-only port has nothing resolved, so this shows 'control'
+// (the emptyFlagSet default read); the bootstrap/network variant lands on the next microtask,
+// re-rendering the label. Taxonomy-typed through FernlyShape — getFlag narrows to the variants.
+export function AiSummaryBadge(): ReactNode {
+  const flags = useFeatureFlags<FernlyShape>();
+  const variant = flags.getFlag('review_ai_summary');
+  const label = typeof variant === 'string' ? variant : 'control';
+  return <span data-testid="ai-summary-variant">{label}</span>;
+}
 
 export const fernlyConfig: AnalyticsConfig = {
   cookieDomain: '.fernly.example',
@@ -33,9 +49,12 @@ export function ReviewWorkspace({ route }: { route: string }): ReactNode {
   }
 
   return (
-    <button type="button" onClick={() => onRequestReview('doc-1', 'reviewer-7')}>
-      Request review
-    </button>
+    <>
+      <AiSummaryBadge />
+      <button type="button" onClick={() => onRequestReview('doc-1', 'reviewer-7')}>
+        Request review
+      </button>
+    </>
   );
 }
 

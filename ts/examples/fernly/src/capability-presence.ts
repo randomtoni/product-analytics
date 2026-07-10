@@ -14,7 +14,13 @@
 // runtime object). Value exports (createAnalytics, NoopAdapter, …) get a separate RUNTIME
 // presence check in `capability-presence.test.ts`.
 
-import type { DefaultTaxonomyShape, AnalyticsProvider, QueryResult } from 'analytics-kit';
+import type {
+  DefaultTaxonomyShape,
+  AnalyticsProvider,
+  FeatureFlagPort,
+  FlagSet,
+  QueryResult,
+} from 'analytics-kit';
 import type { NodeAnalytics, AnalyticsQueryClient } from '@analytics-kit/node';
 
 // Invariant mutual-assignability equality: resolves to `true` ONLY when A and B are the exact same
@@ -59,6 +65,14 @@ type FrozenNodeMembers = 'capture' | 'setTraits' | 'setGroupTraits' | 'flush' | 
 // The 5 query methods.
 type FrozenQueryMembers = 'funnel' | 'retention' | 'trend' | 'uniqueCount' | 'rawQuery';
 
+// The 2 feature-flag PORT methods (E12-S1 decided this shape). The FlagSet snapshot reads
+// (isEnabled/getFlag/getPayload/getAll/degraded/reason) are members of the RETURNED FlagSet type,
+// NOT of the port — so they are pinned separately (the evaluate-returns-Promise<FlagSet> pin
+// below), never added here. The browser/seam `flags?` slot presence is already covered by
+// FrozenProviderMembers; the node flag client is a standalone `createFlagClient` factory (NOT a
+// NodeAnalytics member — FrozenNodeMembers stays capture/setTraits/setGroupTraits/flush/shutdown).
+type FrozenFlagMembers = 'evaluate' | 'onChange';
+
 // ── Layer 2 — targeted return-category pins (the sync↔async / non-fn regression tripwire) ─────
 //
 // NOT full-signature pinning (that re-encodes the taxonomy generics and is brittle on cosmetics).
@@ -72,6 +86,7 @@ type Assertions = {
   providerKeys: Equals<keyof AnalyticsProvider, FrozenProviderMembers>;
   nodeKeys: Equals<keyof NodeAnalytics<DefaultTaxonomyShape>, FrozenNodeMembers>;
   queryKeys: Equals<keyof AnalyticsQueryClient<DefaultTaxonomyShape>, FrozenQueryMembers>;
+  flagPortKeys: Equals<keyof FeatureFlagPort<DefaultTaxonomyShape>, FrozenFlagMembers>;
 
   // Layer 2 — provider members stay callable; async verbs stay Promise<void>; query verb is boolean.
   trackCallable: IsCallable<AnalyticsProvider['track']>;
@@ -125,6 +140,16 @@ type Assertions = {
   ) => Promise<QueryResult>
     ? true
     : false;
+
+  // Layer 2 — the flag port's load-bearing method stays async at the boundary: evaluate returns
+  // Promise<FlagSet> (mirroring the query verbs' Promise<QueryResult> pin). A regression to a
+  // sync FlagSet (breaking parity + bar A) flips this to false. onChange stays a callable member.
+  flagOnChangeCallable: IsCallable<FeatureFlagPort<DefaultTaxonomyShape>['onChange']>;
+  flagEvaluateResult: FeatureFlagPort<DefaultTaxonomyShape>['evaluate'] extends (
+    ...args: never[]
+  ) => Promise<FlagSet>
+    ? true
+    : false;
 };
 
 // Every field of `Assertions` must resolve to `true`. The const is typed as `Assertions` itself, so
@@ -136,6 +161,7 @@ export const CAPABILITY_PRESENCE: Assertions = {
   providerKeys: true,
   nodeKeys: true,
   queryKeys: true,
+  flagPortKeys: true,
   trackCallable: true,
   identifyCallable: true,
   pageCallable: true,
@@ -159,4 +185,6 @@ export const CAPABILITY_PRESENCE: Assertions = {
   trendResult: true,
   uniqueCountResult: true,
   rawQueryResult: true,
+  flagOnChangeCallable: true,
+  flagEvaluateResult: true,
 };
