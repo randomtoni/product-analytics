@@ -329,7 +329,7 @@ def test_a_wire_error_flag_on_a_completed_status_surfaces_a_neutral_error() -> N
         _adapter(transport).raw_query("q")
 
 
-def test_a_completed_status_without_a_status_id_on_first_poll_is_neutral_error() -> None:
+def test_a_completed_status_missing_its_status_id_is_a_neutral_error() -> None:
     # An incomplete status with no id has nowhere to poll — a bounded give-up, not a hang.
     transport = _CannedTransport([_ok({"query_status": {"complete": False}})])
     with pytest.raises(_QueryError):

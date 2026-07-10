@@ -111,7 +111,9 @@ def test_adapter_and_export_are_named_by_role_not_vendor() -> None:
     # 'warehouse' is a role, not a vendor; the forbidden set is vendor/dialect tokens.
     assert WarehouseQueryAdapter.__name__ == "WarehouseQueryAdapter"
     assert create_warehouse_query_adapter.__name__ == "create_warehouse_query_adapter"
-    surface = (WarehouseQueryAdapter.__name__ + " " + create_warehouse_query_adapter.__name__).lower()
+    surface = (
+        WarehouseQueryAdapter.__name__ + " " + create_warehouse_query_adapter.__name__
+    ).lower()
     assert "posthog" not in surface
     assert "hogql" not in surface
 
