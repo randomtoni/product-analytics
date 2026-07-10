@@ -62,3 +62,12 @@ The seam left `SessionReplayPort` as a one-method sketch (`ts/packages/analytics
 - No architect consult needed — every decision above is pre-resolved in the epic `## Notes`.
 
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files changed:** `ts/packages/analytics-kit/src/{ports.ts,create-analytics.ts,index.ts}` + tests (`ports.test.ts`, `create-analytics.test.ts`)
+- **New public API:** `SessionReplayPort` widened to `{ start(): void; stop(): void; isActive(): boolean; getReplayId(): string | undefined }` (`getReplayId` = NEUTRAL session-linkage id, NEVER the vendor console URL); `SessionReplayConfig` (`{ enabled?, sampleRate?, masking? }`) + `AnalyticsConfig.sessionReplay?` — a PLAIN type carrier, exported from the seam index. No adapter wired.
+- **Tests added:** `ports.test.ts` (the `keyof SessionReplayPort` exact-4-member pin + per-verb signature pins), `create-analytics.test.ts` (config passes through un-validated — `sampleRate: 1.7`/`-3` do NOT throw, the guard against seam validation creeping in).
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review. Reviewer confirmed the key catch — posthog exposes BOTH `get_session_id()` AND `get_session_replay_url()` (a console route); the neutral port takes ONLY the id (plain `string | undefined`, doc forbids the URL). Config is a plain type carrier (no Zod in the repo; `FlagsConfig` precedent) with `sampleRate` normalization correctly DEFERRED to S4. Frozen-15 undisturbed (`replay?` already a member; port widened, not the provider set; slot-type pin still correct). Neutrality clean (no `posthog`/`rrweb`/`$snapshot`; masking field names are generic DOM selectors, de-brand-safe). One style nit (a `.not.toMatchTypeOf` mix — correct, keep). No adapter/Scope.Out leaked.
+- **Cross-story seams exposed:** **S2** — attach the rrweb recorder to `provider.replay` (via a sibling `attachReplay`, the `attachFlags` precedent) + read `config.sessionReplay`; the port `getReplayId` returns the SHARED session id (S3 wires the linkage). **S4** — owns `sampleRate` normalization (normalize-to-default per the `request-queue.ts` clamp precedent, NOT reject) + the masking `maskAllInputs: true` default (S1 only carries the type). The port's 4-member surface is frozen — S2/S3/S4 satisfy it, don't widen it. **S5** — pins `FrozenReplayMembers = keyof SessionReplayPort` in fernly `capability-presence.ts`; Python `replay` stays N-A-by-platform.

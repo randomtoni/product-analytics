@@ -39,6 +39,7 @@ export type {
   EnrichmentConfig,
   CaptureProfile,
   FlagsConfig,
+  SessionReplayConfig,
 } from './create-analytics';
 export { defineTaxonomy, RESERVED_PAGE_EVENT, RESERVED_PAGELEAVE_EVENT } from './taxonomy';
 export { resolveOptedOut } from './consent-policy';

@@ -7,6 +7,7 @@ import {
   type FlagReason,
   type FlagSet,
   type FlagValue,
+  type SessionReplayPort,
 } from './ports';
 import {
   emptyFlagSet as ExportedEmptyFlagSet,
@@ -37,6 +38,21 @@ test('FlagValue is a variant string or a boolean; FlagReason is the frozen four-
 
 test('FeatureFlagPort exposes exactly evaluate + onChange, no separate reload (E12-S1)', () => {
   expectTypeOf<keyof FeatureFlagPort>().toEqualTypeOf<'evaluate' | 'onChange'>();
+});
+
+test('SessionReplayPort exposes exactly the four v1 control verbs, no 5th member (E14-S1)', () => {
+  expectTypeOf<keyof SessionReplayPort>().toEqualTypeOf<
+    'start' | 'stop' | 'isActive' | 'getReplayId'
+  >();
+});
+
+test('SessionReplayPort verbs are typed: void control + getReplayId returns the neutral id or undefined (E14-S1)', () => {
+  expectTypeOf<SessionReplayPort['start']>().toEqualTypeOf<() => void>();
+  expectTypeOf<SessionReplayPort['stop']>().toEqualTypeOf<() => void>();
+  expectTypeOf<SessionReplayPort['isActive']>().toEqualTypeOf<() => boolean>();
+  // getReplayId returns the neutral session-linkage id (a plain string), never a URL type, or
+  // undefined when inactive — the shape linkage (E14-S3) and adapters bind to.
+  expectTypeOf<SessionReplayPort['getReplayId']>().toEqualTypeOf<() => string | undefined>();
 });
 
 test('evaluate is async at the boundary and takes an optional context + options bag (E12-S1)', () => {

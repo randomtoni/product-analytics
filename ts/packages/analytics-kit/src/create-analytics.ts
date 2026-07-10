@@ -20,6 +20,24 @@ export interface FlagsConfig {
   };
 }
 
+// Config-supplied session-replay settings (bar B: enable/sample/mask are all config, not port
+// methods). Plain type carrier only — the seam adds NO validation here (it validates nothing
+// today; see `FlagsConfig`). `enabled` opts into recording (default OFF: absent/false records
+// nothing). `sampleRate` is the keep-fraction in [0,1]; an out-of-range value is normalized to
+// default sampling by the browser recorder (never rejected at the seam). `masking` is the NEW
+// DOM-content privacy surface — orthogonal to the property-key allowlist, both consumer-owned:
+// `maskAllInputs` masks input values (recorder default `true`, applied downstream),
+// `maskTextSelector` masks matching text, `blockSelector` blocks matching elements entirely.
+export interface SessionReplayConfig {
+  enabled: boolean;
+  sampleRate?: number;
+  masking?: {
+    maskAllInputs?: boolean;
+    maskTextSelector?: string;
+    blockSelector?: string;
+  };
+}
+
 export interface CountryEnrichmentConfig {
   // A consumer-injected source of the country value — a plain value or a synchronous
   // provider (e.g. reading an edge header the consumer has surfaced). Consumer-supplied,
@@ -85,6 +103,9 @@ export interface AnalyticsConfig {
   // Feature-flag settings. Only `bootstrap` this release (config-supplied, seeded at init) —
   // the browser flag adapter (E12-S2) reads it; nothing is wired here.
   flags?: FlagsConfig;
+  // Session-replay settings (E14-S1): enable/sampleRate/masking, config-only (bar B). Plain
+  // type carrier — the browser replay recorder (E14-S2+) reads it; nothing is wired here.
+  sessionReplay?: SessionReplayConfig;
 }
 
 interface AnalyticsDeps {

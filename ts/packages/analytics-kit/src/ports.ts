@@ -1,10 +1,17 @@
 import type { NeutralProperties } from './neutral-event';
 import type { DefaultTaxonomyShape, TaxonomyShape } from './taxonomy';
 
-// The session-replay capability is still a sketch — its method surface stays loose until a
-// real adapter first implements one (E14). Always undefined on the seam in this release.
+// The neutral session-replay capability port: a small control surface over an active
+// recording. `start` is idempotent (a second call while active is a no-op); `stop` halts
+// recording (a consumer stops for a sensitive flow); `isActive` is the gate consumers branch
+// on. `getReplayId` returns the neutral session-linkage id — the opaque string that stitches a
+// recording to the same session its captured events carry — or `undefined` when inactive. It is
+// NEVER a vendor console URL: a consumer builds a deep-link from the id if their backend has one.
 export interface SessionReplayPort {
   start(): void;
+  stop(): void;
+  isActive(): boolean;
+  getReplayId(): string | undefined;
 }
 
 // A resolved flag's value: a variant string, or a plain on/off boolean.

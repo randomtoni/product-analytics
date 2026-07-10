@@ -223,7 +223,56 @@ test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E
         payloads?: Record<string, unknown>;
       };
     };
+    sessionReplay?: {
+      enabled: boolean;
+      sampleRate?: number;
+      masking?: {
+        maskAllInputs?: boolean;
+        maskTextSelector?: string;
+        blockSelector?: string;
+      };
+    };
   }>();
   const empty: AnalyticsConfig = {};
   expect(empty).toEqual({});
+});
+
+test('SessionReplayConfig is the enable/sample/mask carrier (enabled required, sampleRate + masking optional) and is re-exported (E14-S1)', () => {
+  expectTypeOf<pkg.SessionReplayConfig>().toEqualTypeOf<{
+    enabled: boolean;
+    sampleRate?: number;
+    masking?: {
+      maskAllInputs?: boolean;
+      maskTextSelector?: string;
+      blockSelector?: string;
+    };
+  }>();
+
+  // enabled is required (the opt-in); a config with only masking must NOT type-check as a
+  // SessionReplayConfig — pin the required flag by a negative assignability check.
+  expectTypeOf<{ masking: { maskAllInputs: true } }>().not.toMatchTypeOf<pkg.SessionReplayConfig>();
+
+  // Fully-populated masking still type-checks (the three neutral CSS/DOM fields).
+  const full: pkg.SessionReplayConfig = {
+    enabled: true,
+    sampleRate: 0.25,
+    masking: { maskAllInputs: true, maskTextSelector: '.secret', blockSelector: '.pii' },
+  };
+  expect(full.masking?.blockSelector).toBe('.pii');
+});
+
+test('createAnalytics accepts sessionReplay as a plain type carrier — no seam validation, no sampleRate normalization (E14-S1)', () => {
+  // The seam validates NOTHING: an out-of-range sampleRate is accepted verbatim (normalization
+  // is the browser recorder's job, S4), and init never throws on it. Mirrors how `flags` config
+  // passes straight through the seam untouched.
+  expect(() =>
+    createAnalytics({ sessionReplay: { enabled: true, sampleRate: 1.7 } })
+  ).not.toThrow();
+  expect(() =>
+    createAnalytics({ sessionReplay: { enabled: true, sampleRate: -3 } })
+  ).not.toThrow();
+  // A replay-enabled provider is still just the base provider this release — no recorder wired,
+  // the replay slot stays undefined (S2 populates it).
+  const analytics = createAnalytics({ sessionReplay: { enabled: true } });
+  expect(analytics.replay).toBeUndefined();
 });
