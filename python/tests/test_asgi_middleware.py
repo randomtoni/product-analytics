@@ -154,6 +154,48 @@ def test_context_is_restored_after_the_response() -> None:
     anyio.run(drive)
 
 
+def test_lifespan_scope_passes_through_without_opening_a_context() -> None:
+    # A lifespan scope spans the whole app lifetime, not one request — the middleware must NOT open
+    # a per-request context for it (the context would outlive any request). It passes straight
+    # through to the app, and no context is entered.
+    seen: dict[str, object] = {}
+
+    async def app(scope: object, receive: object, send: object) -> None:
+        seen["ran"] = True
+        seen["context"] = current_context()
+
+    lifespan_scope: Scope = {"type": "lifespan"}
+
+    async def drive() -> None:
+        await RequestContextASGIMiddleware(app)(lifespan_scope, _noop_receive, _noop_send)
+
+    anyio.run(drive)
+
+    assert seen["ran"] is True
+    # No request-scoped context was opened for the lifespan span.
+    assert seen["context"] is None
+
+
+def test_websocket_scope_passes_through_without_opening_a_context() -> None:
+    # A websocket scope is a long-lived connection, not a single request — same passthrough as
+    # lifespan: the app runs, but no per-request context wraps it.
+    seen: dict[str, object] = {}
+
+    async def app(scope: object, receive: object, send: object) -> None:
+        seen["ran"] = True
+        seen["context"] = current_context()
+
+    websocket_scope: Scope = {"type": "websocket", "path": "/ws", "headers": []}
+
+    async def drive() -> None:
+        await RequestContextASGIMiddleware(app)(websocket_scope, _noop_receive, _noop_send)
+
+    anyio.run(drive)
+
+    assert seen["ran"] is True
+    assert seen["context"] is None
+
+
 def test_capture_inside_an_async_handler_resolves_against_request_scope() -> None:
     adapter = _RecordingAdapter()
     analytics = Analytics(adapter)
@@ -176,14 +218,16 @@ def test_capture_inside_an_async_handler_resolves_against_request_scope() -> Non
     assert event.properties["clicked"] is True
 
 
-# --- integration: through a real Starlette app + async test client --------------------------
+# --- integration: through a real Starlette app + httpx.ASGITransport -------------------------
 
 
 def test_capture_through_a_real_starlette_app() -> None:
+    # Drive a real Starlette app (routing + middleware stack) over httpx.ASGITransport — the
+    # deprecation-free async ASGI harness (Starlette's own TestClient/httpx pairing is deprecated).
+    import httpx
     from starlette.applications import Starlette
     from starlette.responses import PlainTextResponse
     from starlette.routing import Route
-    from starlette.testclient import TestClient
 
     adapter = _RecordingAdapter()
     analytics = Analytics(adapter)
@@ -197,8 +241,12 @@ def test_capture_through_a_real_starlette_app() -> None:
     app = Starlette(routes=[Route("/report", handler)])
     app.add_middleware(RequestContextASGIMiddleware)
 
-    with TestClient(app) as client:
-        response = client.get("/report")
+    async def drive() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get("/report")
+
+    response = anyio.run(drive)
 
     assert response.status_code == 200
     assert len(adapter.captured) == 1

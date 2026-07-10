@@ -257,6 +257,10 @@ def test_bare_integrations_import_does_not_pull_django() -> None:
         "sys.meta_path.insert(0, _Block())\n"
         "import analytics_kit.integrations\n"
         "assert 'django' not in sys.modules\n"
+        # Also assert the .django submodule itself never loaded — this bites on an eager
+        # `from .django import ...` regression, which the 'django' check alone would miss
+        # (the submodule's own try/except swallows the blocked import). Mirrors the ASGI test.
+        "assert 'analytics_kit.integrations.django' not in sys.modules\n"
         "print('ok')\n"
     )
     result = subprocess.run(

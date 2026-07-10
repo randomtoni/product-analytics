@@ -29,13 +29,15 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
 class RequestContextASGIMiddleware:
-    """Open a request-scoped analytics context around each ASGI request.
+    """Open a request-scoped analytics context around each HTTP request.
 
     Follows the pure ASGI-3 middleware shape: ``__init__`` stores the wrapped app, and
     ``async def __call__(scope, receive, send)`` awaits the app inside a
     :func:`~analytics_kit.integrations.new_context` block so the request-scoped context is live for
     the whole downstream call and torn down after it returns — no leak across concurrent requests
-    (``contextvars`` is task-local). A consumer binds the request's ``distinct_id`` (via
+    (``contextvars`` is task-local). Only ``http`` scopes are wrapped; ``lifespan`` and
+    ``websocket`` scopes pass straight through, so the per-request context never spans the app
+    lifetime or a long-lived socket. A consumer binds the request's ``distinct_id`` (via
     ``set_context_distinct_id``) and any ``add_tag(...)`` inside the context; this middleware
     decides nothing about identity.
     """
@@ -44,5 +46,8 @@ class RequestContextASGIMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
         with new_context():
             await self.app(scope, receive, send)
