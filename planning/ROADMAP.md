@@ -1,54 +1,113 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-09 — E11 (adoption audit) shipped; the R1 core cycle is COMPLETE (E1–E11 all done) — awaiting `/roadmap promote`
+Last updated: 2026-07-10 — Python-parity cycle COMPLETE; PY1–PY8 all shipped. Cycle drained → ready for `/roadmap promote`
 
 ## Status
 
-Pre-1.0. **The R1 core cycle is COMPLETE — E1–E11 all shipped.** The vendor-neutral **`core`** seam (E1–E3) plus the **browser** (E4 identity · E5 transport · E6 capture/enrichment), **node** (E7 capture · E8 query), and **React** (E9) targets are capability-complete; the **example consumer** (E10 — Fernly) proves config-only adoption; and the **adoption audit** (E11) gates both acceptance bars + vendor-neutrality as standing CI checks. NOW is fully drained — awaiting **`/roadmap promote`** to open the next cycle (user-driven). Closed epics archive to [`epics/done/`](epics/done/); narrative lives in [`planning/HISTORY.md`](HISTORY.md).
+Pre-1.0. Two cycles complete in **TypeScript** and archived: the vendor-neutral **`core`** seam,
+then the **R1 targets** cycle (browser · node · React targets + example consumer + adoption audit).
+The TS lib is capability-complete against the BRIEF contract, with both acceptance bars and
+vendor-neutrality gated as standing CI checks. On 2026-07-09 the repo split into a polyglot layout
+([`ts/`](../ts/) shipped, [`python/`](../python/) scaffolded); the third cycle — **Python parity** —
+is NOW, in flight once its epics land. Closed cycles archive their epics to
+[`epics/done/`](epics/done/); the narrative of what each established lives in
+[`planning/HISTORY.md`](HISTORY.md).
 
 ## Sequencing
 
-NOW holds the epics committed for the current build push; **`/implement-epics all` builds every NOW epic**, in dependency order. Ordering is driven by each epic's `blocked_by` graph — epics are the unit of work, not grouped into area-cycles. Prioritization is measured against the SOTA / `posthog-js`-capability bar.
-
-Dependency graph (E1–E3 done):
-
-- `E4` (identity) → `E5` → `E6` (capture) → `E9` (react)
-- `E7` (node) and `E8` (query) depend only on the shipped core seam — no wait on the E4→E6 chain
-- `E10` (example consumer) needs E6/E7/E8/E9; `E11` (audit) closes after E10
-
-A valid build order honoring every `blocked_by`: **E4 → E5 → E6 → E7 → E8 → E9 → E10 → E11**.
+NOW holds the epics committed for the current build push; **`/implement-epics all` builds every NOW
+epic**, in dependency order driven by each epic's `blocked_by` graph. Epics are the unit of work,
+not grouped into area-cycles. Prioritization is measured against the SOTA / `posthog-js`-capability
+bar, not consumer pull.
 
 ## NOW
 
-Every remaining epic is committed. `/implement-epics all` builds them in the dependency order above.
+**Python parity** — a full Python implementation of the vendor-neutral library under
+[`python/`](../python/) (scaffolded), built to capability parity with the shipped TS lib. The parity
+rule governs the whole cycle: **every capability the TS surface exposes must be reachable in
+Python**, adapted idiomatically and **server-shaped** — a plain client plus framework bindings, with
+no browser/DOM target (persistence, autocapture, pageviews and session replay have no server analog
+and are out of scope here).
 
-- **[E4-ID-identity-persistence](epics/done/E4-ID-identity-persistence.md)** *(done)* — anonymous UUIDv7 distinct id + separate device id, config-selectable persistence (`cookie` | `localStorage+cookie` | `memory`), cross-subdomain cookie domain/scope, anonymous→identified merge (rides `identify()`; identity state adapter-internal), super-property registration (allowlist-gated at registration), session id assignment + expiry, durable tri-state consent (`granted`/`denied`/`pending`, DNT-folded), and `reset()`.
-- **[E5-CAP-transport](epics/done/E5-CAP-transport.md)** *(done)* — batching (time + size trigger) + gzip compression (native `CompressionStream` + fflate fallback), retry with exponential backoff+jitter (network/5xx-only), offline queue that survives reloads (the one BRIEF §4 gap PostHog doesn't fill), fetch→XHR→sendBeacon + keepalive/unload drain, config-supplied ingest host/path, `dedupeId`→wire `uuid`, client rate-limiter + neutralized back-pressure, bot/crawler filtering.
-- **[E6-CAP-capture-enrichment](epics/done/E6-CAP-capture-enrichment.md)** *(done)* — `track` / `page` / adapter-internal pageleave, fresh-per-event page + UTM/attribution + device/browser/referrer context (each opt-out-able via one structured `enrichment` object), pluggable country source (E3-gated value) + GeoIP disable, DOM autocapture opt-in (default OFF, phone-home removed, sensitive scrub), and per-context capture profiles (`context()` → narrower `ScopedAnalytics`, shared identity/session/transport). No new facade verb — pin held at fifteen.
-- **[E7-NODE-server-capture](epics/done/E7-NODE-server-capture.md)** *(done)* — standalone `@analytics-kit/node` client: server-side `capture` (required `distinctId`) + `setTraits`/`setGroupTraits`, caller-suppliable `dedupeId`→wire `uuid` idempotency, in-memory batch queue (drop-oldest) + gzip (`node:zlib`) `{api_key,batch,sent_at}` delivery + 413-halving, shared `enforceAllowlist` privacy path (bar A, one code path), unkeyed whole-stack no-op (bar B), `flush()`/`shutdown()` lifecycle. Frozen-15 pin held.
-- **[E8-QRY-query-client](epics/done/E8-QRY-query-client.md)** *(done)* — neutral `AnalyticsQueryClient` (funnel / retention / trend / uniqueCount + `rawQuery(expr: string)` escape hatch, all taxonomy-typed → flat neutral `QueryResult`) in `@analytics-kit/node`; `HttpQueryAdapter` (sync + bounded async poll, Bearer personal-key auth, all wire vocab adapter-internal); `WarehouseQueryAdapter` typed stub = the bar-A proof (two adapters, one interface, seam unchanged); server-only `QueryClientConfig` distinct from ingest; unkeyed `QueryNoop` (bar B). Frozen-15 pin held.
-- **[E9-RCT-react-binding](epics/done/E9-RCT-react-binding.md)** *(done)* — optional `@analytics-kit/react` binding: SSR-safe `AnalyticsClientProvider` (synchronous create-once construction, discriminated `client` XOR `config` props, unkeyed no-op rides through), `useAnalytics<TX>()` (clean `RootAnalytics<TX>`, taxonomy through the hook, sentinel-throws outside a provider), optional router-agnostic `usePageView<TX>()` (manual `page()` on a consumer-threaded route, no history listener). Peer-dep react + browser; frozen-15 pin held; zero vendor refs.
-- **[E10-CORE-example-consumer](epics/done/E10-CORE-example-consumer.md)** *(done)* — generic example consumer (invented product **Fernly**) under `examples/`, proving new-app adoption is config-only (bar B). One consumer, one taxonomy, every surface: browser-facade merge/contexts/allowlist + node capture + query snapshots + React binding — all `examples/**`-only, zero `packages/**` (several slices needed no source change at all). `examples/fernly` is a workspace member whose `turbo typecheck`-against-`dist` gate IS the bar-B proof.
-- **[E11-CORE-adoption-audit](epics/done/E11-CORE-adoption-audit.md)** *(done)* — the capstone audit: a CI-able exit-nonzero vendor/product-name neutrality scan (`scripts/neutrality-scan.ts`, scan-by-dimension over `dist` + `$`-wire-confinement), the README interface→implementation matrix + adopt-in-a-new-app guide, and re-runnable gated proofs of BOTH acceptance bars (bar A = adapter-swap test, bar B = config-only footprint test) + a capability-completeness audit vs the BRIEF contract (no silent gap; by-design-omitted flags/replay rows). Frozen-15 pin held; whole surface neutrality-gated.
+The **shipped [`ts/`](../ts/) tree is the contract reference** the port ports *to*: the Python seam
+mirrors it capability-for-capability, only the expression differs. Same seam, idiomatic per language
+— provider contract and adapter interface as `Protocol`s, **Pydantic at the genuine boundaries**,
+the typed-taxonomy mechanism, the consumer-supplied payload allowlist, and the config-selected
+factory. The PostHog-compatible target is **de-branded from `posthog-python`** (the server-SDK
+analog, cloned beside `posthog-js/` at the repo root), copying only what's needed and neutralizing
+it — no vendor name reaches the Python surface. A **Python analog of the neutrality scan** lands in
+the cycle's audit epic as the standing zero-vendor gate, mirroring `ts/scripts/neutrality-scan.ts`.
+
+The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → server capture → query client
+→ framework bindings → example consumer → parity audit.
+
+**Epics** (architect-consulted 2026-07-09; `/implement-epics all` builds them in `blocked_by` order):
+
+- **[PY1-NODE-python-scaffold](epics/done/PY1-NODE-python-scaffold.md)** *(done)* — uv/pytest/ruff/mypy(strict)
+  scaffold; **one distribution `analytics-kit` + extras** (not multiple), submodule layout, gates green
+  on the empty seam.
+- **[PY2-CORE-python-seam](epics/done/PY2-CORE-python-seam.md)** *(done)* — the vendor-neutral seam: adapter
+  `Protocol` SPI + server-shaped provider contract (frozen-15 = 13 methods + `flags?`/`replay?`
+  declared `None`-slots) + config-selected factory + no-op; sync-client + background-thread posture;
+  Pydantic at boundaries.
+- **[PY3-CORE-taxonomy-allowlist](epics/done/PY3-CORE-taxonomy-allowlist.md)** *(done)* — the library's OWN surface:
+  payload allowlist (1:1 port) + two-layer typed taxonomy (runtime registry + best-effort static).
+- **[PY4-NODE-server-capture](epics/done/PY4-NODE-server-capture.md)** *(done)* — server capture + set/set-group +
+  `queue.Queue`/daemon-thread consumer (**drop-oldest to match TS, NOT posthog-python's drop-newest**)
+  + adapter-internal wire mapper + `dedupe_id`→`uuid` idempotency + retry classification + no-op.
+- **[PY5-QRY-query-client](epics/done/PY5-QRY-query-client.md)** *(done)* — `AnalyticsQueryClient` `Protocol`
+  (funnel/retention/trend/unique-count + `raw_query`) + sync HTTP query adapter + warehouse stub (bar-A
+  proof) + no-op.
+- **[PY6-RCT-framework-bindings](epics/done/PY6-RCT-framework-bindings.md)** *(done)* — the React analog:
+  `contextvars` request scope + `@scoped` decorator + **Django + ASGI/FastAPI** middleware (Flask/Celery
+  deferred), lazy-imported behind extras.
+- **[PY7-CORE-example-consumer](epics/done/PY7-CORE-example-consumer.md)** *(done)* — generic server-shaped
+  example (Quillstream) proving bar B (config-only adoption) via the architect-locked TWO-gate model —
+  fidelity (installed-dist mypy) + enforcement (AST import-audit, public-API-only) — since Python has no
+  physical `dist` boundary; framework binding carries a request-scoped distinct_id; zero `analytics_kit` edits.
+- **[PY8-OBS-parity-audit](epics/done/PY8-OBS-parity-audit.md)** *(done)* — capability-parity matrix vs the TS
+  surface (browser-N-A rows AND `flags?`/`replay?` declared-slot rows documented, no silent gap) +
+  the Python neutrality-scan analog (fully-extracted wheel+sdist + `ast` wire-confinement) as a standing
+  gate + real-stack loopback probes/negative controls ground-truthed vs `posthog-python` source. Both
+  acceptance bars re-proven. **Closes the Python-parity cycle.**
+
+**Dependency graph:** PY1 → PY2 → PY3; then {PY4, PY5} in parallel off PY3; PY6 → off PY4; PY7 needs
+PY4 + PY5 + PY6; PY8 closes off PY7.
 
 ## UPCOMING
 
-_Empty — everything remaining is committed in NOW._
+**feature-flags** — implement the declared-but-unimplemented `FeatureFlagPort` (evaluation,
+bootstrap, local/server-side eval, flag payloads) behind the vendor-neutral seam, across **both
+language trees**. Feature flags are core, cross-platform surface for every mature analytics SDK — in
+the `posthog-js` reference they live in `core` + `browser` + `node`, so the capability is inherently
+server-shaped as well as browser-shaped and advances the TS *and* Python surfaces together. The port
+is already declared in the shipped seam, so this finishes a stubbed contract rather than widening the
+charter; it lands additively. The neutral interface is defined once and satisfied by each target's
+adapter, keeping provider-swap and config-only-adoption intact.
 
 ## LATER
 
-_Empty._
+- **session-replay** — implement the declared-but-unimplemented `SessionReplayPort`. Browser-shaped
+  (DOM capture); TS-only in practice, with no server analog — advances a narrower slice of the
+  surface than feature-flags, which is why it sequences after.
 
 ## Cycle history
 
 | Shipped | Closed | Epics |
 |---|---|---|
 | `core` seam | 2026-07-08 | E1, E2, E3 → [`epics/done/`](epics/done/) |
-| R1 targets + audit | 2026-07-09 | E4, E5, E6, E7, E8, E9, E10, E11 → [`epics/done/`](epics/done/) |
+| `R1 targets` + audit | 2026-07-09 | E4, E5, E6, E7, E8, E9, E10, E11 → [`epics/done/`](epics/done/) |
 
 ## How to read this file
 
-- **NOW** holds every epic committed for the current build push (each `*(planned)*` or `*(active)*`); `/implement-epics all` builds them all in `blocked_by` dependency order. **UPCOMING / LATER** hold epics not yet committed to a build push.
-- **Epics are the unit of work.** An epic is done when its interface surface is v1 and it's archived to `epics/done/`. No version numbers appear here — versions are git tags, not planning labels.
-- **Epic links** point to `epics/<id>.md`; closed epics move to `epics/done/`. Stories live under `stories/1-backlog/ … 5-done/`.
-- **Promotion** (NOW↔UPCOMING↔LATER) and re-sequencing are user-driven via `/roadmap`; per-epic execution runs through `/implement-epics`. This file is the single source of truth for the plan; narrative history lives in `planning/HISTORY.md`.
+- **This file is forward-looking — it lists only epics still to build.** A done epic is never left
+  here: on close it archives to [`epics/done/`](epics/done/), gets one row in **Cycle history**
+  above, and its narrative moves to [`planning/HISTORY.md`](HISTORY.md).
+- **NOW** holds every epic committed for the current build push; `/implement-epics all` builds them
+  in `blocked_by` dependency order. **UPCOMING / LATER** hold epics not yet committed to a build
+  push.
+- **Epics are the unit of work.** No version numbers appear here — versions are git tags, not
+  planning labels. Epic links point to `epics/<id>.md` (closed epics live under `epics/done/`);
+  stories live under `stories/1-backlog/ … 5-done/`.
+- **Promotion** (NOW↔UPCOMING↔LATER) and re-sequencing are user-driven via `/roadmap`; per-epic
+  execution runs through `/implement-epics`.

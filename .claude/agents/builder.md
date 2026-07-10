@@ -89,7 +89,7 @@ The architect won't write code — it's the technical sounding-board for "which 
 
 ### Step 5 — Test
 
-1. Run the test suite — `turbo run test` (vitest), or the scoped path if the story names one. Report failures verbatim — don't silence, don't paper over.
+1. Run the test suite from the language workspace root — TS: `cd ts && pnpm turbo run test` (vitest); Python: `cd python && uv run pytest` — or the scoped path if the story names one. Report failures verbatim — don't silence, don't paper over.
 2. **Always add test scenarios — not just "a test ran".** For every Scope.In behavior and every AC bullet, write tests that cover:
    - **Happy path** — the behavior works in the documented common case.
    - **Edge cases** the story explicitly names — missing fields, empty inputs, collision conditions, default values, etc. If an AC says "missing field → 0", write a test that stubs the missing field and asserts 0.

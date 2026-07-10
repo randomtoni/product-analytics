@@ -1,9 +1,19 @@
 .DS_Store
 
 posthog-js
+posthog-python
 
 handoff.md
 
 node_modules
 dist
 .turbo
+
+.venv
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.python-version
