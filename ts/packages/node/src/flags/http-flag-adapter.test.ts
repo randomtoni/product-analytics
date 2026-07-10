@@ -212,7 +212,9 @@ describe('degradation signal on a failed round-trip', () => {
     expect(set.degraded).toBe(true);
     expect(set.getFlag('anything')).toBeUndefined();
     expect(set.isEnabled('anything')).toBe(false);
-    expect(set.reason('anything')).toBeUndefined();
+    // Degraded-EMPTY reports 'unresolved' for every key (the canonical null-object), matching the
+    // browser + Python adapters — so a consumer can detect the failed state per-key, not just via .degraded.
+    expect(set.reason('anything')).toBe('unresolved');
   });
 
   test('a thrown network error degrades to unresolved rather than propagating', async () => {

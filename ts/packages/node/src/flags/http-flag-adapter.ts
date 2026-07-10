@@ -6,6 +6,7 @@ import {
   type FlagValue,
   type FlagsConfig,
   type TaxonomyShape,
+  emptyFlagSet,
 } from 'analytics-kit';
 import type { FetchLike } from '../config';
 import {
@@ -97,6 +98,12 @@ export interface HttpFlagAdapterOptions {
 // generic carries so a typed consumer's `getFlag`/`getPayload` reads narrow.
 function buildFlagSet<TX extends TaxonomyShape>(snapshot: Snapshot): FlagSet<TX> {
   const { flags, payloads, reason, degraded } = snapshot;
+  // A degraded-EMPTY snapshot (nothing resolved) presents as the canonical empty null-object, so
+  // reason(key) reports 'unresolved' for every key — matching the browser + Python adapters + the
+  // seam's emptyFlagSet. A non-empty snapshot keeps per-key reason gating (absent key → undefined).
+  if (Object.keys(flags).length === 0 && Object.keys(payloads).length === 0 && degraded) {
+    return emptyFlagSet<TX>();
+  }
   return Object.freeze({
     isEnabled: (key: string): boolean => flags[key] !== undefined && flags[key] !== false,
     getFlag: (key: string): FlagValue | undefined => flags[key],

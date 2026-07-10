@@ -222,7 +222,9 @@ describe('onlyEvaluateLocally suppresses the fallback', () => {
 
     expect(set.getAll()).toEqual({});
     expect(set.degraded).toBe(true);
-    expect(set.reason('anything')).toBeUndefined();
+    // Degraded-EMPTY reports 'unresolved' for every key (the canonical null-object), converged with
+    // the browser + Python adapters.
+    expect(set.reason('anything')).toBe('unresolved');
     expect(posts).toHaveLength(0);
     adapter.stop();
     poller.stop();
