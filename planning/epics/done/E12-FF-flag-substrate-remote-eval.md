@@ -1,6 +1,6 @@
 ---
 id: E12-FF-flag-substrate-remote-eval
-status: active
+status: done
 area: feature-flags
 touches: [core, browser, node, react]
 api_impact: additive
@@ -67,16 +67,16 @@ proof this port shape is right. Architect-consulted against the `posthog-js` che
 
 ## Stories
 
-Six stories, drafted to `stories/2-ready-for-dev/`. **S1 pins the port ONCE across both trees**; the
-three remote adapters (S2 browser, S3 node, S4 Python) then build in parallel against that frozen
-contract; S5 layers the React hook; S6 re-converges both trees at the example-consumer bar proofs.
+All six stories shipped (`stories/5-done/`). **S1 pinned the port ONCE across both trees**; the three
+remote adapters (S2 browser, S3 node, S4 Python) built against that frozen contract; S5 layered the
+React hook; S6 re-converged both trees at the example-consumer bar proofs.
 
-- **[E12-S1](../stories/2-ready-for-dev/E12-S1-neutral-flag-port-taxonomy-slot.md)** *(additive, no deps)* — pin `FeatureFlagPort<TX>` / `FlagSet` / `FlagContext` / the taxonomy `flags` slot / the `flags.bootstrap` config shape simultaneously in both `ports`+`taxonomy`+`config` files (TS + Python). The shape-defining substrate; no adapter work. MUST be first.
-- **[E12-S2](../stories/2-ready-for-dev/E12-S2-browser-remote-eval-adapter.md)** *(additive, depends on S1)* — browser remote-eval adapter: fetch + cache + synchronous bootstrap seeding + `onChange`; `evaluate()` resolves the cached/loaded set; browser fills `distinctId` from current identity; de-branded from `posthog-featureflags.ts`.
-- **[E12-S3](../stories/2-ready-for-dev/E12-S3-node-remote-eval-adapter.md)** *(additive, depends on S1)* — node remote-eval adapter: `evaluate(context)` → remote round-trip returning the `FlagSet`; `distinctId` required + validated; `onChange` fires-once; de-branded from node's `evaluateFlags` remote path (local path is E13).
-- **[E12-S4](../stories/2-ready-for-dev/E12-S4-python-server-remote-eval-adapter.md)** *(additive, depends on S1)* — Python server remote-eval adapter at parity with S3 (remote path, `distinct_id` required, once-fire `on_change`), de-branded from `posthog-python`.
-- **[E12-S5](../stories/2-ready-for-dev/E12-S5-react-flag-hook.md)** *(additive, depends on S1 + S2)* — taxonomy-typed React flag hook over `onChange` (re-renders on flag arrival, unsubscribes on unmount); sentinel-throws outside a provider; graceful when the `flags` slot is absent.
-- **[E12-S6](../stories/2-ready-for-dev/E12-S6-example-consumer-flag-proof.md)** *(additive, depends on S2 + S3 + S4 + S5)* — Fernly (TS) + Quillstream (Python) exercise flags by config alone (bootstrap + evaluate + typed payload + `onChange`); bar-A swap to a mock flag adapter with zero consumer change; bar-B config-only bootstrap. The both-trees re-convergence point.
+- **[E12-S1](../stories/5-done/E12-S1-neutral-flag-port-taxonomy-slot.md)** *(done — `31413f4`)* — pinned `FeatureFlagPort<TX>` / `FlagSet` / `FlagContext` / the taxonomy `flags` slot / the `flags.bootstrap` config + the canonical `emptyFlagSet()` simultaneously in both `ports`+`taxonomy`+`config` files (TS + Python). The shape-defining substrate; no adapter work.
+- **[E12-S2](../stories/5-done/E12-S2-browser-remote-eval-adapter.md)** *(done — `ec1024c`, 1 retry)* — browser remote-eval adapter via the `provider.flags` slot: fetch + cache + synchronous bootstrap seeding + `onChange`; `getDistinctId()` identity; de-branded from `posthog-featureflags.ts`. (Retry fixed a forced-`refresh` context-drop.)
+- **[E12-S3](../stories/5-done/E12-S3-node-remote-eval-adapter.md)** *(done — `4853d01`)* — node standalone `createFlagClient` factory (NOT a `NodeAnalytics` slot — `FrozenNodeMembers` is frozen; mirrors `createQueryClient`); `distinctId` required + validated pre-network; `onChange` fires-once; per-call fetch; de-branded from node's `evaluateFlags` remote path.
+- **[E12-S4](../stories/5-done/E12-S4-python-server-remote-eval-adapter.md)** *(done — `5b3709e`, 1 retry)* — Python server remote-eval adapter at parity: `Analytics.flags` slot + standalone `create_flag_client` factory; sync `evaluate`; `urllib`-HTTPError→degrade; de-branded from `posthog-python`. (Retry fixed a test daemon-thread leak.)
+- **[E12-S5](../stories/5-done/E12-S5-react-flag-hook.md)** *(done — `aa57b01`)* — taxonomy-typed `useFeatureFlags<TX>()` (single snapshot hook, `onChange`-driven re-render, `NOT_IN_PROVIDER` sentinel, `emptyFlagSet()` graceful fallback). First-paint caveat accepted (async-only port); S1 sync-getter noted as a follow-up.
+- **[E12-S6](../stories/5-done/E12-S6-example-consumer-flag-proof.md)** *(done — `df22456`)* — Fernly (TS) + Quillstream (Python) exercise flags by config alone; bar-A swap to a mock adapter with zero consumer change; bar-B config-only; the `FrozenFlagMembers` capability-presence pin. Zero library-src edits (audit-not-patch). The both-trees re-convergence point.
 
 **Dependency graph:** `S1 → {S2, S3, S4}` (all three adapters build against the frozen S1 port, in
 parallel); `S1 + S2 → S5` (the React hook exercises the browser adapter); `{S2, S3, S4, S5} → S6`

@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-10 — Python-parity cycle closed + archived to HISTORY; feature-flags + session-replay pulled into NOW; cycle epics (E12–E14) drafted + architect-refined
+Last updated: 2026-07-10 — E12 (feature-flags substrate + remote eval) shipped + archived; E13 (local eval) next
 
 ## Status
 
@@ -40,7 +40,7 @@ SOTA / `posthog-js`-capability bar.
 
 **feature-flags** (sequences first — broadest surface, both trees):
 
-- **[E12-FF-flag-substrate-remote-eval](epics/E12-FF-flag-substrate-remote-eval.md)** *(active)* — the neutral
+- **[E12-FF-flag-substrate-remote-eval](epics/done/E12-FF-flag-substrate-remote-eval.md)** *(done)* — the neutral
   `FeatureFlagPort` (async-first snapshot model, with a neutral `degraded`/`reason` signal so eval
   failure is distinguishable from a real "off") + `FlagContext` + taxonomy `flags` slot +
   config-supplied bootstrap + **remote-evaluation** adapters (browser fetch, node round-trip, Python
