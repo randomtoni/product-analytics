@@ -53,7 +53,7 @@ Frozen-15. Source: `packages/analytics-kit/src/analytics-provider.ts`.
 | `optIn()` / `optOut()` / `hasOptedOut()` | `AnalyticsProvider.optIn` / `.optOut` / `.hasOptedOut` → `liveAdapter.setConsentState(...)` + active-adapter swap | `packages/browser/src/posthog-core.ts:3840`/`:3917`/`:3995`; manager `consent.ts:20` (`ConsentManager`) |
 | `flush()` / `shutdown()` | `AnalyticsProvider.flush` / `.shutdown` → `liveAdapter.flush()` / `.shutdown()` (`Promise<void>`) | `packages/browser/src/posthog-core.ts:3037` `shutdown(...)`; queue driver `request-queue.ts:60` |
 | `flags?` (IMPLEMENTED — E12 remote + E13 local) | `AnalyticsProvider.flags?: FeatureFlagPort` — declared on the frozen surface AND now backed by a real adapter (browser remote adapter + node/Python remote + local eval); see §Feature flags below | see §Feature flags below |
-| `replay?` (declared-only, BY DESIGN) | `AnalyticsProvider.replay?: SessionReplayPort` — declared, unimplemented this release | see §Explicitly OUT below |
+| `replay?` (IMPLEMENTED browser/TS — E14; Python N-A-by-platform) | `AnalyticsProvider.replay?: SessionReplayPort` — declared on the frozen surface AND now backed by a real browser recorder (rrweb behind the adapter, session-linked, config-only); see §Session replay below | see §Session replay below |
 
 **Adjacent (not on the frozen-15, so no `keyof` pin): `context(name)`** — carried on `RootAnalytics`
 (the widened return type in `analytics-provider.ts`), deliberately NOT on `AnalyticsProvider`, so
@@ -165,7 +165,8 @@ Source: `packages/node/src/query/query-client.ts`. 5 methods.
 > below into a shipped capability. The `FeatureFlagPort` seam (declared in E12-S1) is now backed by
 > real adapters across BOTH trees — remote eval (E12) on every target, local (in-process) eval (E13)
 > on the server targets. What was a typed extension point is now a realized primitive; the OUT table
-> keeps only the three that remain non-goals (session replay, surveys, heatmaps).
+> keeps only the non-goals that remain — surveys and heatmaps (session replay also graduated, E14 —
+> see §9).
 
 Seam: `FeatureFlagPort` (`packages/analytics-kit/src/ports.ts`), surfaced as the optional `flags?`
 member of `AnalyticsProvider` (client) and as the standalone flag client (`create-flag-client` in
@@ -197,30 +198,62 @@ privileged definition-reading credential select the local-capable adapter), zero
 
 ---
 
+## 9. Session replay — `SessionReplayPort` (IMPLEMENTED browser/TS — E14; Python N-A-by-platform)
+
+> **Status change (E14-S5, 2026-07-10):** session replay GRADUATED from the "Explicitly OUT" table
+> below into a shipped capability on the browser/TS surface. The `SessionReplayPort` seam (declared
+> in E14-S1) is now backed by a real browser recorder — rrweb behind the adapter, session-linked to
+> captured events, delivered on its own path, enabled config-only. What was a typed extension point
+> is now a realized primitive on the browser target; the OUT table keeps only the two that remain
+> non-goals (surveys, heatmaps). **Python is N-A-by-platform (permanent):** a server-shaped client has
+> no DOM to record, so the Python `replay` slot stays `None` — a final documented platform boundary,
+> not a pending gap (see `python/README.md` parity matrix + `provider.py` docstring).
+
+Seam: `SessionReplayPort` (`ts/packages/analytics-kit/src/ports.ts`), surfaced as the optional
+`replay?` member of `AnalyticsProvider` and populated on the browser target (`attachReplay` in
+`ts/packages/browser`, config-only, fires only for a keyed `BrowserAdapter`). The v1 control surface
+is four verbs — `start` / `stop` / `isActive` / `getReplayId` — each with a direct posthog-js
+public-API analog and **zero rrweb/vendor vocabulary**. rrweb, the recorder, delivery, masking, and
+sampling are all adapter-internal, reached only through a separately-importable
+`@analytics-kit/browser/replay` entrypoint so a non-replay consumer never bundles rrweb.
+
+| Capability | Neutral surface | Present in | posthog-js reference (by role) |
+|---|---|---|---|
+| **Session recording** (record DOM mutations, session-linked to captured events, delivered on a separate path) | `SessionReplayPort.{start, stop, isActive, getReplayId}` + `AnalyticsConfig.sessionReplay?: { enabled, sampleRate?, masking? }` (config-only enablement — bar B) | **browser** (rrweb behind the adapter, E14-S2/S3/S4) + **React** (replay reached via `provider.replay`) — **N-A-by-platform from the server** (no DOM to record; the Python `replay` slot is permanently `None`) | `packages/browser/src/extensions/replay/session-recording.ts:39` `class SessionRecording implements Extension` |
+
+**Both bars hold for replay:** bar A — a mock (or future non-vendor) `SessionReplayPort` satisfies
+the one 4-verb port with zero consumer change (`getReplayId`/`start`/`stop`/`isActive` resolve against
+either backend; the browser recorder's rrweb/delivery internals never reach the port). Bar B —
+enabling replay + sampling + masking is init config (`config.sessionReplay`), zero library change;
+`getReplayId()` returns the SHARED session id captured events carry, so recording and events stitch on
+one id. `getReplayId` exposes the neutral id, never a vendor console URL.
+
+---
+
 ## Explicitly OUT this release — typed extension points, BY DESIGN (BRIEF §"Explicitly OUT")
 
-These are the **load-bearing** rows: each converts a raw gap ("we forgot replay") into
-documented-intentional scope ("replay is a non-goal with a declared extension seam"). BRIEF line 139
+These are the **load-bearing** rows: each converts a raw gap ("we forgot surveys") into
+documented-intentional scope ("surveys is a non-goal with a declared extension seam"). BRIEF line 139
 originally listed FOUR here; **feature flags / experiments graduated to implemented (E12 remote +
-E13 local — see §8 above)**, so THREE remain OUT. Session replay has a declared port on the frozen
-surface today; all three map to a real posthog-js `Extension` (so the omission is deliberate, not an
-oversight).
+E13 local — see §8 above)** and **session replay graduated to implemented on browser/TS (E14 — see §9
+above; Python N-A-by-platform)**, so TWO remain OUT. Both map to a real posthog-js `Extension` (so the
+omission is deliberate, not an oversight).
 
-Seams: `packages/analytics-kit/src/ports.ts` (`SessionReplayPort`), surfaced as the optional
-`replay?` member of `AnalyticsProvider`. (`FeatureFlagPort` / `flags?` is now IMPLEMENTED — §8.)
+Seams: no dedicated ports yet; each future port lands as ONE additive optional `AnalyticsProvider`
+member, the same pattern `flags?` (§8) and `replay?` (§9) followed when they graduated to implemented.
 
 | BRIEF §OUT capability | Status in library | Declared seam | posthog-js reference (by role) |
 |---|---|---|---|
-| **Session replay** | Typed extension point, NOT implemented — by design | `SessionReplayPort` (`ports.ts`) → `AnalyticsProvider.replay?` (declared-only; `keyof` includes `replay`, no instance carries it this release) | `packages/browser/src/extensions/replay/session-recording.ts:39` `class SessionRecording implements Extension` |
 | **Surveys** | Typed extension point, NOT implemented — by design | no dedicated port yet — a future port lands as ONE additive `AnalyticsProvider` optional member (same pattern as `flags?`/`replay?`), zero break | `packages/browser/src/posthog-surveys.ts:36` `PostHogSurveys implements Extension` |
 | **Heatmaps** | Typed extension point, NOT implemented — by design | no dedicated port yet — future additive optional member (same pattern) | `packages/browser/src/heatmaps.ts:61` `Heatmaps implements Extension` |
 
-> All three remaining omitted capabilities implement the SAME posthog-js `Extension` contract
+> Both remaining omitted capabilities implement the SAME posthog-js `Extension` contract
 > (`packages/browser/src/extensions/types.ts`) — evidence that the neutral seam's "declared
 > optional port" shape (`flags?`/`replay?`) is the right, uniform place they slot in additively
-> when a real adapter first ships one (as feature flags now have — §8). Whether the remaining three
-> should share one `Extension`-style neutral contract vs stay bespoke optional ports is a future
-> architect call; today they are a documented, seam-backed non-goal, not a silent gap.
+> when a real adapter first ships one (as feature flags and session replay now have — §8, §9).
+> Whether the remaining two should share one `Extension`-style neutral contract vs stay bespoke
+> optional ports is a future architect call; today they are a documented, seam-backed non-goal, not a
+> silent gap.
 
 ---
 
@@ -238,8 +271,13 @@ Seams: `packages/analytics-kit/src/ports.ts` (`SessionReplayPort`), surfaced as 
   trees: remote eval on every target (E12) + local (in-process) eval on the server targets (E13), at
   cross-tree hash parity, browser-absent-by-platform for local. Both bars hold (adapter-swap = zero
   consumer change; config-only enablement).
-- **§Explicitly OUT:** the three remaining non-goals (replay, surveys, heatmaps) are
-  documented-intentional omissions with declared/patterned extension seams — no silent gap.
+- **§9 session replay:** IMPLEMENTED browser/TS — `SessionReplayPort.{start, stop, isActive,
+  getReplayId}` backed by a real browser recorder (rrweb behind the adapter, session-linked, own
+  delivery path, config-only enablement + sampling + masking — E14). Python is N-A-by-platform
+  (permanent): no server DOM to record, the `replay` slot stays `None`. Both bars hold (mock-port
+  swap = zero consumer change; config-only enablement).
+- **§Explicitly OUT:** the two remaining non-goals (surveys, heatmaps) are documented-intentional
+  omissions with declared/patterned extension seams — no silent gap.
 
 Every BRIEF §Capability-contract line resolves to a real shipped export or an explicit by-design
 omission. **No capability is silently lost.** Any future absence surfaced by the gated presence

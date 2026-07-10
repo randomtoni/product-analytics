@@ -8,7 +8,12 @@ trait and group updates are discriminated ``NeutralEvent``\\ s (``internal_kind`
 capture path.
 
 Frozen-15 accounting — the fifteen members of the reference facade, each with its
-server disposition (nine mapped verbs, four N-A-by-platform, two ``None`` capability slots):
+server disposition (nine mapped verbs, five N-A-by-platform, one ``None`` capability slot).
+``replay`` is N-A-by-platform (permanent): a browser-only DOM recorder has no server home, so
+its slot stays ``None`` as a final boundary, not a pending one. The one remaining ``None``
+capability slot in this table is ``flags`` — whose ``None`` line below is STALE (``flags``
+shipped via E12 remote + E13 local eval; this docstring's ``flags`` row awaits an E12/E13
+doc-sync, tracked separately). The ``flags`` matrix row in ``../../README.md`` is current:
 
 ===============  ==================================================================
 Facade member    Server disposition
@@ -28,7 +33,8 @@ reset            N-A by platform: no persisted server identity to re-anonymize
 register         N-A as a runtime verb → construction-time ``super_properties`` dict
 unregister       N-A as a runtime verb: no runtime super-property store server-side
 flags            capability slot — ``FeatureFlagPort | None``, ``None`` this release
-replay           capability slot — ``SessionReplayPort | None``, ``None`` this release
+replay           N-A by platform (permanent): no server DOM to record —
+                 ``SessionReplayPort | None``, always ``None``
 ===============  ==================================================================
 
 Consent is server-scoped: a single instance-level in-memory send switch. ``opt_out()`` sets

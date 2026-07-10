@@ -9,9 +9,11 @@ The seam is built: a `Protocol`-based provider contract and adapter SPI, a typed
 consumer-supplied allowlist, a config-selected factory, a server capture target, the query read
 client, and the optional framework bindings — all reachable through the public `analytics_kit`
 surface. The `flags?` slot is **implemented** — a server flag client with remote eval and local
-(in-process) eval at cross-tree parity with the TS node client; the `replay?` slot stays declared
-but unfilled this release. The sections below map every capability to the TS surface, map every verb
-to its shipped implementation, and walk config-only adoption.
+(in-process) eval at cross-tree parity with the TS node client; the `replay?` slot is **N-A by
+platform** — session replay records DOM mutations in a browser, and a server-shaped client has no
+DOM to record, so the slot stays permanently `None` (a final, documented platform boundary, not a
+pending gap). The sections below map every capability to the TS surface, map every verb to its
+shipped implementation, and walk config-only adoption.
 
 ## Toolchain
 
@@ -39,15 +41,20 @@ pyproject.toml        # packaging + tool config
 
 This implementation is at **capability parity** with the TS surface, adapted idiomatically for a
 server shape (a plain client, no browser/DOM target). Every capability the TS surface exposes falls
-into exactly one of four dispositions here — **no silent gap**:
+into exactly one of these dispositions here — **no silent gap**:
 
 - **direct-analog** — same verb, same shape;
 - **idiomatic-adaptation** — the same capability, re-expressed for a server (fewer verbs, a
   construction-time lever);
 - **N-A by platform** — a browser-only mechanism with no server home, omitted **by design** (not a
-  gap);
-- **declared-but-unimplemented slot** — a capability port declared on the seam but unfilled this
-  release (a slot awaiting its owning cycle — distinct from an N-A omission).
+  gap). This is a *final* disposition, not a pending one: there is no future cycle that fills an
+  N-A-by-platform slot.
+
+A fourth disposition — **declared-but-unimplemented slot** (a capability port declared on the seam
+but awaiting its owning cycle) — has **no members** as of this release: `flags` graduated to
+implemented (E12 remote + E13 local eval), and `replay` moved to N-A-by-platform (a browser-only
+DOM recorder has no server home). Kept named here as the distinct category the PY8 audit locked, so
+a future declared-only slot has a documented home to land in.
 
 ### Client facade — the fifteen reference members
 
@@ -70,17 +77,18 @@ The reference client facade has fifteen members. Their server disposition is the
 | `register` | N-A by platform (as a runtime verb) | no runtime super-property store server-side; the **capability** is preserved idiomatically as the construction-time `super_properties` dict, merged into every capture |
 | `unregister` | N-A by platform | no runtime super-property store to remove from server-side — no analog |
 | `flags` | idiomatic-adaptation | **Implemented** — a server `FeatureFlagPort` client: `evaluate(FlagContext) -> FlagSet` with remote eval + local (in-process) eval at cross-tree parity with the TS node client. Strategy is adapter-internal; enabled config-only via `create_flag_client` / the provider `flags` slot |
-| `replay` | declared-but-unimplemented slot | `SessionReplayPort \| None`, defaulting to `None` this release (`ports.py`) |
+| `replay` | N-A by platform (permanent) | Session replay records DOM mutations in a browser; a server-shaped client has no DOM to record. `SessionReplayPort \| None`, always `None` (`ports.py` / `provider.py`) — documented platform omission, not a silent gap |
 
 Counts: **10 mapped verbs** — 6 direct-analog (`track`, `optIn`, `optOut`, `hasOptedOut`, `flush`,
 `shutdown`) + 4 idiomatic-adaptation (`identify`, `setTraits`, `group`, `flags` — the last now backed
-by a real server flag client, remote + local eval) · **4 N-A-by-platform** (`page`, `reset`,
-`register`, `unregister`) · **1 declared-but-unimplemented slot** (`replay`) = the fifteen reference
+by a real server flag client, remote + local eval) · **5 N-A-by-platform** (`page`, `reset`,
+`register`, `unregister`, `replay`) · **0 declared-but-unimplemented slots** = the fifteen reference
 members, one disposition each. (`flags` graduated from a declared-only slot to an implemented
-capability with E12 remote eval + E13 local eval; `provider.py`'s docstring stays the source of truth
-for the frozen-15 accounting.) `register`'s **runtime verb** is N-A server-side; its **capability**
-survives as the construction-time `super_properties` lever (the idiomatic adaptation noted in its
-row).
+capability with E12 remote eval + E13 local eval; `replay` moved from a declared-only slot to
+N-A-by-platform — a browser-only DOM recorder has no server home, so the slot is permanently `None`,
+a final boundary not a pending one. `provider.py`'s docstring stays the source of truth for the
+frozen-15 accounting.) `register`'s **runtime verb** is N-A server-side; its **capability** survives
+as the construction-time `super_properties` lever (the idiomatic adaptation noted in its row).
 
 ### Query primitives — direct-analog
 
@@ -111,17 +119,7 @@ is a documented omission, not a gap:
 | browser transport | the server uses its own batch-POST delivery, not a browser transport |
 | reserved-event-name set + persistence-key prefix | both guard a browser persistence substrate the server lacks — the server reserves **no** event names and uses **no** persistence-key prefix, so a consumer may freely declare any event name |
 | set / group trait-shape validation | prop-type validation is **capture-scoped** server-side (the event name selects the prop shape — the one runtime-value dependency); trait and group bags are key-gated by the allowlist but not trait-shape-validated (see `provider.capture`) |
-
-### Declared-but-unimplemented capability slots
-
-Distinct from N-A: `replay` is **declared** on the seam as an optional capability port, awaiting its
-owning cycle — a `Protocol` slot defaulting to `None`, parity-present as a slot exactly as the TS
-surface declares it unfilled this release. (`flags` was such a slot; it is now **implemented** —
-a server flag client with remote + local eval, populated config-only via the provider `flags` slot.)
-
-| Slot | Declared as | State |
-| --- | --- | --- |
-| `replay` | `SessionReplayPort` (`ports.py`), `replay` attribute defaults to `None` (`provider.py`) | declared, unfilled — browser-shaped in practice, held as a slot for surface parity |
+| session replay (`replay?` slot) | records DOM mutations (rrweb) in a browser; a server-shaped client has no DOM to record. The `SessionReplayPort` **type** stays declared on the seam (`ports.py`) for surface parity, but the provider `replay` attribute is permanently `None` (`provider.py`) — a final platform boundary, not a pending slot (no future Python cycle fills it) |
 
 ### Taxonomy typing — a stated guarantee gap
 

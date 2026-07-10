@@ -20,6 +20,7 @@ import type {
   FeatureFlagPort,
   FlagSet,
   QueryResult,
+  SessionReplayPort,
 } from 'analytics-kit';
 import type { NodeAnalytics, AnalyticsQueryClient } from '@analytics-kit/node';
 
@@ -73,6 +74,13 @@ type FrozenQueryMembers = 'funnel' | 'retention' | 'trend' | 'uniqueCount' | 'ra
 // NodeAnalytics member — FrozenNodeMembers stays capture/setTraits/setGroupTraits/flush/shutdown).
 type FrozenFlagMembers = 'evaluate' | 'onChange';
 
+// The 4 session-replay PORT methods (E14-S1 froze this control surface). A 5th member flips
+// the invariant → typecheck fails, exactly as FrozenFlagMembers guards the flag port. The
+// browser `replay?` slot presence is already covered by FrozenProviderMembers; node stays
+// replay-free (server has no DOM to record — FrozenNodeMembers carries no `replay` member).
+// rrweb lives entirely behind the browser adapter, so it never reaches this port surface.
+type FrozenReplayMembers = 'start' | 'stop' | 'isActive' | 'getReplayId';
+
 // ── Layer 2 — targeted return-category pins (the sync↔async / non-fn regression tripwire) ─────
 //
 // NOT full-signature pinning (that re-encodes the taxonomy generics and is brittle on cosmetics).
@@ -87,6 +95,7 @@ type Assertions = {
   nodeKeys: Equals<keyof NodeAnalytics<DefaultTaxonomyShape>, FrozenNodeMembers>;
   queryKeys: Equals<keyof AnalyticsQueryClient<DefaultTaxonomyShape>, FrozenQueryMembers>;
   flagPortKeys: Equals<keyof FeatureFlagPort<DefaultTaxonomyShape>, FrozenFlagMembers>;
+  replayPortKeys: Equals<keyof SessionReplayPort, FrozenReplayMembers>;
 
   // Layer 2 — provider members stay callable; async verbs stay Promise<void>; query verb is boolean.
   trackCallable: IsCallable<AnalyticsProvider['track']>;
@@ -162,6 +171,7 @@ export const CAPABILITY_PRESENCE: Assertions = {
   nodeKeys: true,
   queryKeys: true,
   flagPortKeys: true,
+  replayPortKeys: true,
   trackCallable: true,
   identifyCallable: true,
   pageCallable: true,
