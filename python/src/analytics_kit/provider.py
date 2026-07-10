@@ -58,6 +58,7 @@ from .adapter import AnalyticsAdapter
 from .allowlist import ViolationPolicy, enforce_allowlist
 from .neutral_event import NeutralEvent, NeutralProperties, NeutralTraits
 from .ports import FeatureFlagPort, SessionReplayPort
+from .taxonomy import Taxonomy, validate_event_props
 
 SET_TRAITS_EVENT = "set_traits"
 SET_GROUP_TRAITS_EVENT = "set_group_traits"
@@ -82,11 +83,13 @@ class Analytics:
         *,
         allowlist: frozenset[str] | None = None,
         on_violation: ViolationPolicy = "throw",
+        taxonomy: Taxonomy | None = None,
     ) -> None:
         self._adapter = adapter
         self._super_properties = super_properties
         self._allowlist = allowlist
         self._on_violation = on_violation
+        self._taxonomy = taxonomy
         self._opted_out = False
         self.flags = None
         self.replay = None
@@ -104,6 +107,11 @@ class Analytics:
             return
         merged = self._merge_super_properties(properties)
         if not self._allowed(merged):
+            return
+        # Prop-type validation is capture-scoped: the event name selects the prop shape, the
+        # one runtime-value dependency static typing can't cover. set/set_group_traits trait
+        # shapes are not name-selected, so they are NOT type-validated here.
+        if not validate_event_props(self._taxonomy, self._on_violation, event, merged):
             return
         self._adapter.capture(
             NeutralEvent(

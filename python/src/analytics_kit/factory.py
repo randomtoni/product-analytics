@@ -36,4 +36,5 @@ def create_analytics(
         super_properties=parsed.super_properties,
         allowlist=allowlist,
         on_violation=parsed.on_violation,
+        taxonomy=parsed.taxonomy,
     )

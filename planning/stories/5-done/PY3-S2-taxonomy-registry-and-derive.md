@@ -62,4 +62,12 @@ The runtime taxonomy registry is the full-fidelity half of the two-layer taxonom
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files changed:** `python/src/analytics_kit/taxonomy.py` (filled: `PropType`/`PropDecl`/`TaxonomyDecl` (split so `events` is required), `Taxonomy` class, `define_taxonomy` + runtime `events` guard, capture-scoped `validate_event_props`, `derive_allowlist_from_taxonomy`), `config.py` (+`taxonomy` field, `arbitrary_types_allowed`), `provider.py` (validator wired after the allowlist gate on capture), `factory.py` (threading), `allowlist.py` (`_emit_violation`→`emit_violation` public — shared violation posture), `__init__.py` (exports)
+- **Files added:** `python/tests/test_taxonomy.py` (29 cases)
+- **New public API:** `define_taxonomy(decl) -> Taxonomy`, `derive_allowlist_from_taxonomy(taxonomy) -> list[str]` (consumer-invoked), `Taxonomy`/`TaxonomyDecl`/`PropDecl`/`PropType`
+- **Tests added:** the R1 never-auto-derive regression guard, `bool`-not-`number`, both validator pass-through branches, capture-scope, derive no-name-leak, raw-dict-config-fails-at-boundary, reserves-nothing, no-`page`-slot, and the `events`-required runtime+type honesty test
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — R1 guard **negative-controlled** (planted auto-derivation in the factory → the regression test failed *in isolation* (1/28), reverted → 28/28); `bool`-not-`number`, config `isinstance` boundary, and name-leak all verified. One suggestion **fixed inline before ship**: `TaxonomyDecl.events` was optional under a blanket `total=False` (port-fidelity gap vs TS; `define_taxonomy({})` slipped past mypy+runtime then threw a deep `KeyError`) → split the TypedDict so `events` is required (typed `{}` is now a mypy error) + a clear runtime guard (`ValueError`) replacing the `KeyError`.
+- **Cross-story seams exposed:** **S3** brands its static `TypedDict`-per-event / `Literal` name union off `.decl` (the `TaxonomyDecl` shape, `events` required). **The honest gap S3's guarantee must own:** runtime type-validation is **capture-only** (`validate_event_props`); `set`/`set_group_traits` trait/group shapes are typed statically + key-gated by the allowlist, but NOT runtime-type-enforced. `Taxonomy` is intentionally non-generic (const-generic wall) — S3's generic keyed surface layers on top without changing this runtime class.

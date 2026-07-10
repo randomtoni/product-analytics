@@ -26,7 +26,12 @@ ViolationPolicy = Literal["throw", "drop-and-error-log"]
 _logger = logging.getLogger("analytics_kit")
 
 
-def _emit_violation(message: str) -> None:
+def emit_violation(message: str) -> None:
+    """Emit a single error-level violation record on the shared library logger.
+
+    Shared by the allowlist gate and the taxonomy prop-type validator so both violation
+    guards log identically under the ``drop-and-error-log`` policy.
+    """
     _logger.error(message)
 
 
@@ -56,6 +61,6 @@ def enforce_allowlist(
             message = f'analytics-kit: property "{key}" is not on the payload allowlist'
             if on_violation == "throw":
                 raise ValueError(message)
-            _emit_violation(message)
+            emit_violation(message)
             return False
     return True
