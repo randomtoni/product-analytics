@@ -68,3 +68,9 @@ The server half of remote eval: `evaluate(context)` → a remote round-trip retu
 - **Commit:** `main` (message = story title)
 - **Reviewer notes:** ship-ready, no critical, first review. Reviewer re-ran node tests (221 passed), confirmed the S2 in-flight-coalescing bug is NOT copied (per-call fetch genuinely asserted), `distinctId` throws pre-network with a neutral message, `FrozenNodeMembers` untouched, and eval-quality metadata (`errorsWhileComputing`/`quotaLimited`/`requestId`) excluded from the snapshot. 2 suggestions + 1 doc-note captured above.
 - **Cross-story seams exposed:** S4 (Python analog) — Python attaches via the `Analytics.flags` SLOT (not a factory), but the SERVER semantics carry over verbatim: `distinct_id` REQUIRED + validated (throw pre-network, neutral error), `on_change` fires-once, fetch-per-call (do NOT share a wire body across differing contexts). S6 (proof) — node bar-A swaps the standalone `createFlagClient` (unkeyed ⇒ `flag-noop` null-object). E13 — the remote path is cleanly separable; local eval adds a strategy branch INSIDE the adapter, ZERO seam/port change.
+
+## Follow-up
+
+> Improvement pass (2026-07-10, commit `E12 improvement pass`).
+- **Wire-key alignment** — node `FLAG_KEYS_WIRE_KEY` value `'flag_keys'` → `'flag_keys_to_evaluate'`, matching the Python adapter + `posthog-core-stateless.ts:890`. This closed a real cross-tree wire inconsistency (the old node value would be silently ignored by a real `/flags/` endpoint's key filter). Stays a confined `[WIRE]` const; neutrality green.
+- **Neutral-error symmetry** — the `distinctId`-required error test now also asserts the message excludes `token`/`distinct_id` (the wire keys), symmetric with the existing `posthog`/`flags/` exclusions. Reviewer confirmed non-vacuous (injecting a wire key into the throw fails it).

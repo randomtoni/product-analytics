@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import inspect
 import json
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, cast
 
 import pytest
@@ -307,6 +310,90 @@ def test_non_2xx_round_trip_degrades_to_empty_flag_set() -> None:
     assert snapshot.is_enabled("checkout_variant") is False
 
 
+# --- the REAL urllib transport over a loopback socket: a non-2xx surfaces its status, no crash ----
+
+
+class _StatusServer:
+    """A localhost server replying with a fixed status — drives the REAL ``_UrllibFlagTransport``.
+
+    ``urllib.request.urlopen`` RAISES ``HTTPError`` on every non-2xx, so nothing but a real socket
+    exercises the transport's actual ``HTTPError`` catch (the canned mock transports return a status
+    and never hit the catch). Mirrors the PY8 loopback probe style.
+    """
+
+    def __init__(self, *, status: int) -> None:
+        self.requests = 0
+        recorder = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler naming.
+                length = int(self.headers.get("Content-Length", "0"))
+                self.rfile.read(length)
+                recorder.requests += 1
+                self.send_response(status)
+                self.end_headers()
+                self.wfile.write(b"server error")
+
+            def log_message(self, *_args: Any) -> None:  # noqa: A002 — silence the server log.
+                pass
+
+        self._server = HTTPServer(("127.0.0.1", 0), _Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    @property
+    def host(self) -> str:
+        address, port = self._server.server_address[:2]
+        host = address.decode() if isinstance(address, bytes) else address
+        return f"http://{host}:{port}"
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+
+@pytest.fixture
+def status_500_server() -> Iterator[_StatusServer]:
+    server = _StatusServer(status=500)
+    try:
+        yield server
+    finally:
+        server.close()
+
+
+def test_real_urllib_transport_surfaces_a_non_2xx_status_without_raising(
+    status_500_server: _StatusServer,
+) -> None:
+    # The default transport (not a mock) drives the actual HTTPError catch: urlopen RAISES on the
+    # 500, the transport catches it and returns the real status — no crash, no raw HTTPError escape.
+    from analytics_kit.flags.transport import _UrllibFlagTransport
+
+    response = _UrllibFlagTransport().send(
+        f"{status_500_server.host}/flags/?v=2",
+        "POST",
+        {"Content-Type": "application/json"},
+        "{}",
+    )
+    assert response.status == 500
+    assert status_500_server.requests == 1
+
+
+def test_real_urllib_transport_non_2xx_degrades_evaluate_to_empty_flag_set(
+    status_500_server: _StatusServer,
+) -> None:
+    # End-to-end over a real socket: the adapter wired to the DEFAULT transport degrades a 500 to
+    # empty_flag_set() (unresolved) rather than crashing evaluate with an escaped HTTPError.
+    adapter = HttpFlagAdapter(key="k", flag_endpoint=status_500_server.host)
+
+    snapshot = adapter.evaluate({"distinct_id": "user-1"})
+
+    assert snapshot is empty_flag_set()
+    assert snapshot.degraded is True
+    assert snapshot.reason("anything") == "unresolved"
+    assert status_500_server.requests == 1
+
+
 def test_malformed_body_degrades_to_empty_flag_set() -> None:
     transport = _CannedTransport([NeutralResponse(status=200, body="not json")])
     adapter = _adapter(transport)
@@ -348,6 +435,28 @@ def test_failed_round_trip_falls_back_to_bootstrap_seed_as_stale() -> None:
     assert snapshot.get_payload("dark_mode") == {"theme": "x"}
     assert snapshot.degraded is True
     assert snapshot.reason("dark_mode") == "stale"
+
+
+def test_stale_fallback_preserves_a_payload_only_bootstrap_key() -> None:
+    from analytics_kit import FlagBootstrap
+
+    transport = _CannedTransport([NeutralResponse(status=503, body="down")])
+    # `orphan` has a bootstrap payload but NO matching flag value — it must survive the stale path
+    # (the get_all()-reconstruction bug dropped payload-only keys).
+    adapter = _adapter(
+        transport,
+        bootstrap=FlagBootstrap(
+            flags={"dark_mode": True},
+            payloads={"dark_mode": {"theme": "x"}, "orphan": {"note": "payload-only"}},
+        ),
+    )
+
+    snapshot = adapter.evaluate({"distinct_id": "user-1"})
+    assert snapshot.get_payload("orphan") == {"note": "payload-only"}
+    assert snapshot.reason("orphan") == "stale"
+    # The orphan has no flag value, so it stays absent from the flag map / is_enabled reads.
+    assert snapshot.get_flag("orphan") is None
+    assert snapshot.is_enabled("orphan") is False
 
 
 # --- no vendor eval-quality field leaks onto the snapshot ----------------------------------------

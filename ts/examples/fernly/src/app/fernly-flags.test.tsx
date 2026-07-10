@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { AnalyticsClientProvider, useFeatureFlags } from '@analytics-kit/react';
+import { createAnalytics } from '@analytics-kit/browser';
 import type { ReactNode } from 'react';
 import { createFernlyFlagClient, type FernlyFlagShape } from '../flag-harness';
 import { AiSummaryBadge } from './fernly-app';
@@ -53,13 +54,15 @@ describe('Fernly React — useFeatureFlags re-renders as flags arrive', () => {
   });
 
   it('a client with no flags slot renders the empty default and never throws (bar B graceful)', () => {
-    // An unkeyed browser client has provider.flags === undefined; the hook falls back to the seam
-    // empty snapshot, so the component renders flags-off with no crash.
+    // A REAL unkeyed browser client: createAnalytics({}) resolves the NoopAdapter, so provider.flags
+    // is genuinely undefined (not a hand-stubbed slot). The hook falls back to the seam empty
+    // snapshot, so the component renders flags-off with no crash — the bar-B proof end-to-end.
     function Bare(): ReactNode {
       const flags = useFeatureFlags<FernlyFlagShape>();
       return <span data-testid="bare">{String(flags.isEnabled('bulk_review_actions'))}</span>;
     }
-    const noFlagsClient = { flags: undefined } as never;
+    const noFlagsClient = createAnalytics({});
+    expect(noFlagsClient.flags).toBeUndefined();
     expect(() =>
       render(
         <AnalyticsClientProvider client={noFlagsClient}>

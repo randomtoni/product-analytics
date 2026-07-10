@@ -27,7 +27,7 @@ const DISTINCT_ID_WIRE_KEY = 'distinct_id';
 const GROUPS_WIRE_KEY = 'groups';
 const PERSON_PROPERTIES_WIRE_KEY = 'person_properties';
 const GROUP_PROPERTIES_WIRE_KEY = 'group_properties';
-const FLAG_KEYS_WIRE_KEY = 'flag_keys';
+const FLAG_KEYS_WIRE_KEY = 'flag_keys_to_evaluate';
 
 // Response keys carrying the resolved set. `FLAGS_WIRE_KEY` is the flag→value map; the payloads
 // ride a sibling map. Eval-quality metadata the backend may also return (errors-while-computing,

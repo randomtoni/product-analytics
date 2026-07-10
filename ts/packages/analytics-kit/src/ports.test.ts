@@ -17,6 +17,7 @@ import {
   type FlagValue as ExportedFlagValue,
 } from './index';
 import type { ShapeOf } from './taxonomy';
+import type { NeutralProperties } from './neutral-event';
 
 // The taxonomy the port reads narrow against — a variant flag with a typed payload, plus a
 // bare boolean gate. Used only for its resolved shape via ShapeOf.
@@ -57,6 +58,19 @@ test('FlagContext is exactly the five neutral evaluation fields, refresh is NOT 
     'distinctId' | 'groups' | 'personProperties' | 'groupProperties' | 'flagKeys'
   >();
   expectTypeOf<FlagEvaluateOptions>().toEqualTypeOf<{ refresh?: boolean }>();
+});
+
+test('FlagContext pins the exact field TYPES the adapters map onto the wire (E12-S1)', () => {
+  // Key-pinning above catches an added/removed field; this catches a field-TYPE drift — e.g.
+  // groups widening to Record<string, unknown> or flagKeys losing its readonly — which the
+  // node/server adapters and the query wire body depend on.
+  expectTypeOf<FlagContext>().toEqualTypeOf<{
+    distinctId?: string;
+    groups?: Record<string, string>;
+    personProperties?: NeutralProperties;
+    groupProperties?: Record<string, NeutralProperties>;
+    flagKeys?: readonly string[];
+  }>();
 });
 
 test('FlagSet snapshot reads narrow off a declared taxonomy flags slot (E12-S1)', () => {

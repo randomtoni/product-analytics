@@ -125,6 +125,10 @@ class _Snapshot:
         return dict(self._flags)
 
     @property
+    def payloads(self) -> dict[str, object]:
+        return self._payloads
+
+    @property
     def degraded(self) -> bool:
         return self._degraded
 
@@ -287,9 +291,12 @@ class HttpFlagAdapter:
             flags, payloads = resolved
             return _Snapshot(flags, payloads, _REASON_RESOLVED, degraded=False)
         if self._bootstrap is not None:
+            # Re-tag the already-seeded bootstrap snapshot as a degraded 'stale' fallback, reusing
+            # its own flag AND payload maps — NOT re-derived from get_all() (flag keys only), which
+            # would drop a payload-only bootstrap key that has no matching flag value.
             return _Snapshot(
                 self._bootstrap.get_all(),
-                {k: self._bootstrap.get_payload(k) for k in self._bootstrap.get_all()},
+                dict(self._bootstrap.payloads),
                 _REASON_STALE,
                 degraded=True,
             )

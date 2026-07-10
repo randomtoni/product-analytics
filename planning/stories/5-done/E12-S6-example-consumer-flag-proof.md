@@ -70,3 +70,9 @@ The acceptance bars are only real once an example consumer exercises the port en
 - **Commit:** `main` (message = story title)
 - **Reviewer notes:** ship-ready, no critical, first review. Reviewer confirmed the zero-library-src-edit audit, that both bars are proven GENUINELY (byte-identical consumer code with assertions changing by backing source; non-vacuous real-adapter selection guarded by concrete-URL call-count), the `FrozenFlagMembers = 'evaluate'|'onChange'` pin BITES (a 3rd port member flips the `Equals` invariant), and the first-paint caveat is respected (no synchronous bootstrap assertion). 2 polish suggestions captured.
 - **Cross-story seams exposed / capability-completeness:** **feature-flags is now reachable in BOTH trees via every obtain-path, each exercised** — browser `provider.flags` slot, node `createFlagClient` factory, Python `create_server_analytics(cfg).flags` slot + standalone `create_flag_client` factory, React `useFeatureFlags` hook. Both acceptance bars (A: adapter-swap = zero consumer change; B: config-only adoption) re-proven for flags across TS + Python. This CLOSES E12's story set (S1 substrate → S2 browser → S3 node → S4 Python → S5 React → S6 proof).
+
+## Follow-up
+
+> Improvement pass (2026-07-10, commit `E12 improvement pass`).
+- **flag-harness coupling comment** — one line noting the `url.includes('/flags/')` stub deliberately mirrors the browser adapter's wire path (`FLAG_ENDPOINT_WIRE_PATH`).
+- **Real unkeyed client in the React bar-B proof** — `fernly-flags.test.tsx` now uses a real `createAnalytics({})` (unkeyed → `NoopAdapter` → `flags` genuinely `undefined`) instead of `{ flags: undefined } as never`, making the React bar-B (config-only adoption) proof end-to-end.

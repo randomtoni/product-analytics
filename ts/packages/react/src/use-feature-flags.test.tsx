@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { act, render, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, expectTypeOf, test, vi } from 'vitest';
 import { emptyFlagSet } from 'analytics-kit';
@@ -129,6 +129,118 @@ describe('useFeatureFlags — subscription + re-render', () => {
     // A late evaluate() resolving to the stale bootstrap must NOT overwrite the committed set.
     await act(async () => {
       resolveEvaluate(bootstrap);
+    });
+    expect(result.current.isEnabled('x')).toBe(true);
+    expect(result.current.reason('x')).toBe('resolved');
+  });
+});
+
+describe('useFeatureFlags — StrictMode dev double-invoke', () => {
+  // A port whose per-call evaluate() is externally resolvable, so the FIRST (StrictMode-orphaned)
+  // evaluate can be left in-flight across the synthetic unmount and resolved AFTERWARDS.
+  function makeDeferredPort() {
+    const resolvers: Array<(set: FlagSet) => void> = [];
+    const listeners = new Set<(set: FlagSet) => void>();
+    const port = {
+      evaluate: vi.fn(() => new Promise<FlagSet>((resolve) => resolvers.push(resolve))),
+      onChange: vi.fn((listener: (set: FlagSet) => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      }),
+    } as unknown as FeatureFlagPort;
+    return {
+      port,
+      resolveNth(index: number, set: FlagSet) {
+        resolvers[index](set);
+      },
+      resolverCount() {
+        return resolvers.length;
+      },
+      fire(set: FlagSet) {
+        for (const l of listeners) l(set);
+      },
+    };
+  }
+
+  test('an evaluate() orphaned by a StrictMode-style effect re-run resolves without clobbering committed state (the `cancelled` guard)', async () => {
+    // The exact condition the hook's `cancelled` guard is written for: StrictMode's dev remount
+    // (modeled here by an effect RE-RUN, which severs the first effect's closure while the hook
+    // stays MOUNTED) leaves the first evaluate() in flight. When that orphaned promise resolves,
+    // the severed closure's `cancelled` flag must swallow its setState — so the committed snapshot
+    // NEVER flips to the orphaned value. Asserted on OBSERVABLE STATE (result.current), not on a
+    // console warning: react@19 no longer emits the setState-after-unmount warning, so a warning
+    // assertion would be vacuous. This one FAILS if the `cancelled` guard is removed.
+    const portA = makeDeferredPort();
+    const portB = makeDeferredPort();
+
+    // Drive the hook under a provider whose client swaps between the two ports across a rerender,
+    // so the effect's [flags] dependency changes while the hook (Probe) stays mounted.
+    let setPort!: (p: FeatureFlagPort) => void;
+    function Harness() {
+      const [flags, setFlags] = useState<FeatureFlagPort>(portA.port);
+      setPort = setFlags;
+      return (
+        <AnalyticsClientProvider client={clientWithFlags(flags)}>
+          <Probe />
+        </AnalyticsClientProvider>
+      );
+    }
+    let committed: FlagSet = emptyFlagSet();
+    function Probe() {
+      committed = useFeatureFlags();
+      return null;
+    }
+
+    await act(async () => {
+      render(<Harness />);
+    });
+
+    // Swap the provider's flags slot to portB ⇒ portA's effect cleanup runs (cancelled = true for
+    // portA's closure), a fresh effect runs for portB, and portA's evaluate() is now orphaned yet
+    // the tree stays mounted.
+    await act(async () => {
+      setPort(portB.port);
+    });
+
+    // portB commits a distinctive LIVE snapshot via onChange — the value the hook must keep.
+    const live = makeFlagSet({ isEnabled: (k) => k === 'live', reason: () => 'resolved' });
+    act(() => portB.fire(live));
+    expect(committed.isEnabled('live')).toBe(true);
+
+    // Resolve portA's ORPHANED evaluate with a different stale set. Guard intact ⇒ no-op; guard
+    // removed ⇒ the severed closure's setSet(stale) clobbers the live set on the mounted tree.
+    const orphanedStale = makeFlagSet({
+      isEnabled: (k) => k === 'orphaned',
+      reason: () => 'bootstrap',
+    });
+    await act(async () => {
+      portA.resolveNth(0, orphanedStale);
+    });
+
+    // Observable state: the committed snapshot is STILL portB's live set, never the orphaned one.
+    expect(committed.isEnabled('live')).toBe(true);
+    expect(committed.isEnabled('orphaned')).toBe(false);
+    expect(committed.reason('live')).toBe('resolved');
+  });
+
+  test('a committed onChange is not clobbered by a slower orphaned evaluate() (the `changed` guard)', async () => {
+    // The `changed` half of the guard pair: an onChange set that commits BEFORE evaluate() resolves
+    // is the freshest value; a late-resolving evaluate (bootstrap/stale) must not overwrite it.
+    const deferred = makeDeferredPort();
+    const { result } = await act(async () =>
+      renderHook(() => useFeatureFlags(), {
+        wrapper: providerWith(clientWithFlags(deferred.port)),
+      })
+    );
+
+    const network = makeFlagSet({ isEnabled: () => true, reason: () => 'resolved' });
+    act(() => deferred.fire(network));
+    expect(result.current.isEnabled('x')).toBe(true);
+
+    await act(async () => {
+      deferred.resolveNth(0, makeFlagSet({ isEnabled: () => false, reason: () => 'bootstrap' }));
     });
     expect(result.current.isEnabled('x')).toBe(true);
     expect(result.current.reason('x')).toBe('resolved');

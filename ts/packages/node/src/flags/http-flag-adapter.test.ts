@@ -8,7 +8,7 @@ interface WireBody {
   groups?: Record<string, string>;
   person_properties?: Record<string, unknown>;
   group_properties?: Record<string, Record<string, unknown>>;
-  flag_keys?: readonly string[];
+  flag_keys_to_evaluate?: readonly string[];
 }
 
 function okResponse(body: unknown) {
@@ -47,6 +47,9 @@ describe('distinctId required + validated', () => {
     }
     expect(message.toLowerCase()).not.toContain('posthog');
     expect(message.toLowerCase()).not.toContain('flags/');
+    // Symmetry: the message names the NEUTRAL field only — never the [WIRE] request-body keys.
+    expect(message.toLowerCase()).not.toContain('token');
+    expect(message.toLowerCase()).not.toContain('distinct_id');
   });
 
   test('an empty-string distinctId is treated as absent (throws)', async () => {
@@ -98,7 +101,7 @@ describe('evaluate resolves the snapshot via the round-trip', () => {
       groups: { org: 'acme' },
       person_properties: { plan: 'pro' },
       group_properties: { org: { tier: 'gold' } },
-      flag_keys: ['beta_banner'],
+      flag_keys_to_evaluate: ['beta_banner'],
     });
   });
 

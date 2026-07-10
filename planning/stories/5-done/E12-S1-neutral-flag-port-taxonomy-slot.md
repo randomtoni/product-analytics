@@ -88,3 +88,9 @@ No flag adapter can be written until the neutral port is pinned. This spike land
 - **Commit:** `main` (message = story title)
 - **Reviewer notes:** ship-ready, no critical, first review. Reviewer mutation-tested two type-tests (narrowing genuinely enforced) + confirmed all PostHog eval-quality metadata (`errorsWhileComputing`/`quotaLimited`/`requestId`/per-flag `reason`/`locallyEvaluated`) is excluded from the neutral `FlagSet`. 2 suggestions captured above → improvement-pass seeds.
 - **Cross-story seams exposed:** the frozen contract S2/S3/S4/S5 bind to is pinned in `ports.*` (verbatim in the "Coordination boundary" note): `evaluate(context?, options?): Promise<FlagSet<TX>>` (TS) / sync Python; `onChange`; `FlagSet` reads + `degraded`/`reason`; `FlagReason='resolved'|'bootstrap'|'stale'|'unresolved'`; `FlagContext` 5 fields. **Attach differs per target:** browser (S2) + Python (S4) via the `provider.flags` slot; node (S3) via a standalone `createFlagClient` factory (NOT a `NodeAnalytics` slot — `FrozenNodeMembers` is frozen). `emptyFlagSet()`/`empty_flag_set()` is the single-sourced null-object S2+S5 both consume. `FrozenFlagMembers = 'evaluate'|'onChange'` DECIDED here; S6 APPLIES the `capability-presence.ts` pin.
+
+## Follow-up
+
+> Improvement pass (2026-07-10, commit `E12 improvement pass`).
+- **`FlagContext` exact-shape type pin** — added `expectTypeOf<FlagContext>().toEqualTypeOf<{…}>()` to `ports.test.ts` pinning each field's TYPE, not just the key set. Reviewer mutation-verified it catches a field-type drift (`groups: Record<string,string> → Record<string,unknown>` errors) the key-set pin would miss.
+- Not done (deliberate): the Python `FLAG_REASONS` frozenset suggestion — the union is best-effort-static per PY3, adequately covered by the `'unresolved'` value assertions; left as a possible future hardening.

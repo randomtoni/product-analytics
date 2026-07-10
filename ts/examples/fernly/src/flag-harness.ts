@@ -69,6 +69,7 @@ export function createFernlyFlagClient(
   let count = 0;
   const stub = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
+    // Deliberately mirrors the browser adapter's wire flag-endpoint path (FLAG_ENDPOINT_WIRE_PATH).
     if (url.includes('/flags/')) {
       count += 1;
       await gate.promise;
