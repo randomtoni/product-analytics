@@ -54,4 +54,13 @@ The Django middleware is the WSGI half of the framework bindings — a thin wrap
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added:** `python/src/analytics_kit/integrations/django.py` (`RequestContextMiddleware` + lazy sentinel), `tests/test_django_middleware.py` (14 cases)
+- **Files changed:** `integrations/__init__.py` (lazy `__getattr__` re-export), `pyproject.toml` (+`django>=4.2` in `[dependency-groups] dev` only), `uv.lock`
+- **New public API:** `RequestContextMiddleware` (Django WSGI middleware, role-named; a `with new_context()` wrapper per request)
+- **Tests added:** framework-free-import (subprocess + meta-path finder), absence→neutral-wrapped-error, no-leak, consumer-tags-only (no `_build_tags` flat bag), provider-unchanged
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — the framework-free-import invariant **independently reproduced** (a `sys.meta_path` finder blocking `django` → bare `import analytics_kit.integrations` loads neither `django` nor the `.django` submodule; genuinely lazy `__getattr__`, not a swallowed `try/except`); absence path wraps `ModuleNotFoundError` → role-named `RuntimeError` naming `analytics-kit[django]`; `provider.py` diff empty; WSGI-sync only (no `__acall__`/asgiref — S3's domain); `django` dev-dep only, extras untouched.
+> Reviewer suggestion (2026-07-10): harden `test_bare_integrations_import_does_not_pull_django` — add `assert 'analytics_kit.integrations.django' not in sys.modules` (the current `'django' not in sys.modules` would also pass under an eager-import regression since `.django`'s try/except swallows it; the new assertion fails on regression). The guarantee holds today (subprocess test proves it); this pins the cheap in-process test too. (Improvement-pass.)
+- **Cross-story seams exposed:** **S3** reuses the same lazy pattern — module-level `try/except ImportError` → `_FASTAPI_AVAILABLE`/`_STARLETTE_AVAILABLE` sentinel + a role-named neutral error naming `analytics-kit[fastapi]`; add the framework to `[dependency-groups] dev`; extend `_LAZY_EXPORTS` in `integrations/__init__.py` (the `__getattr__` machinery is in place). S3 owns the async half (`__acall__`/asgiref/`markcoroutinefunction`) — deliberately absent here; `contextvars` is task-local so `new_context()` is async-safe as-is.

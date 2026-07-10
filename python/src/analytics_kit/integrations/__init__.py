@@ -7,7 +7,15 @@ extras) are thin wrappers over :func:`new_context`.
 
 Two surfaces are public: the scope core (``new_context`` + the accessors — what a middleware
 drives) and the consumer path (:func:`context` + :func:`scoped` — what a handler calls).
+
+The framework middlewares are re-exported LAZILY (via ``__getattr__``): a bare
+``import analytics_kit.integrations`` never pulls a framework, and the middleware module — which
+imports its framework — is loaded only when the name is actually accessed.
 """
+
+from __future__ import annotations
+
+from typing import Any
 
 from .context import (
     ContextScope,
@@ -33,4 +41,17 @@ __all__ = [
     "get_tags",
     "scoped",
     "context",
+    "RequestContextMiddleware",
 ]
+
+_LAZY_EXPORTS = {"RequestContextMiddleware": ".django"}
+
+
+def __getattr__(name: str) -> Any:
+    module_path = _LAZY_EXPORTS.get(name)
+    if module_path is not None:
+        from importlib import import_module
+
+        module = import_module(module_path, __name__)
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

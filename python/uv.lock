@@ -31,6 +31,8 @@ fastapi = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "django", version = "5.2.16", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "django", version = "6.0.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
@@ -48,6 +50,7 @@ provides-extras = ["django", "fastapi", "all"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "django", specifier = ">=4.2" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.6" },
