@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-10 — E12 + E13 shipped + archived (feature-flags COMPLETE: remote + local, both trees, hash-parity); E14 (session-replay) next
+Last updated: 2026-07-10 — E12–E14 all shipped + archived: NOW cycle COMPLETE (feature-flags both trees + session-replay browser/TS, Python N-A). Cycle exit criteria met — awaiting `/roadmap promote`
 
 ## Status
 
@@ -52,7 +52,7 @@ SOTA / `posthog-js`-capability bar.
 
 **session-replay** (sequences after — narrower, browser-only, TS):
 
-- **[E14-SR-session-replay](epics/E14-SR-session-replay.md)** *(active)* — the neutral `SessionReplayPort`
+- **[E14-SR-session-replay](epics/done/E14-SR-session-replay.md)** *(done)* — the neutral `SessionReplayPort`
   (`start`/`stop`/`isActive`/`getReplayId`) + config-only adoption (sampling + privacy masking) +
   rrweb-behind-the-adapter recorder (separate entrypoint) + capture-side session/event linkage
   (re-key on rotation) + own snapshot delivery path (size-triggered flush, flush-on-teardown, a
