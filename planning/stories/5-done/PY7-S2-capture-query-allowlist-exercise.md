@@ -53,4 +53,12 @@ Exercises the two data surfaces the example must prove — server capture (PY4) 
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added (all under `python/examples/quillstream/`):** `src/quillstream/typed_view.py` (the PY3-S3 `Protocol`+`cast` recipe demo) + `tests/{test_server_capture,test_query_exercise,test_allowlist_loud_failure,test_unkeyed_noop,test_typed_view_static_safety}.py`
+- **Files changed:** none under `analytics_kit` (bar B — zero library edits)
+- **Exercise:** server capture across the taxonomy (3 verbs; allowlist on all 3, `validate_event_props` only on `capture`; minted `set_traits`/`set_group_traits` shapes asserted on the recorder); query via a fake `QueryTransport` (both `personal_key`+`query_endpoint` → real HTTP branch, `transport.calls==1`) → flat `QueryResult`; allowlist loud-failure; unkeyed no-op
+- **⚠ Gate step:** `cd python/examples/quillstream && uv run mypy . && uv run pytest` — mypy clean (12 files), pytest 24 passed
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — the allowlist runtime-not-compile routing **proven from both sides** (untyped `Analytics.capture` route → runtime `ValueError` with NO `type: ignore`, full example strict-clean; a `cast`-view negative-control probe → mypy `[call-overload]`); both policies covered (`throw` raises pre-mint / `drop-and-error-log` drops + logs once); on-list keys record under BOTH policies (regression pin); query footgun pinned (endpointless config → empty, `transport.calls==[]`). The `analytics_kit.taxonomy` import is the **documented PY3-S3 recipe re-export** (`Protocol`/`TypedDict`/`cast`) — legitimate public API.
+- **Cross-story seams exposed:** **S3** (the two-gate proof) — the AST import-audit's public-API allow-list MUST include **`analytics_kit.taxonomy`** (the recipe's documented public import point for the typing helpers), i.e. `{analytics_kit, .integrations, .query, .server, .taxonomy}`; else it would fail `typed_view.py`'s legitimate recipe import. `overload`/`Literal` correctly come from `typing` (ruff can't follow those through a re-export). Carried to PY8 (the public-API surface definition).
