@@ -21,8 +21,7 @@ SUPER_PROPERTIES: dict[str, object] = {
     "environment": "production",
 }
 
-# Request-scoped correlation tags Quillstream binds per request via the framework middleware.
-# Tags cross the same allowlist gate as any other property, so the product allows them explicitly.
+# Request-scoped tags cross the same allowlist gate as any property, so the product allows them explicitly.
 REQUEST_TAGS: tuple[str, ...] = ("request_id",)
 
 
