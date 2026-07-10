@@ -42,9 +42,13 @@ __all__ = [
     "scoped",
     "context",
     "RequestContextMiddleware",
+    "RequestContextASGIMiddleware",
 ]
 
-_LAZY_EXPORTS = {"RequestContextMiddleware": ".django"}
+_LAZY_EXPORTS = {
+    "RequestContextMiddleware": ".django",
+    "RequestContextASGIMiddleware": ".asgi",
+}
 
 
 def __getattr__(name: str) -> Any:
