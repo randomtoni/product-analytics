@@ -7,13 +7,14 @@ through the single ``adapter.capture(event)`` — there is no ``set``/``group`` 
 trait and group updates are discriminated ``NeutralEvent``\\ s (``internal_kind``) on the one
 capture path.
 
-Frozen-15 accounting — the fifteen members of the reference facade, each with its
-server disposition (nine mapped verbs, five N-A-by-platform, one ``None`` capability slot).
+Frozen-15 accounting — the fifteen members of the reference facade, each with its server
+disposition (ten mapped verbs, five N-A-by-platform, zero ``None`` capability slots).
 ``replay`` is N-A-by-platform (permanent): a browser-only DOM recorder has no server home, so
-its slot stays ``None`` as a final boundary, not a pending one. The one remaining ``None``
-capability slot in this table is ``flags`` — whose ``None`` line below is STALE (``flags``
-shipped via E12 remote + E13 local eval; this docstring's ``flags`` row awaits an E12/E13
-doc-sync, tracked separately). The ``flags`` matrix row in ``../../README.md`` is current:
+its slot stays ``None`` as a final boundary, not a pending one. ``flags`` is IMPLEMENTED — a
+real server flag client (remote eval via E12 + local in-process eval via E13, at cross-tree
+parity with the TS node client); it is no longer a ``None`` capability slot. No ``None``
+capability slot remains in this table. The ``flags`` matrix row in ``../../README.md`` is
+current and consistent with this accounting:
 
 ===============  ==================================================================
 Facade member    Server disposition
@@ -28,11 +29,12 @@ optOut           → ``opt_out()`` (drop-and-discard)
 hasOptedOut      → ``has_opted_out()``
 flush            → ``flush()`` (sync)
 shutdown         → ``shutdown()`` (sync)
+flags            IMPLEMENTED — a server ``FeatureFlagPort`` client (remote + local
+                 in-process eval; E12/E13), enabled config-only; not a ``None`` slot
 page             N-A by platform: no server pageview surface — documented, absent
 reset            N-A by platform: no persisted server identity to re-anonymize
 register         N-A as a runtime verb → construction-time ``super_properties`` dict
 unregister       N-A as a runtime verb: no runtime super-property store server-side
-flags            capability slot — ``FeatureFlagPort | None``, ``None`` this release
 replay           N-A by platform (permanent): no server DOM to record —
                  ``SessionReplayPort | None``, always ``None``
 ===============  ==================================================================

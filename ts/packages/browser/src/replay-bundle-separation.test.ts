@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, test } from 'vitest';
 
@@ -55,5 +55,15 @@ describe('replay entry-boundary: rrweb stays out of the base bundle (E14-S2)', (
     // not a static one (a static import would inline rrweb into the base bundle).
     expect(read('index.mjs')).toMatch(/import\(\s*["']\.\/replay\.mjs["']\s*\)/);
     expect(read('index.js')).toMatch(/require\(\s*["']\.\/replay\.js["']\s*\)/);
+  });
+
+  test('the build emits NO shared chunk-* files (closes the transitive-via-chunk gap directly)', () => {
+    // The "replay entry imports rrweb" / "base does not" pair only catches a rrweb-into-a-shared-
+    // chunk regression incidentally (via the base-graph assertion). This asserts it directly: a
+    // clean two-entry `splitting: true` build resolves each entry standalone and produces NO
+    // `chunk-*` file, so any hoist of shared (rrweb-carrying) code into a common chunk shows up
+    // here as a `chunk-*` artifact — the direct signal, not a transitive one.
+    const chunks = readdirSync(distDir).filter((f) => f.startsWith('chunk-'));
+    expect(chunks, `unexpected shared chunk(s): ${chunks.join(', ')}`).toEqual([]);
   });
 });

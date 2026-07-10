@@ -26,6 +26,10 @@ export interface ReplayRecorderOptions {
   // session ids. Optional so the recorder degrades to a single non-re-keying segment when
   // absent (e.g. an id source with no rotation signal). Adapter-internal — the neutral port
   // exposes no rotation concept.
+  // The listener's `sessionId` is `undefined` ONLY on the subscribe-time PRIME (no session yet);
+  // a genuine ROTATION notification always carries a DEFINED id (`classifySessionTransition`
+  // never yields `'rotated'` for an `undefined` id), so no recording segment ever keys onto
+  // `undefined`.
   onRotate?: (listener: (sessionId: string | undefined) => void) => () => void;
   // The DOM-content masking policy threaded into rrweb's `record()` behind the body (E14-S4).
   // Neutral field names (from `config.sessionReplay.masking`); the body maps them onto rrweb's

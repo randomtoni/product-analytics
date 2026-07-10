@@ -475,8 +475,10 @@ describe('ReplayRecorder teardown flush triggers (E14-S4)', () => {
 
     source.rotate('s2');
 
-    // The outgoing segment is flushed and tagged with the session it belonged to (s1) at the
-    // moment of the flush — a rotation cleanly bounds the segment.
+    // The outgoing segment is flushed and tagged with the LIVE `getSessionId()` at flush time —
+    // which the rotate-notify has already advanced to s2 (mirroring the adapter's commit-then-fire
+    // order: the id source advances before the recorder's rotation handler runs). The flush bounds
+    // the segment on the live id, not the id the buffered snapshots were recorded under.
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][1]).toBe('s2'); // getReplayId reads the already-advanced source
     recorder.stop();
