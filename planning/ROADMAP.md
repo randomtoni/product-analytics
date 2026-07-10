@@ -1,16 +1,16 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-10 — Python-parity cycle COMPLETE; PY1–PY8 all shipped. Cycle drained → ready for `/roadmap promote`
+Last updated: 2026-07-10 — Python-parity cycle closed + archived to HISTORY; feature-flags + session-replay pulled into NOW; cycle epics (E12–E14) drafted + architect-refined
 
 ## Status
 
-Pre-1.0. Two cycles complete in **TypeScript** and archived: the vendor-neutral **`core`** seam,
-then the **R1 targets** cycle (browser · node · React targets + example consumer + adoption audit).
-The TS lib is capability-complete against the BRIEF contract, with both acceptance bars and
-vendor-neutrality gated as standing CI checks. On 2026-07-09 the repo split into a polyglot layout
-([`ts/`](../ts/) shipped, [`python/`](../python/) scaffolded); the third cycle — **Python parity** —
-is NOW, in flight once its epics land. Closed cycles archive their epics to
-[`epics/done/`](epics/done/); the narrative of what each established lives in
+Pre-1.0. Three cycles complete and archived: the vendor-neutral **`core`** seam and the **R1 targets**
+cycle in TypeScript, then **Python parity** — a full, server-shaped Python implementation at capability
+parity with the shipped TS surface. Both languages now live under a polyglot [`ts/`](../ts/) +
+[`python/`](../python/) layout; both acceptance bars and vendor-neutrality are gated as standing checks
+in each tree. The focus now shifts from breadth (a second language) to **depth** — the two
+declared-but-unimplemented capability ports, built across both trees. Closed cycles archive their epics
+to [`epics/done/`](epics/done/); the narrative of what each established lives in
 [`planning/HISTORY.md`](HISTORY.md).
 
 ## Sequencing
@@ -22,74 +22,74 @@ bar, not consumer pull.
 
 ## NOW
 
-**Python parity** — a full Python implementation of the vendor-neutral library under
-[`python/`](../python/) (scaffolded), built to capability parity with the shipped TS lib. The parity
-rule governs the whole cycle: **every capability the TS surface exposes must be reachable in
-Python**, adapted idiomatically and **server-shaped** — a plain client plus framework bindings, with
-no browser/DOM target (persistence, autocapture, pageviews and session replay have no server analog
-and are out of scope here).
+**Cross-tree capability completion** — build out the two declared-but-unimplemented capability ports
+across **both** language trees. Each is already declared on the shipped seam (`FeatureFlagPort` and
+`SessionReplayPort` as optional, `None`-default capability slots), so this **finishes stubbed contracts
+additively** rather than widening the charter. The neutral interface is defined once and satisfied by
+each target's adapter, keeping provider-swap and config-only adoption intact. Prioritized against the
+SOTA / `posthog-js`-capability bar.
 
-The **shipped [`ts/`](../ts/) tree is the contract reference** the port ports *to*: the Python seam
-mirrors it capability-for-capability, only the expression differs. Same seam, idiomatic per language
-— provider contract and adapter interface as `Protocol`s, **Pydantic at the genuine boundaries**,
-the typed-taxonomy mechanism, the consumer-supplied payload allowlist, and the config-selected
-factory. The PostHog-compatible target is **de-branded from `posthog-python`** (the server-SDK
-analog, cloned beside `posthog-js/` at the repo root), copying only what's needed and neutralizing
-it — no vendor name reaches the Python surface. A **Python analog of the neutrality scan** lands in
-the cycle's audit epic as the standing zero-vendor gate, mirroring `ts/scripts/neutrality-scan.ts`.
+- **feature-flags** — implement `FeatureFlagPort`: evaluation, bootstrap, local + server-side eval, flag
+  payloads. Core cross-platform surface for every mature analytics SDK — in the `posthog-js` reference it
+  lives in `core` + `browser` + `node`, so it is inherently server- **and** browser-shaped and advances
+  the TS *and* Python surfaces together. **Sequences first** — the broadest surface.
+- **session-replay** — implement `SessionReplayPort`: DOM capture. **Browser-shaped, TS-only in practice**
+  (no server analog), so it advances a narrower slice and **sequences after** feature-flags.
 
-The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → server capture → query client
-→ framework bindings → example consumer → parity audit.
+### Epics
 
-**Epics** (architect-consulted 2026-07-09; `/implement-epics all` builds them in `blocked_by` order):
+**feature-flags** (sequences first — broadest surface, both trees):
 
-- **[PY1-NODE-python-scaffold](epics/done/PY1-NODE-python-scaffold.md)** *(done)* — uv/pytest/ruff/mypy(strict)
-  scaffold; **one distribution `analytics-kit` + extras** (not multiple), submodule layout, gates green
-  on the empty seam.
-- **[PY2-CORE-python-seam](epics/done/PY2-CORE-python-seam.md)** *(done)* — the vendor-neutral seam: adapter
-  `Protocol` SPI + server-shaped provider contract (frozen-15 = 13 methods + `flags?`/`replay?`
-  declared `None`-slots) + config-selected factory + no-op; sync-client + background-thread posture;
-  Pydantic at boundaries.
-- **[PY3-CORE-taxonomy-allowlist](epics/done/PY3-CORE-taxonomy-allowlist.md)** *(done)* — the library's OWN surface:
-  payload allowlist (1:1 port) + two-layer typed taxonomy (runtime registry + best-effort static).
-- **[PY4-NODE-server-capture](epics/done/PY4-NODE-server-capture.md)** *(done)* — server capture + set/set-group +
-  `queue.Queue`/daemon-thread consumer (**drop-oldest to match TS, NOT posthog-python's drop-newest**)
-  + adapter-internal wire mapper + `dedupe_id`→`uuid` idempotency + retry classification + no-op.
-- **[PY5-QRY-query-client](epics/done/PY5-QRY-query-client.md)** *(done)* — `AnalyticsQueryClient` `Protocol`
-  (funnel/retention/trend/unique-count + `raw_query`) + sync HTTP query adapter + warehouse stub (bar-A
-  proof) + no-op.
-- **[PY6-RCT-framework-bindings](epics/done/PY6-RCT-framework-bindings.md)** *(done)* — the React analog:
-  `contextvars` request scope + `@scoped` decorator + **Django + ASGI/FastAPI** middleware (Flask/Celery
-  deferred), lazy-imported behind extras.
-- **[PY7-CORE-example-consumer](epics/done/PY7-CORE-example-consumer.md)** *(done)* — generic server-shaped
-  example (Quillstream) proving bar B (config-only adoption) via the architect-locked TWO-gate model —
-  fidelity (installed-dist mypy) + enforcement (AST import-audit, public-API-only) — since Python has no
-  physical `dist` boundary; framework binding carries a request-scoped distinct_id; zero `analytics_kit` edits.
-- **[PY8-OBS-parity-audit](epics/done/PY8-OBS-parity-audit.md)** *(done)* — capability-parity matrix vs the TS
-  surface (browser-N-A rows AND `flags?`/`replay?` declared-slot rows documented, no silent gap) +
-  the Python neutrality-scan analog (fully-extracted wheel+sdist + `ast` wire-confinement) as a standing
-  gate + real-stack loopback probes/negative controls ground-truthed vs `posthog-python` source. Both
-  acceptance bars re-proven. **Closes the Python-parity cycle.**
+- **[E12-FF-flag-substrate-remote-eval](epics/E12-FF-flag-substrate-remote-eval.md)** — the neutral
+  `FeatureFlagPort` (async-first snapshot model, with a neutral `degraded`/`reason` signal so eval
+  failure is distinguishable from a real "off") + `FlagContext` + taxonomy `flags` slot +
+  config-supplied bootstrap + **remote-evaluation** adapters (browser fetch, node round-trip, Python
+  server) across both trees + the React flag hook. `blocked_by: []`.
+- **[E13-FF-local-eval](epics/E13-FF-local-eval.md)** — **local (in-process) evaluation**, the
+  server-shaped specialization (definition polling + `matchProperty` cohort/rollout eval + fallback),
+  TS-node + Python, **zero seam change** — the regression check that E12's port shape holds.
+  `blocked_by: [E12]`.
 
-**Dependency graph:** PY1 → PY2 → PY3; then {PY4, PY5} in parallel off PY3; PY6 → off PY4; PY7 needs
-PY4 + PY5 + PY6; PY8 closes off PY7.
+**session-replay** (sequences after — narrower, browser-only, TS):
+
+- **[E14-SR-session-replay](epics/E14-SR-session-replay.md)** — the neutral `SessionReplayPort`
+  (`start`/`stop`/`isActive`/`getReplayId`) + config-only adoption (sampling + privacy masking) +
+  rrweb-behind-the-adapter recorder (separate entrypoint) + capture-side session/event linkage
+  (re-key on rotation) + own snapshot delivery path (size-triggered flush, flush-on-teardown, a
+  sampling flush-guard). **Python: N-A-BY-PLATFORM** (slot permanently `None` — a final documented
+  boundary). `blocked_by: []`.
+
+**Dependency graph:** `E12 → E13` (E13 needs E12's shipped port); `E14` is independent. A valid build
+order: **E12 → E13 → E14** (sequence flags before replay per the NOW framing; E14 could run in parallel
+with E13 but is scheduled after for a clean per-area push).
+
+**Exit criteria (cycle closes when all hold):** both ports finished additively on the seam with zero
+frozen-`AnalyticsProvider`-pin disturbance; **bar A** (provider-swap = one adapter, zero consumer
+change) and **bar B** (new-app = config only, zero library change) re-proven for flags (both trees) and
+replay (TS); parity matrix updated — feature-flags present in both trees (local eval server-shaped,
+browser-absent-by-platform), session-replay N-A-BY-PLATFORM on Python (final, not pending); the standing
+neutrality + gate suite green in both trees.
+
+## Development prerequisites
+
+External setup Claude Code cannot reach — gates the integration/real-stack proof of the epic noted,
+not its unit work.
+
+- **E13 (local eval)** — a live analytics project + a **privileged (definition-reading) API key** to
+  ground-truth local-eval results against a real remote eval (the PY8 lesson: the real path, not a
+  self-consistent mock). Unit-level rule-matching tests need no key.
+- **E14 (session replay)** — a live analytics project + an **ingest key that accepts session-recording
+  (`$snapshot`) payloads** to prove replay snapshots deliver end-to-end. Unit-level recorder/masking/
+  linkage tests need no key.
 
 ## UPCOMING
 
-**feature-flags** — implement the declared-but-unimplemented `FeatureFlagPort` (evaluation,
-bootstrap, local/server-side eval, flag payloads) behind the vendor-neutral seam, across **both
-language trees**. Feature flags are core, cross-platform surface for every mature analytics SDK — in
-the `posthog-js` reference they live in `core` + `browser` + `node`, so the capability is inherently
-server-shaped as well as browser-shaped and advances the TS *and* Python surfaces together. The port
-is already declared in the shipped seam, so this finishes a stubbed contract rather than widening the
-charter; it lands additively. The neutral interface is defined once and satisfied by each target's
-adapter, keeping provider-swap and config-only-adoption intact.
+_Empty — all committed forward work is in **NOW** (feature-flags + session-replay). New areas land here
+first, via `/roadmap add-later` → promote, once the NOW push is scoped._
 
 ## LATER
 
-- **session-replay** — implement the declared-but-unimplemented `SessionReplayPort`. Browser-shaped
-  (DOM capture); TS-only in practice, with no server analog — advances a narrower slice of the
-  surface than feature-flags, which is why it sequences after.
+_Empty._
 
 ## Cycle history
 
@@ -97,6 +97,7 @@ adapter, keeping provider-swap and config-only-adoption intact.
 |---|---|---|
 | `core` seam | 2026-07-08 | E1, E2, E3 → [`epics/done/`](epics/done/) |
 | `R1 targets` + audit | 2026-07-09 | E4, E5, E6, E7, E8, E9, E10, E11 → [`epics/done/`](epics/done/) |
+| `Python parity` | 2026-07-10 | PY1, PY2, PY3, PY4, PY5, PY6, PY7, PY8 → [`epics/done/`](epics/done/) |
 
 ## How to read this file
 
