@@ -42,8 +42,13 @@ line-length = 100
 [tool.mypy]
 python_version = "3.10"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
+mypy_path = ["scripts"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "artifact_scan: the CI-only neutrality wheel/sdist build-extract-scan (needs a build; deselected in the fast inner loop)",
+]
+addopts = "-m 'not artifact_scan'"
