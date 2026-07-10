@@ -168,7 +168,7 @@ test('the internal facade class is never exposed through the public barrel', () 
   expect('AnalyticsProviderImpl' in pkg).toBe(false);
 });
 
-test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E3), the persistence mode (E4), the consent default (E4-S3), the cross-subdomain cookie fields (E4-S4), the session-expiry timeouts (E4-S8), the ingest host/path (E5-S1), the bot-filter switch + denylist extension (E5-S7), the batch flush interval/size (E5-S2), the compression toggle (E5-S5), the per-module enrichment opt-out object (E6-S5), the nested country slot (countrySource + disableGeoip) on it (E6-S6), the top-level autocapture opt-in boolean (E6-S7), and the named contexts + defaultContext for per-context capture profiles (E6-S8)', () => {
+test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E3), the persistence mode (E4), the consent default (E4-S3), the cross-subdomain cookie fields (E4-S4), the session-expiry timeouts (E4-S8), the ingest host/path (E5-S1), the bot-filter switch + denylist extension (E5-S7), the batch flush interval/size (E5-S2), the compression toggle (E5-S5), the per-module enrichment opt-out object (E6-S5), the nested country slot (countrySource + disableGeoip) on it (E6-S6), the top-level autocapture opt-in boolean (E6-S7), and the named contexts + defaultContext for per-context capture profiles (E6-S8), and the feature-flag bootstrap config (E12-S1)', () => {
   expectTypeOf<AnalyticsConfig>().toEqualTypeOf<{
     key?: string;
     taxonomy?: Taxonomy<TaxonomyDecl>;
@@ -217,6 +217,12 @@ test('AnalyticsConfig carries key, taxonomy brand, the allowlist guard fields (E
       }
     >;
     defaultContext?: string;
+    flags?: {
+      bootstrap?: {
+        flags?: Record<string, string | boolean>;
+        payloads?: Record<string, unknown>;
+      };
+    };
   }>();
   const empty: AnalyticsConfig = {};
   expect(empty).toEqual({});

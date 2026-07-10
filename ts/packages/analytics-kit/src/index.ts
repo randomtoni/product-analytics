@@ -21,7 +21,16 @@ export type {
   ScopedAnalytics,
   ViolationPolicy,
 } from './analytics-provider';
-export type { FeatureFlagPort, SessionReplayPort } from './ports';
+export type {
+  FeatureFlagPort,
+  SessionReplayPort,
+  FlagSet,
+  FlagContext,
+  FlagEvaluateOptions,
+  FlagValue,
+  FlagReason,
+} from './ports';
+export { emptyFlagSet } from './ports';
 export { NoopAdapter } from './noop-adapter';
 export { createAnalytics } from './create-analytics';
 export type {
@@ -29,6 +38,7 @@ export type {
   CountryEnrichmentConfig,
   EnrichmentConfig,
   CaptureProfile,
+  FlagsConfig,
 } from './create-analytics';
 export { defineTaxonomy, RESERVED_PAGE_EVENT, RESERVED_PAGELEAVE_EVENT } from './taxonomy';
 export { resolveOptedOut } from './consent-policy';
@@ -38,6 +48,8 @@ export type {
   TaxonomyDecl,
   PropType,
   PropDecl,
+  FlagDecl,
+  FlagShape,
   ShapeOf,
   TaxonomyShape,
   DefaultTaxonomyShape,

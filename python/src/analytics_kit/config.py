@@ -12,7 +12,34 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from .allowlist import ViolationPolicy
+from .ports import FlagValue
 from .taxonomy import Taxonomy
+
+
+class FlagBootstrap(BaseModel):
+    """Server-rendered flag data seeded synchronously at construction, before any ``evaluate``.
+
+    Neutral field names (``flags``/``payloads``, never a vendor ``feature_flag*`` prefix). A
+    nested model so ``extra="forbid"`` rejects a typo'd sub-key loudly rather than silently
+    dropping it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    flags: dict[str, FlagValue] | None = None
+    payloads: dict[str, object] | None = None
+
+
+class FlagsConfig(BaseModel):
+    """Feature-flag settings. Only ``bootstrap`` this release — the server adapter reads it.
+
+    Config shape only; nothing is wired here. A nested model so a typo'd key still trips
+    ``extra="forbid"``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    bootstrap: FlagBootstrap | None = None
 
 
 class AnalyticsConfig(BaseModel):
@@ -37,8 +64,11 @@ class AnalyticsConfig(BaseModel):
     ``shutdown_timeout`` bounds the drain ``shutdown()`` races against (seconds) before it
     settles deterministically; ``retry_count``/``retry_delay`` bound the fixed-delay transient
     retry budget on delivery (``retry_count`` retries after the first attempt ⇒ ``retry_count + 1``
-    total attempts, each spaced by ``retry_delay`` seconds). Unknown keys are rejected loudly — a
-    config typo raises rather than silently degrading.
+    total attempts, each spaced by ``retry_delay`` seconds). ``flags`` carries the feature-flag
+    settings — only ``flags.bootstrap`` this release (server-rendered flag data seeded at
+    construction, neutral ``flags``/``payloads`` field names); the server flag adapter reads it,
+    nothing is wired here. Unknown keys are rejected loudly — a config typo raises rather than
+    silently degrading.
     """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -58,3 +88,4 @@ class AnalyticsConfig(BaseModel):
     shutdown_timeout: float = 30.0
     retry_count: int = 3
     retry_delay: float = 3.0
+    flags: FlagsConfig | None = None

@@ -5,7 +5,20 @@ import {
   type ViolationPolicy,
 } from './analytics-provider';
 import { NoopAdapter } from './noop-adapter';
+import type { FlagValue } from './ports';
 import type { ShapeOf, Taxonomy, TaxonomyDecl } from './taxonomy';
+
+// Config-supplied feature-flag settings. `bootstrap` is server-rendered flag data handed to
+// the client at construction — available synchronously at init, before any `evaluate` could
+// run, so it kills the first-paint flash of the wrong variant. Neutral field names (`flags`/
+// `payloads`, never a vendor `featureFlag*` prefix). Config shape only — the browser adapter
+// seeds its cache from it (E12-S2); Python accepts it for SSR request-scoped eval.
+export interface FlagsConfig {
+  bootstrap?: {
+    flags?: Record<string, FlagValue>;
+    payloads?: Record<string, unknown>;
+  };
+}
 
 export interface CountryEnrichmentConfig {
   // A consumer-injected source of the country value — a plain value or a synchronous
@@ -69,6 +82,9 @@ export interface AnalyticsConfig {
   // The context whose construction-time toggles (autocapture / pageleave) seed the shared
   // adapter at init. Per-event enrichment still varies per context via the scoped view.
   defaultContext?: string;
+  // Feature-flag settings. Only `bootstrap` this release (config-supplied, seeded at init) —
+  // the browser flag adapter (E12-S2) reads it; nothing is wired here.
+  flags?: FlagsConfig;
 }
 
 interface AnalyticsDeps {

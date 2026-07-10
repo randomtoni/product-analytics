@@ -19,6 +19,10 @@ describe('capability-presence — runtime value exports (proves tsup emitted the
     expect(typeof analyticsKit.createAnalytics).toBe('function');
     expect(typeof analyticsKit.NoopAdapter).toBe('function');
     expect(typeof analyticsKit.defineTaxonomy).toBe('function');
+    // emptyFlagSet — the FlagSet null-object factory (E12-S1), a value export re-exported
+    // from the seam alongside NoopAdapter, so it joins the runtime presence list by the same
+    // rationale (a working, structurally-complete "nothing-resolved" snapshot must ship on dist).
+    expect(typeof analyticsKit.emptyFlagSet).toBe('function');
   });
 
   it('the node package exposes its runtime value exports on dist', () => {

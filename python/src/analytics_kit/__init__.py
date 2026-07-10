@@ -12,7 +12,7 @@ allowlist, config-selected factory) is implemented by the Python roadmap cycle.
 
 from .adapter import AnalyticsAdapter, ConsentState, NeutralResponse
 from .allowlist import ViolationPolicy, enforce_allowlist
-from .config import AnalyticsConfig
+from .config import AnalyticsConfig, FlagBootstrap, FlagsConfig
 from .factory import create_analytics
 from .neutral_event import (
     InternalKind,
@@ -21,7 +21,16 @@ from .neutral_event import (
     NeutralTraits,
 )
 from .noop import NoopAdapter
-from .ports import FeatureFlagPort, SessionReplayPort
+from .ports import (
+    FeatureFlagPort,
+    FlagContext,
+    FlagEvaluateOptions,
+    FlagReason,
+    FlagSet,
+    FlagValue,
+    SessionReplayPort,
+    empty_flag_set,
+)
 from .provider import Analytics
 from .query import (
     Aggregation,
@@ -49,6 +58,7 @@ from .server import (
     create_server_analytics,
 )
 from .taxonomy import (
+    FlagDecl,
     PropDecl,
     PropType,
     SingleEventCapture,
@@ -70,8 +80,16 @@ __all__ = [
     "AnalyticsAdapter",
     "FeatureFlagPort",
     "SessionReplayPort",
+    "FlagSet",
+    "FlagContext",
+    "FlagEvaluateOptions",
+    "FlagValue",
+    "FlagReason",
+    "empty_flag_set",
     "Analytics",
     "AnalyticsConfig",
+    "FlagsConfig",
+    "FlagBootstrap",
     "NoopAdapter",
     "ServerAdapter",
     "BatchConsumer",
@@ -87,6 +105,7 @@ __all__ = [
     "TaxonomyDecl",
     "PropType",
     "PropDecl",
+    "FlagDecl",
     "SingleEventCapture",
     "AnalyticsQueryClient",
     "Duration",

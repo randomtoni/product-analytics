@@ -1,7 +1,15 @@
 import { expect, expectTypeOf, test } from 'vitest';
 import { createAnalytics } from './create-analytics';
 import { defineTaxonomy } from './taxonomy';
-import type { PropDecl, PropType, ShapeOf, TaxonomyDecl } from './taxonomy';
+import type {
+  FlagDecl,
+  FlagShape,
+  PropDecl,
+  PropsOf,
+  PropType,
+  ShapeOf,
+  TaxonomyDecl,
+} from './taxonomy';
 
 test('defineTaxonomy returns an object exposing decl as a runtime registry (what S3 walks)', () => {
   const tx = defineTaxonomy({
@@ -166,4 +174,40 @@ test('PropType and PropDecl are the declaration vocabulary', () => {
   expectTypeOf<PropDecl>().toEqualTypeOf<Record<string, PropType>>();
   const decl: TaxonomyDecl = { events: { e: {} } };
   expect(decl.events.e).toEqual({});
+});
+
+test('ShapeOf.flags resolves a declared flag decl to its variant union and payload shape (E12-S1)', () => {
+  type Decl = {
+    events: { e: Record<string, never> };
+    flags: { checkout_variant: { variants: ['a', 'b']; payload: { discount: 'number' } } };
+  };
+  expectTypeOf<ShapeOf<Decl>['flags']['checkout_variant']>().toEqualTypeOf<{
+    variants: 'a' | 'b';
+    payload: { discount: number };
+  }>();
+});
+
+test('ShapeOf.flags defaults to a loose flag map when the taxonomy declares no flags (E12-S1)', () => {
+  type NoFlags = { events: { e: Record<string, never> } };
+  expectTypeOf<ShapeOf<NoFlags>['flags']>().toEqualTypeOf<Record<string, FlagShape<FlagDecl>>>();
+});
+
+test('a flag decl with no variants resolves variants to never; no payload resolves to unknown (E12-S1)', () => {
+  type Decl = {
+    events: { e: Record<string, never> };
+    flags: { basic_gate: Record<string, never> };
+  };
+  expectTypeOf<ShapeOf<Decl>['flags']['basic_gate']['variants']>().toEqualTypeOf<never>();
+  expectTypeOf<ShapeOf<Decl>['flags']['basic_gate']['payload']>().toEqualTypeOf<unknown>();
+});
+
+test('a nested-object flag payload prop resolves to unknown (flat-PropDecl ceiling, E12-S1)', () => {
+  // Flag payloads resolve through the SAME PropsOf machinery events use, so they inherit its
+  // flat ceiling: a nested-object prop value is not a `PropType` tag, so PropsOf resolves it to
+  // `unknown` rather than recursing. A recursive JSON-schema PropType is a deferred hardening
+  // follow-up (out of scope for v1), so this pins the current, deliberate ceiling.
+  expectTypeOf<PropsOf<{ discount: 'number'; config: { deep: 'string' } }>>().toEqualTypeOf<{
+    discount: number;
+    config: unknown;
+  }>();
 });

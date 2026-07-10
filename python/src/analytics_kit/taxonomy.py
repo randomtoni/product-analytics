@@ -80,6 +80,7 @@ from .neutral_event import NeutralProperties
 __all__ = [
     "PropType",
     "PropDecl",
+    "FlagDecl",
     "TaxonomyDecl",
     "Taxonomy",
     "define_taxonomy",
@@ -101,6 +102,19 @@ PropDecl = dict[str, PropType]
 """A prop-name → type-tag map for one event / trait bag / group."""
 
 
+class FlagDecl(TypedDict, total=False):
+    """One flag's declaration — variant strings and/or a flat-``PropDecl`` payload.
+
+    Both keys optional: a bare ``{}`` declares a known-but-untyped flag. Payload nesting stays
+    flat for v1 (nested ⇒ untyped — the same ceiling the runtime registry carries), parity with
+    the TS ``FlagDecl``. Walked by the runtime registry only — Python has no ``ShapeOf``/mapped-
+    type narrowing, so this participates best-effort-static per the PY3 ceiling.
+    """
+
+    variants: list[str]
+    payload: PropDecl
+
+
 class _TaxonomyDeclBase(TypedDict):
     events: dict[str, PropDecl]
 
@@ -109,15 +123,19 @@ class TaxonomyDecl(_TaxonomyDeclBase, total=False):
     """The runtime-walkable declaration :func:`define_taxonomy` wraps.
 
     ``events`` is required (declared on the ``total=True`` base, matching the TS
-    ``TaxonomyDecl`` where ``events`` has no ``?``); ``traits`` and ``groups`` are optional.
-    There is deliberately no ``page`` slot: the TS ``TaxonomyDecl`` carries an optional
+    ``TaxonomyDecl`` where ``events`` has no ``?``); ``traits``, ``groups``, and ``flags`` are
+    optional. There is deliberately no ``page`` slot: the TS ``TaxonomyDecl`` carries an optional
     ``page`` for browser pageview typing, but the server has no pageview surface (``page`` is
     N-A by platform, see ``provider.py``), so the slot is a server omission by design, not a
-    port miss — the derive helper accordingly has no page branch to exclude.
+    port miss — the derive helper accordingly has no page branch to exclude. The ``flags`` slot
+    (a ``dict[str, FlagDecl]``) is walked by the runtime registry; it is NOT derived into the
+    allowlist — flag payloads are inbound (server → client), not consumer-supplied outbound
+    props, so ``derive_allowlist_from_taxonomy`` has no ``flags`` branch by design.
     """
 
     traits: PropDecl
     groups: dict[str, PropDecl]
+    flags: dict[str, FlagDecl]
 
 
 class Taxonomy:

@@ -14,6 +14,12 @@ export type PropType = 'string' | 'number' | 'boolean' | 'date';
 
 export type PropDecl = Record<string, PropType>;
 
+// One flag's declaration: an optional set of variant strings (the values a variant flag can
+// resolve to) and an optional flat-`PropDecl` payload. Both optional — a bare `{}` declares a
+// known-but-untyped flag. Payload nesting stays flat for v1 (nested ⇒ `unknown`, the same
+// ceiling `PropsOf` already carries).
+export type FlagDecl = { variants?: readonly string[]; payload?: PropDecl };
+
 export type TaxonomyDecl = {
   events: Record<string, PropDecl> & {
     [K in typeof RESERVED_PAGE_EVENT | typeof RESERVED_PAGELEAVE_EVENT]?: never;
@@ -21,6 +27,7 @@ export type TaxonomyDecl = {
   traits?: PropDecl;
   groups?: Record<string, PropDecl>;
   page?: PropDecl;
+  flags?: Record<string, FlagDecl>;
 };
 
 export type Taxonomy<T extends TaxonomyDecl> = { readonly decl: T };
@@ -43,6 +50,15 @@ export type PropsOf<D> = {
   -readonly [K in keyof D]: D[K] extends PropType ? TagToType<D[K]> : unknown;
 };
 
+// The resolved shape of one flag: its variant value type (the declared variant union, or
+// `never` when no variants are declared — a boolean-only flag) and its resolved payload type
+// (`PropsOf` of the flat payload decl, or `unknown` when none is declared). The port's
+// `getFlag`/`getPayload` reads project out of this per-flag shape.
+export type FlagShape<D extends FlagDecl> = {
+  variants: D extends { variants: readonly string[] } ? D['variants'][number] : never;
+  payload: D extends { payload: PropDecl } ? PropsOf<D['payload']> : unknown;
+};
+
 export type ShapeOf<T extends TaxonomyDecl> = {
   events: { [E in keyof T['events']]: PropsOf<T['events'][E]> };
   traits: T extends { traits: PropDecl } ? PropsOf<T['traits']> : NeutralTraits;
@@ -50,6 +66,9 @@ export type ShapeOf<T extends TaxonomyDecl> = {
     ? { [G in keyof T['groups']]: PropsOf<T['groups'][G]> }
     : Record<string, NeutralTraits>;
   page: T extends { page: PropDecl } ? PropsOf<T['page']> : NeutralProperties;
+  flags: T extends { flags: Record<string, FlagDecl> }
+    ? { [F in keyof T['flags']]: FlagShape<T['flags'][F]> }
+    : Record<string, FlagShape<FlagDecl>>;
 };
 
 export type TaxonomyShape = {
@@ -57,6 +76,7 @@ export type TaxonomyShape = {
   traits: NeutralTraits;
   groups: Record<string, NeutralTraits>;
   page: NeutralProperties;
+  flags: Record<string, FlagShape<FlagDecl>>;
 };
 
 export type DefaultTaxonomyShape = TaxonomyShape;
