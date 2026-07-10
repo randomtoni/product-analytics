@@ -40,7 +40,7 @@ SOTA / `posthog-js`-capability bar.
 
 **feature-flags** (sequences first — broadest surface, both trees):
 
-- **[E12-FF-flag-substrate-remote-eval](epics/E12-FF-flag-substrate-remote-eval.md)** — the neutral
+- **[E12-FF-flag-substrate-remote-eval](epics/E12-FF-flag-substrate-remote-eval.md)** *(active)* — the neutral
   `FeatureFlagPort` (async-first snapshot model, with a neutral `degraded`/`reason` signal so eval
   failure is distinguishable from a real "off") + `FlagContext` + taxonomy `flags` slot +
   config-supplied bootstrap + **remote-evaluation** adapters (browser fetch, node round-trip, Python
