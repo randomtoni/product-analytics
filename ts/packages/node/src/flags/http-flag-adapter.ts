@@ -8,6 +8,13 @@ import {
   type TaxonomyShape,
 } from 'analytics-kit';
 import type { FetchLike } from '../config';
+import {
+  DefinitionPoller,
+  InconclusiveMatchError,
+  RequiresServerEvaluation,
+  computeFlagLocally,
+  type FlagDefinition,
+} from './local';
 
 // Adapter-internal [WIRE] flag-eval vocabulary: the endpoint path, request-body keys, and response
 // keys this backend's flag-decision endpoint speaks. None of it appears on the neutral surface —
@@ -58,15 +65,29 @@ interface Snapshot {
   degraded: boolean;
 }
 
+// The adapter's local-evaluation capability, supplied by the factory ONLY when the config selected a
+// local-capable adapter (a definitions endpoint + privileged credential). Absent ⇒ remote-only,
+// exactly as E12 shipped. `poller` owns the only async boundary (the definition fetch); `onlyLocally`
+// is the resolved effective `onlyEvaluateLocally ?? strictLocalEvaluation ?? false` — when true the
+// remote fallback is suppressed and an inconclusive flag resolves to its degraded neutral state.
+export interface LocalEvalCapability {
+  poller: DefinitionPoller;
+  onlyLocally: boolean;
+}
+
 export interface HttpFlagAdapterOptions {
   // The project key (config), sent in-body so the flag endpoint authenticates the request.
   key: string;
   // The bare flag-eval origin the round-trip POSTs to; the adapter appends its own [WIRE] flag path.
-  flagEndpoint: string;
+  // Optional under a local-only posture — a local-only adapter never reaches the remote path.
+  flagEndpoint?: string;
   // Config-supplied bootstrap seed (SSR request-scoped flag data). Server path is round-trip-primary,
   // so this is a minimal seed/fallback served only when a round-trip fails — never a flash guard.
   bootstrap?: FlagsConfig['bootstrap'];
   fetch: FetchLike;
+  // Present ⇒ the adapter is local-capable: a local-first strategy branch runs inside `evaluate`,
+  // falling back to the remote round-trip for flags it can't resolve locally (unless `onlyLocally`).
+  local?: LocalEvalCapability;
 }
 
 // Build a FlagSet snapshot over the given resolved data. The reads are pure synchronous lookups off
@@ -95,9 +116,10 @@ function buildFlagSet<TX extends TaxonomyShape>(snapshot: Snapshot): FlagSet<TX>
 // the first `evaluate` (the stateless-server degenerate cardinality), then never again.
 export class HttpFlagAdapter<TX extends TaxonomyShape> implements FeatureFlagPort<TX> {
   private readonly apiKey: string;
-  private readonly flagUrl: string;
+  private readonly flagUrl: string | undefined;
   private readonly bootstrap: Snapshot | undefined;
   private readonly doFetch: FetchLike;
+  private readonly local: LocalEvalCapability | undefined;
   private readonly listeners = new Set<(set: FlagSet<TX>) => void>();
   // The once-fire guard: a stateless server has no push-based flag stream, so `onChange` fires on
   // the FIRST resolved snapshot and never again. Set the first time an `evaluate` settles.
@@ -106,9 +128,19 @@ export class HttpFlagAdapter<TX extends TaxonomyShape> implements FeatureFlagPor
 
   constructor(options: HttpFlagAdapterOptions) {
     this.apiKey = options.key;
-    this.flagUrl = resolveFlagUrl(options.flagEndpoint);
+    this.flagUrl =
+      options.flagEndpoint !== undefined && options.flagEndpoint.trim() !== ''
+        ? resolveFlagUrl(options.flagEndpoint)
+        : undefined;
     this.bootstrap = seedBootstrap(options.bootstrap);
     this.doFetch = options.fetch;
+    this.local = options.local;
+    // Fire-and-forget the first definition load: local eval must not put a definitions round-trip on
+    // the critical path of the first `evaluate` (the reference starts the poller in its constructor).
+    // `isReady()` gates the local branch until the load lands; until then `evaluate` falls to remote.
+    if (this.local !== undefined) {
+      void this.local.poller.start();
+    }
   }
 
   async evaluate(context?: FlagContext): Promise<FlagSet<TX>> {
@@ -118,10 +150,89 @@ export class HttpFlagAdapter<TX extends TaxonomyShape> implements FeatureFlagPor
     if (context?.distinctId === undefined || context.distinctId === '') {
       throw new Error('analytics: distinctId is required to evaluate flags on the server');
     }
-    const snapshot = await this.roundTrip(context);
+    const snapshot = await this.resolve(context);
     const set = buildFlagSet<TX>(snapshot);
     this.fireOnce(set);
     return set;
+  }
+
+  // Halt the definition poller so no further loads are scheduled (no-op when remote-only). Idempotent
+  // — the local machinery's timer is the only leakable resource the adapter owns.
+  stop(): void {
+    this.local?.poller.stop();
+  }
+
+  // Resolve a snapshot for THIS context via the local-first strategy branch when local-capable and
+  // the poller is ready; otherwise the pure remote path E12 shipped. This is the ONLY place the
+  // strategy is decided — `evaluate`'s signature and the returned `FlagSet` are indistinguishable
+  // across strategies (same snapshot shape, same neutral `reason`/`degraded`).
+  private async resolve(context: FlagContext): Promise<Snapshot> {
+    const local = this.local;
+    if (local === undefined || !local.poller.isReady()) {
+      // Not local-capable, or definitions haven't loaded yet. Under local-only there is no remote
+      // path — resolve to the neutral degraded-empty snapshot; otherwise the shipped remote path
+      // with the ORIGINAL untouched context (every requested flag goes remote, nothing narrowed).
+      if (local?.onlyLocally === true) {
+        return { flags: {}, payloads: {}, reason: REASON_UNRESOLVED, degraded: true };
+      }
+      return this.roundTrip(context);
+    }
+    return this.resolveLocalFirst(context, local);
+  }
+
+  // The local-first strategy: evaluate each requested flag in-process, collect the ones that can't be
+  // decided locally, and (unless local-only) layer ONE remote round-trip over just those keys. The
+  // merge is per-flag on the maps, snapshot-uniform on the reason — locally-resolved keys are kept,
+  // remote values fill only the still-unresolved ones. A partial failure degrades the whole snapshot
+  // (snapshot-uniform reason), so a fallback flag that couldn't resolve reads like a remote failure.
+  private async resolveLocalFirst(
+    context: FlagContext,
+    local: LocalEvalCapability
+  ): Promise<Snapshot> {
+    const snapshot = local.poller.getSnapshot();
+    const definitions =
+      context.flagKeys !== undefined
+        ? context.flagKeys.map((key) => snapshot.flagsByKey[key]).filter(isDefined)
+        : snapshot.flags;
+
+    const flags: Record<string, FlagValue> = {};
+    const payloads: Record<string, unknown> = {};
+    const fallbackKeys: string[] = [];
+
+    for (const definition of definitions) {
+      try {
+        const value = computeFlagLocally(definition, context, snapshot);
+        flags[definition.key] = value;
+        const payload = resolveLocalPayload(definition, value);
+        if (payload !== undefined) {
+          payloads[definition.key] = payload;
+        }
+      } catch (err) {
+        if (err instanceof InconclusiveMatchError || err instanceof RequiresServerEvaluation) {
+          fallbackKeys.push(definition.key);
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    if (fallbackKeys.length === 0) {
+      return { flags, payloads, reason: REASON_RESOLVED, degraded: false };
+    }
+    if (local.onlyLocally) {
+      // Local-only suppresses the fallback: the inconclusive keys stay absent (their read collapses to
+      // undefined/false), and the snapshot degrades because a requested flag could not be resolved.
+      return { flags, payloads, reason: REASON_UNRESOLVED, degraded: true };
+    }
+    // Fall back to E12's SHIPPED remote path for just the unresolved keys — one round-trip, narrowed
+    // to the fallback set so the wire body only asks for what local eval couldn't decide.
+    const remote = await this.roundTrip({ ...context, flagKeys: fallbackKeys });
+    return {
+      flags: { ...flags, ...remote.flags },
+      payloads: { ...payloads, ...remote.payloads },
+      reason: remote.reason,
+      degraded: remote.degraded,
+    };
   }
 
   onChange(listener: (set: FlagSet<TX>) => void): () => void {
@@ -158,7 +269,10 @@ export class HttpFlagAdapter<TX extends TaxonomyShape> implements FeatureFlagPor
   // else the seam's 'unresolved' empty set — the neutral degradation signal. Vendor eval-quality
   // fields on the response are never read.
   private async roundTrip(context: FlagContext): Promise<Snapshot> {
-    const resolved = await this.fetchFlags(context);
+    // No remote endpoint configured (a local-only posture) ⇒ the remote path has nowhere to go;
+    // degrade to the neutral empty/seed snapshot rather than fetch. Reached only defensively — the
+    // strategy branch never routes to the remote path under local-only.
+    const resolved = this.flagUrl !== undefined ? await this.fetchFlags(this.flagUrl, context) : undefined;
     if (resolved !== undefined) {
       return { ...resolved, reason: REASON_RESOLVED, degraded: false };
     }
@@ -172,10 +286,11 @@ export class HttpFlagAdapter<TX extends TaxonomyShape> implements FeatureFlagPor
   // undefined on a non-2xx status or a network failure — the caller maps that onto the neutral
   // degradation. The body carries THIS call's context; nothing is shared with any other call.
   private async fetchFlags(
+    flagUrl: string,
     context: FlagContext
   ): Promise<{ flags: Record<string, FlagValue>; payloads: Record<string, unknown> } | undefined> {
     try {
-      const response = await this.doFetch(this.flagUrl, {
+      const response = await this.doFetch(flagUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this.buildWireBody(context)),
@@ -214,6 +329,37 @@ export class HttpFlagAdapter<TX extends TaxonomyShape> implements FeatureFlagPor
     }
     return body;
   }
+}
+
+// Narrow undefined out of a mapped definition lookup (a requested flagKey with no local definition
+// drops out — it never becomes a fallback key on its own).
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
+}
+
+// Resolve the payload for a locally-resolved flag, keyed by the stringified resolved value on the
+// definition's payload map — the local analog of the remote path's `featureFlagPayloads`, so a
+// locally-resolved flag carries its payload identically. A `false` (or absent) result carries no
+// payload; a string payload is JSON-parsed (raw string on failure) so the local shape matches what a
+// remote response would deliver. Returns undefined when there is no payload (never null — the read
+// surface reports a missing key as undefined uniformly across strategies).
+// De-branded from posthog's feature-flags.ts getFeatureFlagPayload.
+function resolveLocalPayload(definition: FlagDefinition, value: FlagValue): unknown {
+  if (value === false) {
+    return undefined;
+  }
+  const raw = definition.filters?.payloads?.[String(value)];
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
 }
 
 // Seed a snapshot from config bootstrap: a resolved-shaped snapshot read 'bootstrap' (not degraded —

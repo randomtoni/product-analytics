@@ -127,3 +127,73 @@ test('FlagClientConfig has no query-style personalKey/queryEndpoint on its own s
   void _withQueryEndpoint;
   expect(true).toBe(true);
 });
+
+test('local-capable: key + definitionsEndpoint + definitionsKey selects the real adapter (bar B)', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const client = createFlagClient({
+    key: 'k',
+    flagEndpoint: 'https://flags.example',
+    definitionsEndpoint: 'https://flags.example',
+    definitionsKey: 'k_privileged',
+    taxonomy,
+  });
+
+  expect(warn).not.toHaveBeenCalled();
+  expect(client).toBeInstanceOf(HttpFlagAdapter);
+  expect(client).not.toBeInstanceOf(FlagNoop);
+});
+
+test('local-ONLY posture: key + definitionsEndpoint + definitionsKey with NO flagEndpoint is local-capable, NOT a no-op', () => {
+  // The factory edge — a local-only consumer supplies no remote flagEndpoint. Branch (b)'s
+  // warn→FlagNoop must NOT swallow this: a definitions route is a real place to evaluate.
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const client = createFlagClient({
+    key: 'k',
+    definitionsEndpoint: 'https://flags.example',
+    definitionsKey: 'k_privileged',
+    onlyEvaluateLocally: true,
+    taxonomy,
+  });
+
+  expect(warn).not.toHaveBeenCalled();
+  expect(client).toBeInstanceOf(HttpFlagAdapter);
+  expect(client).not.toBeInstanceOf(FlagNoop);
+});
+
+test('keyed with NEITHER a flagEndpoint NOR a definitionsEndpoint still warns once and no-ops', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const client = createFlagClient({ key: 'k', taxonomy });
+
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(client).toBeInstanceOf(FlagNoop);
+});
+
+test('a definitionsEndpoint WITHOUT the privileged credential is not local-capable (falls to the remote branch)', () => {
+  // Missing definitionsKey ⇒ no local capability. With a remote flagEndpoint it stays remote-only;
+  // without one it warns→no-op (nowhere to go).
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const remoteOnly = createFlagClient({
+    key: 'k',
+    flagEndpoint: 'https://flags.example',
+    definitionsEndpoint: 'https://flags.example',
+    taxonomy,
+  });
+  expect(remoteOnly).toBeInstanceOf(HttpFlagAdapter);
+
+  const noRoute = createFlagClient({ key: 'k', definitionsEndpoint: 'https://flags.example', taxonomy });
+  expect(noRoute).toBeInstanceOf(FlagNoop);
+  expect(warn).toHaveBeenCalledTimes(1);
+});
+
+test('the local-eval knobs live on FlagClientConfig, never on the neutral port', () => {
+  const _cfg: FlagClientConfig = {
+    key: 'k',
+    definitionsEndpoint: 'https://flags.example',
+    definitionsKey: 'k_privileged',
+    pollInterval: 10_000,
+    onlyEvaluateLocally: true,
+    strictLocalEvaluation: false,
+  };
+  void _cfg;
+  expect(true).toBe(true);
+});
