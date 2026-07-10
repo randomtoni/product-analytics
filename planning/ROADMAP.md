@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-09 — Python-parity cycle in flight; PY1 (scaffold) shipped
+Last updated: 2026-07-09 — Python-parity cycle in flight; PY1 (scaffold) + PY2 (seam) shipped
 
 ## Status
 
@@ -46,7 +46,7 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
 - **[PY1-NODE-python-scaffold](epics/done/PY1-NODE-python-scaffold.md)** *(done)* — uv/pytest/ruff/mypy(strict)
   scaffold; **one distribution `analytics-kit` + extras** (not multiple), submodule layout, gates green
   on the empty seam.
-- **[PY2-CORE-python-seam](epics/PY2-CORE-python-seam.md)** *(active)* — the vendor-neutral seam: adapter
+- **[PY2-CORE-python-seam](epics/done/PY2-CORE-python-seam.md)** *(done)* — the vendor-neutral seam: adapter
   `Protocol` SPI + server-shaped provider contract (frozen-15 = 13 methods + `flags?`/`replay?`
   declared `None`-slots) + config-selected factory + no-op; sync-client + background-thread posture;
   Pydantic at boundaries.

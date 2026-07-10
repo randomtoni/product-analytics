@@ -1,6 +1,6 @@
 ---
 id: PY2-CORE-python-seam
-status: active
+status: done
 area: core
 touches: [adapters]
 api_impact: additive
@@ -26,12 +26,12 @@ The seam is the contract every Python capability hangs off — the adapter SPI, 
 
 ## Stories
 
-Linear chain — `S1 → S2 → S3 → S4` (each depends on the prior); topo-sortable via `depends_on`. Written to `stories/2-ready-for-dev/`. They fill the empty PY1 submodule skeleton and add the seam modules.
+Linear chain — `S1 → S2 → S3 → S4`. All shipped; the empty PY1 skeleton is now the realized seam.
 
-- **[PY2-S1](../stories/2-ready-for-dev/PY2-S1-adapter-spi-and-neutral-event.md)** *(additive, no deps)* — `NeutralEvent` plain `@dataclass` (+ `NeutralProperties`/`NeutralTraits`, server-scoped `internal_kind` `Literal`; no browser-only fields) + the `AnalyticsAdapter` `Protocol` SPI (server verbs + neutral primitives) + `FeatureFlagPort`/`SessionReplayPort` sketch ports.
-- **[PY2-S2](../stories/2-ready-for-dev/PY2-S2-provider-verbs-and-consent.md)** *(additive, depends on S1)* — the server-shaped provider (verbs baselined on the TS node target: `capture`/`set`/`set_group_traits`/`flush`/`shutdown` + the consent trio as an instance switch; `page`/`reset`/`register`/`unregister` N-A documented) + `flags`/`replay` `None`-slots + config-time `super_properties`.
-- **[PY2-S3](../stories/2-ready-for-dev/PY2-S3-config-factory-and-noop.md)** *(additive, depends on S1+S2)* — Pydantic `AnalyticsConfig` (the one inbound boundary) + `create_analytics` factory (unkeyed ⇒ whole-stack no-op) + the `NoopAdapter` null object.
-- **[PY2-S4](../stories/2-ready-for-dev/PY2-S4-sync-client-thread-scaffolding.md)** *(additive, depends on S3)* — the sync-client lifecycle seam (`flush`/`shutdown` sync, NO asyncio) + the `sync_mode` flag + the delivery-sink plug-point PY4's queue/thread attaches to; no real threading here.
+- **[PY2-S1](../../stories/5-done/PY2-S1-adapter-spi-and-neutral-event.md)** *(done — `633969c`)* — `NeutralEvent` `@dataclass` + server-scoped `InternalKind` `Literal` + the **capture-only** `AnalyticsAdapter` `Protocol` SPI (Option A) + `NeutralResponse` + `FeatureFlagPort`/`SessionReplayPort` sketch ports. Bar-A structural conformance proven at type level (negative-controlled).
+- **[PY2-S2](../../stories/5-done/PY2-S2-provider-verbs-and-consent.md)** *(done — `b6519f6`)* — the server-shaped provider (verbs baselined on the TS node target; consent as instance switch, drop-and-discard, SERVER-only) + `flags`/`replay` `None`-slots + config-time `super_properties`; the frozen-15 accounting table ships as a durable docstring. Mint-through-`capture`; neutral once-carrier + group-wrapper keys (PY4's rename source).
+- **[PY2-S3](../../stories/5-done/PY2-S3-config-factory-and-noop.md)** *(done — `08fa496`)* — Pydantic `AnalyticsConfig` (`extra="forbid"` — unknown keys fail loudly) + `create_analytics` factory (unkeyed ⇒ whole-stack no-op, supplied-vs-`None` selection) + the `NoopAdapter` null object. Whole-stack silence negative-controlled.
+- **[PY2-S4](../../stories/5-done/PY2-S4-sync-client-thread-scaffolding.md)** *(done — `77f77af`)* — the sync-client lifecycle contract (`flush`/`shutdown` sync drain-to-completion, NO asyncio) + the `sync_mode` flag + the posture lock. No new SPI member (Option A) — PY4's queue/thread plugs into the existing `capture`/`flush`/`shutdown` trio; an AST guard fences delivery out of the seam.
 
 Build topo order: `PY2-S1 → PY2-S2 → PY2-S3 → PY2-S4`.
 
