@@ -1,6 +1,6 @@
 ---
 id: PY1-NODE-python-scaffold
-status: planned
+status: active
 area: node
 touches: []
 api_impact: additive
@@ -28,11 +28,13 @@ The `python/` tree is the substrate every other Python-parity epic builds on —
 
 ## Stories
 
-_Tentative slice (story files not yet written):_
+Linear chain — `S1 → S2 → S3` (each depends on the prior); topo-sortable via `depends_on`. All three EXTEND the existing partial scaffold (`pyproject.toml` + a lone `__init__.py` + a scaffold test) — none re-creates it. Written to `stories/2-ready-for-dev/`.
 
-- **S1** — `pyproject.toml` for one distribution `analytics-kit` (uv-managed), the `[project.optional-dependencies]` extras map, `py.typed`, ruff + mypy(strict) config, `src/analytics_kit/` layout skeleton.
-- **S2** — the submodule skeleton (`client`, `query`, `taxonomy`, `allowlist`, `integrations/` as empty-but-importable modules) + neutral placeholder exports; import graph has no vendor token.
-- **S3** — gates green end-to-end: a trivial passing test, `ruff check` clean, `mypy` strict clean on the skeleton, wheel + sdist build succeeds and contains `py.typed`.
+- **[PY1-S1](../stories/2-ready-for-dev/PY1-S1-distribution-and-extras.md)** *(additive, no deps)* — extend `pyproject.toml` to the one-distribution `analytics-kit` shape: add the `[project.optional-dependencies]` `django`/`fastapi`/`all` extras map + the `py.typed` marker (+ hatch packaging), zero vendor tokens.
+- **[PY1-S2](../stories/2-ready-for-dev/PY1-S2-submodule-skeleton.md)** *(additive, depends on S1)* — create the empty-but-importable submodule skeleton (`client`, `query`, `taxonomy`, `allowlist`, `integrations/`) as neutral placeholders; no seam surface pre-stubbed, no module named `core`.
+- **[PY1-S3](../stories/2-ready-for-dev/PY1-S3-gates-green-and-build.md)** *(additive, depends on S2)* — prove gates green end-to-end (`pytest`/`ruff`/`mypy`-strict) + `uv build` produces a wheel + sdist, with the wheel confirmed to contain `py.typed` and the submodules.
+
+Build topo order: `PY1-S1 → PY1-S2 → PY1-S3`.
 
 ## Out of scope
 

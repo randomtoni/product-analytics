@@ -43,7 +43,7 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
 
 **Epics** (architect-consulted 2026-07-09; `/implement-epics all` builds them in `blocked_by` order):
 
-- **[PY1-NODE-python-scaffold](epics/PY1-NODE-python-scaffold.md)** — uv/pytest/ruff/mypy(strict)
+- **[PY1-NODE-python-scaffold](epics/PY1-NODE-python-scaffold.md)** *(active)* — uv/pytest/ruff/mypy(strict)
   scaffold; **one distribution `analytics-kit` + extras** (not multiple), submodule layout, gates green
   on the empty seam.
 - **[PY2-CORE-python-seam](epics/PY2-CORE-python-seam.md)** — the vendor-neutral seam: adapter
