@@ -16,8 +16,9 @@ Stands up the **Python neutrality-scan analog** — the standing zero-vendor gat
 reason the library exists, ported from the TS capstone (`ts/scripts/neutrality-scan.ts`). It scans
 the shipped artifacts (wheel + sdist) and the source tree (`ast` wire-confinement), exits nonzero on
 any vendor leak, and is asserted by a `pytest` test. It is the Python realization of TS `E11-S5`
-(the vendor-name scan). Depends on PY8-S1 because S1 finalizes the doc target(s) (`python/README.md` +
-any linked parity doc) the scan's doc dimension must cover.
+(the vendor-name scan). Depends on PY8-S1 because S1 finalizes the doc target the scan's doc dimension
+must cover — **S1 pinned this to the single file `python/README.md`** (the matrix goes IN the README, not
+a forked `PARITY.md`), so the doc dimension scans exactly `python/README.md`.
 
 ## Scope
 
@@ -40,10 +41,12 @@ any linked parity doc) the scan's doc dimension must cover.
      ONLY when it is the value of a module-level `_WIRE_*`-named constant inside an adapter submodule,
      and FAILS it anywhere else (an escaped-confinement leak). A new adapter's wire token passes the
      SAME gate with zero scan edits iff it obeys the `_WIRE_*` convention.
-  3. **doc dimension** — scans the shipped doc(s) finalized by PY8-S1 (`python/README.md` + any linked
-     parity doc) for the forbidden tokens, with the ONE product-name path carve-out (a bare
-     `examples/quillstream` path link allowed; bare-prose `quillstream` fails), exactly as the TS scan
-     carves out `examples/fernly`.
+  3. **doc dimension** — scans the shipped doc finalized by PY8-S1 (**`python/README.md`** — S1 pinned the
+     matrix INTO the README, not a forked `PARITY.md`, so the doc target is this single file; see the
+     doc-target coordination note below) for the forbidden tokens, with the ONE product-name path carve-out
+     (a bare `examples/quillstream` path link allowed; bare-prose `quillstream` fails), exactly as the TS
+     scan carves out `examples/fernly`. Keep an `extra_doc_paths` list in the scan config for forward
+     extensibility, but for this cycle it is empty — the one doc target is `python/README.md`.
 - **`FORBIDDEN_TOKENS`** mirroring the TS scan's SEMANTICS (see Technical notes — this is load-bearing):
   bans vendor/product NAMES — `posthog` (case-insensitive), `ph_`, vendor region hostnames
   (`i.posthog.com`, `us.i.`, `eu.i.`), and the invented product name `quillstream` (outside its
@@ -97,8 +100,9 @@ any linked parity doc) the scan's doc dimension must cover.
       by construction, MAY reach the wheel per the PM-lock); a vendor token in a **docstring** or in wheel
       **`METADATA`/`PKG-INFO`** FAILS (docstrings + metadata are NOT exempt). Both cases are covered by
       tests.
-- [ ] The doc dimension scans the PY8-S1 doc target(s); a bare-prose vendor/product token FAILS; a bare
-      `examples/quillstream` path link PASSES (the one carve-out, mirroring TS `examples/fernly`).
+- [ ] The doc dimension scans the PY8-S1 doc target — `python/README.md` (the single pinned target; no
+      `PARITY.md` fork); a bare-prose vendor/product token FAILS; a bare `examples/quillstream` path link
+      PASSES (the one carve-out, mirroring TS `examples/fernly`).
 - [ ] `python/tests/test_neutrality_scan.py` asserts ZERO violations over the real tree AND includes
       planted-violation tests (one per dimension) + false-fail-guard pass tests. `uv run pytest` +
       `uv run ruff check` + `uv run mypy` stay green.
@@ -132,11 +136,12 @@ any linked parity doc) the scan's doc dimension must cover.
 - **Carry-in #3 (architect-ratified in PY5) — mirror TS `FORBIDDEN_TOKENS` semantics, not a naive
   `posthog` grep.** The scan bans vendor NAMES (`posthog`/`ph_`/hostnames/`quillstream`-outside-examples)
   and PERMITS the confined wire vocabulary. **`hogql`/`HogQLQuery` is REQUIRED confined wire vocabulary**
-  — it lives in a `_WIRE_*` module-level constant in the query adapter (`query/http_adapter.py`; read it
-  to confirm the exact const name) — it is NOT a forbidden token. Do NOT write an AC or a rule that greps
-  `hogql` to zero — that is unsatisfiable (a PY5 story shipped this bug). The correct gate is
-  **vendor-name-only**; the `_WIRE_*` confinement is what proves the wire vocab stays contained, NOT a
-  token ban on it.
+  — it lives in the module-level constant `_WIRE_RAW_QUERY_KIND = "HogQLQuery"` in the query adapter
+  (`query/http_adapter.py:52`, alongside the other query-kind discriminators `_WIRE_EVENTS_NODE_KIND`/
+  `_WIRE_TRENDS_QUERY_KIND`/`_WIRE_FUNNELS_QUERY_KIND`/`_WIRE_RETENTION_QUERY_KIND` at lines 48-51) — it is
+  NOT a forbidden token. Do NOT write an AC or a rule that greps `hogql` to zero — that is unsatisfiable
+  (a PY5 story shipped this bug). The correct gate is **vendor-name-only**; the `_WIRE_*` confinement is
+  what proves the wire vocab stays contained, NOT a token ban on it.
 - **Carry-in #4 (from PY7) — `python/examples/**` is scan-EXEMPT.** The neutrality scan targets the
   LIBRARY (`src/analytics_kit/` + its built artifacts) only. `examples/` (Quillstream) is consumer
   territory and may freely name its invented product — exactly as the TS scan exempts `examples/**`.
@@ -144,14 +149,28 @@ any linked parity doc) the scan's doc dimension must cover.
   module-level `_WIRE_*_KEY` constant (`_WIRE_UUID_KEY = "uuid"`, `_WIRE_SET_KEY = "set"`,
   `_WIRE_GROUP_TYPE_KEY`, `_WIRE_API_KEY`, `_WIRE_BATCH_KEY`, `_WIRE_SENT_AT_KEY`, …). The `ast` pass
   visits `ast.Assign`/`ast.AnnAssign` nodes and passes a `$`-prefixed (or otherwise wire-shaped) string
-  literal ONLY when its target is a module-level `Name` matching `_WIRE_*`. NOTE: the Python server wire
-  tokens are mostly NOT `$`-prefixed (`"uuid"`, `"event"`, `"set"` — de-branded, no `$`). The `$`-anchored
-  arm (mirroring TS) catches any `$`-literal that leaks in; the confinement RULE (a `_WIRE_*` const holds
-  the wire token) is the general invariant. Confirm with the architect/`posthog-source-guide` whether any
-  shipped Python wire literal is `$`-prefixed (browser-only `$`-props should be absent server-side — the
-  server uses `uuid`, not `$insert_id`); if none are, the `$`-arm is a forward-consistency guard (like the
-  TS `_WIRE_KIND` widening) and the primary confinement gate is the `_WIRE_*`-const rule over the query
-  dialect vocabulary (`HogQLQuery` et al.).
+  literal ONLY when its target is a module-level `Name` matching `_WIRE_*`. **VERIFIED: no shipped Python
+  wire literal is `$`-prefixed** (`grep '"\$' src/analytics_kit/` returns nothing — the server tokens are
+  all de-branded: `"uuid"`/`"event"`/`"set"`, and the server uses `uuid`, never `$insert_id`, since
+  `$`-props are a browser-only enrichment absent server-side). So the `$`-anchored arm is a
+  **forward-consistency guard** (the analog of the TS `_WIRE_KIND` widening) — it exists so that IF a
+  `$`-literal is ever introduced it must land inside a `_WIRE_*` const or fail; it is not exercised by any
+  current literal. The **primary confinement gate today** is the `_WIRE_*`-const rule over the query
+  dialect vocabulary — `_WIRE_RAW_QUERY_KIND = "HogQLQuery"` et al. in `query/http_adapter.py` — which is
+  the actual non-`$` wire vocab that must stay confined. Note the two `_WIRE_*` naming shapes the pass must
+  accept: `wire_mapper.py` uses `_WIRE_*_KEY` (trailing `_KEY`), `http_adapter.py` uses `_WIRE_*` without a
+  fixed suffix (`_WIRE_RAW_QUERY_KIND`, `_WIRE_BEARER_SCHEME`); the confinement rule anchors on the
+  `_WIRE_` PREFIX, not a suffix. No architect consult needed — the reality is verified in source.
+- **Doc-target coordination with S1 (pinned — verified against the real tree).** Verified state:
+  `python/README.md` EXISTS (thin scaffold); there is NO `python/PARITY.md`; PY7's bar-B note lives in the
+  scan-EXEMPT Quillstream README (`examples/quillstream/README.md`). **S1 pinned the parity matrix +
+  interface→implementation matrix + adopt-in-a-new-app section INTO `python/README.md`, NOT a forked
+  `PARITY.md`.** Therefore the doc dimension's target is the single file `python/README.md` — no
+  `extra_doc_paths` entries this cycle. Keep the `extra_doc_paths` list in the scan config (forward
+  extensibility) but leave it empty. Because S1 depends on nothing and S2 depends on S1, the topo order
+  (S1 → S2) guarantees `python/README.md` is populated before S2's doc-dimension test runs against it. If
+  S1 ever splits to a `PARITY.md` (it is pinned NOT to), that path must be added here — but the pin makes
+  that a non-event.
 - **The self-scan gotcha (TS-locked, port it).** `scripts/neutrality_scan.py` names the forbidden tokens
   as its own patterns, so it self-fails if scanned. Anchor every dimension to `src/analytics_kit/` + the
   built artifacts + the doc paths — `scripts/` is under none of them — so the script is excluded from its

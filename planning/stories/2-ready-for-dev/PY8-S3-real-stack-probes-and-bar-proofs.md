@@ -44,9 +44,10 @@ discipline. This closes the epic and the Python-parity cycle.
     nested wrappers (`set`/`set_once`/`group_type`/`group_key`/`group_set`), never `$set`/`$groupidentify`.
 - **Real-shape query probe**: point the query client's HTTP endpoint at a loopback server returning a
   canned real-shaped response body; assert the client decodes it into the neutral `QueryResult`/
-  `QueryColumn` shape (the ONE genuine inbound-wire boundary — Pydantic-validated). Confirm the query
-  client's endpoint is config-supplied (mirrors the TS `HttpQueryAdapter`); if so, no live warehouse
-  is needed.
+  `QueryColumn` shape (the ONE genuine inbound-wire boundary — Pydantic-validated). The query client's
+  endpoint IS config-supplied (`QueryClientConfig.query_endpoint`, mirrors the TS `HttpQueryAdapter`) — a
+  loopback drops in, no live warehouse needed; the handler must serve the composed path
+  `/api/projects/<project_id>/query/` (see Technical notes for the exact URL/auth/envelope shape).
 - **Negative controls**, each realized against the same real loopback transport (NOT a mock):
   1. **Off-list key rejected → ABSENT from the captured body.** Configure a consumer allowlist; capture
      an event carrying an off-list property; drive delivery; assert the off-list key is **not present
@@ -70,7 +71,7 @@ discipline. This closes the epic and the Python-parity cycle.
   call site flows a `NoopAdapter` ↔ a `RecordingAdapter` (or the loopback-backed `ServerAdapter`) with
   the provider facade byte-identical (the difference lives entirely behind the seam) — provider-swap =
   one adapter, zero consumer change — PLUS a short on-paper second-adapter design over the real
-  `AnalyticsAdapter` SPI (the 9-member structural Protocol in `adapter.py`).
+  `AnalyticsAdapter` SPI (the 8-member structural Protocol in `adapter.py:32-81`).
 - **Bar-B re-proof**: point at / re-run the PY7 Quillstream two-gate proof (fidelity = installed-dist
   `mypy`; enforcement = the AST import-audit with the five-entry public allow-list). **Reuse PY7's
   gates, do not reinvent** — the story references them as the standing bar-B proof, and confirms the
@@ -133,12 +134,12 @@ discipline. This closes the epic and the Python-parity cycle.
   convention. Grounded against the E11 TS precedent, the shipped Python transport, and the posthog-python
   wire contract read from source. Key mechanics the ruling pinned:
   - The probe must route through `create_send_batch(config, UrllibTransport())` as a `BatchConsumer` sink
-    (`sync_mode=True` or drive `flush()`), NOT the default `_BufferSink` (`adapter.py:41` — it just
+    (`sync_mode=True` or drive `flush()`), NOT the default `_BufferSink` (`server/adapter.py:41` — it just
     appends to a list, never touches the transport) and NOT an injected fake `Transport` (a mock, not a
     real-stack proof). `create_send_batch` (`server/transport.py:109`) resolves the endpoint from
-    `config.ingest_host + config.ingest_path` (`resolve_endpoint`, ~line 102) — point `ingest_host` at
-    `http://127.0.0.1:<port>` and the default `UrllibTransport` (~line 80) opens a real socket via
-    `urllib.request.urlopen`. A stdlib `http.server.BaseHTTPRequestHandler` on an ephemeral port (per-test
+    `config.ingest_host + config.ingest_path` (`resolve_endpoint`, `server/transport.py:102`) — point
+    `ingest_host` at `http://127.0.0.1:<port>` and the default `UrllibTransport` (`server/transport.py:80`)
+    opens a real socket via `urllib.request.urlopen`. A stdlib `http.server.BaseHTTPRequestHandler` on an ephemeral port (per-test
     `pytest` fixture, zero new dependency) is the Python analog of E11's loopback capture server.
   - **Wire ground-truth (posthog-python source, verified by architect):** envelope `{api_key, batch,
     sent_at}` POSTed to `/batch/` — `posthog-python/posthog/request.py:224-231, 364`; per-event message
@@ -154,6 +155,18 @@ discipline. This closes the epic and the Python-parity cycle.
   - **The `posthog-python/` reference checkout at the repo root** (a read-only source checkout, already a
     named Python-cycle dev prerequisite in `CLAUDE.md`) is the ONLY prerequisite — for source
     ground-truthing, NOT a live service. It is NOT a `blocked_by`.
+- **Route through the production target-entry, not a hand-wired consumer (pin).** The real send path in
+  production is `create_server_analytics(config)` (`server/__init__.py:32-58`): when `config.key` is set it
+  builds `BatchConsumer(create_send_batch(config, UrllibTransport()), sync_mode=config.sync_mode, …)` and
+  injects it as the `ServerAdapter`'s `sink`. The probe should drive THIS entry point — construct the
+  keyed config with `ingest_host="http://127.0.0.1:<port>"`, `sync_mode=True`, and `key=<test-key>`, then
+  `create_server_analytics(config)` — so the probe exercises the exact composition production ships,
+  rather than re-assembling `BatchConsumer(create_send_batch(...))` by hand (which risks drifting from the
+  real wiring and hollowing the proof). The `_BufferSink` default is what you get from a bare
+  `ServerAdapter()` with NO sink injected — `create_server_analytics` never uses it for a keyed config, so
+  routing through `create_server_analytics` is precisely how you avoid the `_BufferSink` trap by
+  construction. (Unkeyed config → `create_analytics(parsed)` → the whole-stack `NoopAdapter`: that IS
+  negative control #2's construction — zero requests.)
 - **Honesty of the proof (E11 discipline).** The whole point of the real-stack probe is that it pins the
   emitted bytes against an EXTERNAL contract (posthog-python source) + the neutrality invariant — neither
   of which the code-under-test can satisfy by accident. State the "real send path, not `_BufferSink`, not
@@ -165,16 +178,22 @@ discipline. This closes the epic and the Python-parity cycle.
   reuse the Quillstream gates (`python/examples/quillstream/tests/test_bar_b_import_audit.py` + the
   README two-gate note) — do NOT reinvent them. Python has no physical `dist` boundary, so bar-B is the
   two-gate model (fidelity + enforcement), not TS Fernly's single typecheck-against-`dist`.
-- **Bar-A SPI shape.** The real `AnalyticsAdapter` Protocol (`adapter.py`) is a **9-member** structural
-  Protocol: `capture`, `flush`, `shutdown`, `send`, `get_consent_state`, `set_consent_state`,
-  `get_library_id`, `get_library_version` (8 methods) — read it before writing the on-paper
-  second-adapter design so the member count/shape is exact (TS E11-S3 corrected a draft's wrong count; do
-  the same here — count from the real file, don't guess).
-- **Query-endpoint config check (do before writing the query probe).** Confirm the Python query client's
-  HTTP endpoint is config-supplied (read `query/http_adapter.py` + `query/config.py`) — the parity rule
-  says it mirrors the TS `HttpQueryAdapter`, which takes a configured endpoint, so a loopback target
-  should drop in. If it is NOT config-pointable, that's a seam finding to SURFACE (audit-not-patch), not a
-  library edit in this story.
+- **Bar-A SPI shape.** The real `AnalyticsAdapter` Protocol (`adapter.py:32-81`) is an **8-member**
+  structural Protocol: `capture`, `flush`, `shutdown`, `send`, `get_consent_state`, `set_consent_state`,
+  `get_library_id`, `get_library_version` (all 8 are methods — there are no non-method members) — read it
+  before writing the on-paper second-adapter design so the member count/shape is exact (TS E11-S3 corrected
+  a draft's wrong count; count from the real file, don't guess — verified 8 methods at `adapter.py:40-81`).
+- **Query-endpoint config check (CONFIRMED config-pointable — a loopback drops in).** Verified against
+  `query/http_adapter.py` + `query/config.py`: `QueryClientConfig.query_endpoint` is the config-supplied
+  host and `HttpQueryAdapter.__init__` composes the request URL as `query_endpoint + _query_path(project_id)`
+  where `_query_path` = `/api/projects/{project_id}/query/` (`http_adapter.py:125-126, 308-309`). So a
+  loopback drops in by pointing `query_endpoint` at `http://127.0.0.1:<port>` — but the loopback handler
+  must respond on the composed path `/api/projects/<project_id>/query/` (POST), NOT the bare root, and the
+  canned response body must carry a result-bearing envelope the normalizer accepts (`results` list, and
+  `columns`/`types` when zipping cell-arrays — see `_normalize_result`, `http_adapter.py:240`). Auth is
+  `Authorization: Bearer <personal_key>`; the request posture is always-async (`refresh: "async"`), so the
+  simplest canned response is an IMMEDIATE result envelope (no `query_status`), which takes the inline
+  branch and skips the poll loop. This is config-pointable as the parity rule requires — no seam finding.
 - **Audit-not-patch (locked, carried from E11).** This story SURFACES; it does not fix. A failing probe or
   a seam finding routes to the owning epic as a bug — the audit documents and gates, never patches the
   library. This story's changeset is `python/tests/**` + `python/scripts/**` only.

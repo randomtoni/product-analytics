@@ -23,10 +23,11 @@ PY8-S3 (the probes) are the enforcement deliverables built alongside.
 
 ### In
 
-- A **capability-parity matrix** (a Markdown table under `python/README.md`, or a
-  `python/PARITY.md` linked from it — match whatever docs shape PY7 left; prefer the README so the
-  neutrality scan's doc dimension covers it) mapping **every TS surface capability** to its Python
-  disposition, one of four categories, each row explicit — **no silent gap**:
+- A **capability-parity matrix** (a Markdown table in **`python/README.md`** — see the doc-target pin in
+  Technical notes: the matrix goes IN `python/README.md`, NOT a forked `python/PARITY.md`, so the
+  neutrality scan's single doc dimension covers it with zero `extra_doc_paths` coordination) mapping
+  **every TS surface capability** to its Python disposition, one of four categories, each row explicit —
+  **no silent gap**:
   1. **direct-analog** — same verb, same shape (`track`→`capture`, `flush`, `shutdown`, `optIn`/`optOut`/`hasOptedOut`→`opt_in`/`opt_out`/`has_opted_out`, the query primitives `funnel`/`retention`/`trend`/`unique_count`/`raw_query`).
   2. **idiomatic-adaptation** — the same capability, server-shaped (`identify`+`setTraits`→`set(...)` — two facade members collapse to one; `group`→`set_group_traits`; `register`→construction-time `super_properties` dict).
   3. **N-A-by-platform** — browser-only, by-design server-shaped omissions (see the exact row list below).
@@ -62,8 +63,8 @@ PY8-S3 (the probes) are the enforcement deliverables built alongside.
 - The real-stack probes + negative controls + re-runnable bar-A/bar-B gated proofs — **PY8-S3**.
 - **Fixing** any capability gap the matrix surfaces — a real (non-N-A) gap is a bug/story against the
   owning epic, NOT audit scope. The matrix's job is to SURFACE gaps, never paper them.
-- Any `analytics_kit` src/tests edit — this story writes docs only (`python/README.md` / a linked
-  parity doc). No library code changes.
+- Any `analytics_kit` src/tests edit — this story writes docs only (`python/README.md` — the single
+  pinned doc target; no forked parity doc). No library code changes.
 
 ## Acceptance criteria
 
@@ -125,11 +126,17 @@ PY8-S3 (the probes) are the enforcement deliverables built alongside.
   `unique_count`/`raw_query` on `AnalyticsQueryClient` (`query/client.py`); their specs are `FunnelSpec`/
   `RetentionSpec`/`TrendSpec`/`UniqueCountSpec`, each returning a flat `QueryResult`. `raw_query` is the ONE
   dialect escape hatch and surfaces the dialect as a VALUE (a string), never a type.
-- **Docs shape (pin — read what PY7 left).** Check `python/README.md`'s current sections before writing;
-  PY7-S3 added a bar-B two-gate proof note in the Quillstream README, and PY7-S1 named the example
-  "quillstream". Extend `python/README.md` (do not fork a parallel doc unless PY7 already established one) so
-  the neutrality scan's single doc target covers the matrix. If a `python/PARITY.md` is cleaner, link it from
-  the README AND add it to the scan's doc target list in PY8-S2 (coordinate — S2 owns `extra_doc_paths`).
+- **Docs shape (pin — DECIDED, verified against the real tree).** Verified state: `python/README.md`
+  EXISTS as a thin scaffold (sections: title / `## Toolchain` / `## Layout` — ~1.2 KB); there is **NO
+  `python/PARITY.md`**; and PY7-S3's bar-B two-gate note lives in the **Quillstream** README
+  (`python/examples/quillstream/README.md`), NOT in `python/README.md`. **DECISION (pinned, not the
+  builder's call): the parity matrix + interface→implementation matrix + adopt-in-a-new-app section all go
+  IN `python/README.md`. Do NOT fork a `python/PARITY.md`.** Rationale: one doc target keeps PY8-S2's doc
+  dimension a single path with zero `extra_doc_paths` coordination — S2 scans exactly `python/README.md`
+  (S2's doc-dimension AC is written against this one file). This is a hard coordination pin, not a
+  preference; if the builder finds a compelling reason to split, that is an Open Question to surface, not a
+  silent divergence — because S2's scan target depends on it. (The Quillstream README stays as PY7 left it
+  and is scan-EXEMPT under `examples/**`; do not touch it.)
 - **CONTRACT reference (port TO):** TS `E11-S1` (`planning/stories/5-done/E11-S1-interface-implementation-matrix.md`)
   + `E11-S2` (`E11-S2-adopt-in-new-app-guide.md`) — the 15-client + 3-node + 5-query interface matrix, the
   by-role/wire-shape description discipline, the config-only adoption walk, and the by-design-omitted
