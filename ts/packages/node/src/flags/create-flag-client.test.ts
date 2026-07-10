@@ -198,7 +198,6 @@ test('the local-eval knobs live on FlagClientConfig, never on the neutral port',
     definitionsKey: 'k_privileged',
     pollInterval: 10_000,
     onlyEvaluateLocally: true,
-    strictLocalEvaluation: false,
   };
   void _cfg;
   expect(true).toBe(true);

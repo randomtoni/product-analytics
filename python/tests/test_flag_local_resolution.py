@@ -531,6 +531,9 @@ def test_factory_local_only_without_a_flag_endpoint_selects_the_adapter_not_the_
     )
     try:
         assert isinstance(client, HttpFlagAdapter)
+        # only_evaluate_locally=True resolves the effective local-only posture (only_locally is True).
+        assert client._local is not None
+        assert client._local.only_locally is True
     finally:
         cast("HttpFlagAdapter", client).stop()
 
@@ -546,24 +549,6 @@ def test_factory_definitions_endpoint_without_the_privileged_key_is_not_local_ca
     # or the no-op when there's also no flag_endpoint.
     client = create_flag_client(FlagClientConfig(key="k", definitions_endpoint="https://flags.example"))
     assert isinstance(client, FlagNoop)
-
-
-def test_effective_only_locally_defaults_from_strict_local_evaluation() -> None:
-    # only_evaluate_locally ?? strict_local_evaluation ?? False — strict makes local-only the default.
-    client = create_flag_client(
-        FlagClientConfig(
-            key="k",
-            definitions_endpoint="https://flags.example",
-            definitions_key="privileged",
-            strict_local_evaluation=True,
-        )
-    )
-    try:
-        assert isinstance(client, HttpFlagAdapter)
-        assert client._local is not None
-        assert client._local.only_locally is True
-    finally:
-        cast("HttpFlagAdapter", client).stop()
 
 
 # --- the provider flags slot (server target) selects local-capable -------------------------------

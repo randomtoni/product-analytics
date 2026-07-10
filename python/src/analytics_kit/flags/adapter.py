@@ -272,8 +272,8 @@ class LocalEvalCapability:
 
     Absent ⇒ remote-only, exactly as E12 shipped. ``poller`` owns the only blocking-I/O boundary (the
     definition fetch, behind a background thread). ``only_locally`` is the resolved effective
-    ``only_evaluate_locally or strict_local_evaluation or False`` — when ``True`` the remote fallback
-    is suppressed and an inconclusive flag resolves to its degraded neutral state.
+    ``only_evaluate_locally or False`` — when ``True`` the remote fallback is suppressed and an
+    inconclusive flag resolves to its degraded neutral state.
     """
 
     __slots__ = ("poller", "only_locally")

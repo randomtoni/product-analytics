@@ -43,7 +43,7 @@ class FlagsConfig(BaseModel):
     fails.
 
     The local-eval knobs — ``definitions_endpoint``, ``definitions_key``, ``poll_interval``,
-    ``only_evaluate_locally``, ``strict_local_evaluation`` — select and tune in-process evaluation:
+    ``only_evaluate_locally`` — select and tune in-process evaluation:
     a definitions endpoint + the privileged ``definitions_key`` (a definition-reading credential
     named BY ROLE, distinct from the top-level ``key``) makes the attached flag client local-capable
     (poll definitions, evaluate in-process, fall back to the remote round-trip). A local-capable
@@ -59,7 +59,6 @@ class FlagsConfig(BaseModel):
     definitions_key: str | None = None
     poll_interval: float | None = None
     only_evaluate_locally: bool | None = None
-    strict_local_evaluation: bool | None = None
 
 
 class AnalyticsConfig(BaseModel):

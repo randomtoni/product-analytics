@@ -10,8 +10,8 @@ import type { FetchLike } from '../config';
 // Local (in-process) evaluation is enabled adapter-internally by config alone (bar B): a
 // `definitionsEndpoint` + a privileged `definitionsKey` turn on the definition poller + evaluator;
 // the local-vs-remote strategy stays entirely behind the unchanged `evaluate`, never on the neutral
-// port. `onlyEvaluateLocally`/`strictLocalEvaluation` are ADAPTER config, resolved from this object —
-// never neutral port parameters. A browser adapter (no local mode) would simply ignore them.
+// port. `onlyEvaluateLocally` is ADAPTER config, resolved from this object — never a neutral port
+// parameter. A browser adapter (no local mode) would simply ignore it.
 export interface FlagClientConfig {
   key?: string;
   flagEndpoint?: string;
@@ -27,9 +27,6 @@ export interface FlagClientConfig {
   // The definition poll interval in milliseconds. Defaults to a sensible interval when omitted.
   pollInterval?: number;
   // Suppress the remote fallback: an inconclusive flag under local-only resolves to its degraded
-  // neutral state rather than round-tripping. Effective = `onlyEvaluateLocally ?? strictLocalEvaluation`.
+  // neutral state rather than round-tripping. Effective = `onlyEvaluateLocally ?? false`.
   onlyEvaluateLocally?: boolean;
-  // Make local-only the client-level default (the reference's client-wide flag). `onlyEvaluateLocally`
-  // overrides it per the resolution order below.
-  strictLocalEvaluation?: boolean;
 }

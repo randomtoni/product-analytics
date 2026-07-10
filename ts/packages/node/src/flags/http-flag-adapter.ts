@@ -61,8 +61,8 @@ interface FlagWireResponse {
 // The adapter's local-evaluation capability, supplied by the factory ONLY when the config selected a
 // local-capable adapter (a definitions endpoint + privileged credential). Absent ⇒ remote-only,
 // exactly as E12 shipped. `poller` owns the only async boundary (the definition fetch); `onlyLocally`
-// is the resolved effective `onlyEvaluateLocally ?? strictLocalEvaluation ?? false` — when true the
-// remote fallback is suppressed and an inconclusive flag resolves to its degraded neutral state.
+// is the resolved effective `onlyEvaluateLocally ?? false` — when true the remote fallback is
+// suppressed and an inconclusive flag resolves to its degraded neutral state.
 export interface LocalEvalCapability {
   poller: DefinitionPoller;
   onlyLocally: boolean;

@@ -98,6 +98,5 @@ def _attach_flags(analytics: Analytics, config: AnalyticsConfig) -> None:
             definitions_key=flags.definitions_key,
             poll_interval=flags.poll_interval,
             only_evaluate_locally=flags.only_evaluate_locally,
-            strict_local_evaluation=flags.strict_local_evaluation,
         )
     )

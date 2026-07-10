@@ -67,7 +67,7 @@ export function createFlagClient(
 
 // Build the local-eval capability when the config selects it: a definitions endpoint + a privileged
 // definition-reading credential. Absent ⇒ undefined (remote-only). The effective local-only posture
-// follows the reference default: `onlyEvaluateLocally ?? strictLocalEvaluation ?? false`.
+// follows the reference default: `onlyEvaluateLocally ?? false`.
 function buildLocalCapability(
   config: FlagClientConfig,
   doFetch: typeof fetch
@@ -91,6 +91,6 @@ function buildLocalCapability(
   });
   return {
     poller,
-    onlyLocally: config.onlyEvaluateLocally ?? config.strictLocalEvaluation ?? false,
+    onlyLocally: config.onlyEvaluateLocally ?? false,
   };
 }

@@ -39,7 +39,7 @@ class FlagClientConfig(BaseModel):
     when unset). Unknown keys are rejected loudly.
 
     The local-eval knobs — ``definitions_endpoint``, ``definitions_key``, ``poll_interval``,
-    ``only_evaluate_locally``, ``strict_local_evaluation`` — are ADAPTER config, never neutral port
+    ``only_evaluate_locally`` — are ADAPTER config, never neutral port
     surface: a config supplying a definitions endpoint + the privileged ``definitions_key`` selects
     the local-capable adapter (poll definitions, evaluate in-process, fall back to the remote
     round-trip). ``definitions_key`` is the privileged (definition-reading) credential, named BY ROLE
@@ -59,4 +59,3 @@ class FlagClientConfig(BaseModel):
     definitions_key: str | None = None
     poll_interval: float | None = None
     only_evaluate_locally: bool | None = None
-    strict_local_evaluation: bool | None = None

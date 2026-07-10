@@ -60,7 +60,7 @@ def create_flag_client(config: FlagClientConfig) -> FeatureFlagPort:
 def _build_local_capability(config: FlagClientConfig) -> LocalEvalCapability | None:
     """Assemble the local-eval capability when a definitions endpoint + the privileged credential are
     configured; ``None`` otherwise (remote-only). The effective local-only value follows the reference
-    default ``only_evaluate_locally ?? strict_local_evaluation ?? False``."""
+    default ``only_evaluate_locally ?? False``."""
     if config.definitions_endpoint is None or config.definitions_key is None:
         return None
     poller = DefinitionPoller(
@@ -70,9 +70,5 @@ def _build_local_capability(config: FlagClientConfig) -> LocalEvalCapability | N
         poll_interval=config.poll_interval if config.poll_interval is not None else _DEFAULT_POLL_INTERVAL,
         transport=config.transport,
     )
-    only_locally = (
-        config.only_evaluate_locally
-        if config.only_evaluate_locally is not None
-        else (config.strict_local_evaluation or False)
-    )
+    only_locally = config.only_evaluate_locally or False
     return LocalEvalCapability(poller, only_locally)
