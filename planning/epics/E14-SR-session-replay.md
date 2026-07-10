@@ -53,6 +53,23 @@ the port is purely additive: `replay?` is already an optional member of `Analyti
   the events stitch on one session id. On session-id **rotation** (idle/max-length expiry mid-recording)
   the recording re-keys to the new id. `getReplayId()` exposes that id as an opaque neutral string
   (never the persisted tuple, storage key, or a `/replay/{id}` URL).
+- **The linkage is reachable by the capture enrichment path, not just readable via `getReplayId()`.**
+  In the reference, the replay id is what stitches a session's captured *events* to its recording; a
+  read-only `getReplayId()` that nothing propagates would leave events and recording unjoined. Because
+  the browser target already owns `SessionIdManager` and stamps `NeutralEvent.sessionId` on every event
+  (E4-S8), that shared session id **is** the join key — this criterion makes it explicit that the
+  recording and the captured events resolve to the same session id at enrichment time, so replay and
+  events join on the backend. — architect (2026-07-10, epic-refine).
+- **Sampling decision is made before any flush and re-made on rotation.** When `sampleRate` gates a
+  session, the keep/drop decision is made **once per session on `start`** (and **re-made on session-id
+  rotation**), persisted for the session's life, and the snapshot buffer **does not flush while the
+  decision is pending** — otherwise a batch leaks for a session the recorder then decides to drop. This
+  decide-before-flush / re-decide-on-rotation ordering is a correctness criterion, not a detail
+  (mirrors the reference `makeSamplingDecisions` + the flush-guard). — architect (2026-07-10).
+- **In-flight replay data flushes on page teardown.** The recorder flushes its snapshot buffer on
+  unload / visibility-hidden / `stop` / rotation, so the final segment of a session is not lost. This is
+  browser-lifecycle-specific and does NOT come for free from the capture queue (replay uses a separate
+  delivery path — see Transport). — architect (2026-07-10).
 - **Bar A:** a consumer swaps to a mock replay adapter (or a future non-vendor replay backend) with
   zero consumer change — the one `SessionReplayPort` is satisfied by each adapter.
 - The React binding exposes replay control through the provider (`provider.replay`), taxonomy-agnostic
@@ -93,7 +110,9 @@ delivery, then the example proof carrying the Python N-A row._
   acceptance criterion). May fold into S2/S4 if the linkage invariant is asserted somewhere.
 - **S4 — Snapshot buffering + delivery + masking (specialization).** Own buffer + flush cadence to a
   configured ingest path (reusing the adapter's `fetch`/gzip primitives, NOT the capture queue — replay
-  is high-volume, size-sensitive); apply masking config to the recorder.
+  is high-volume, size-sensitive); size-triggered flush; **flush-on-teardown** (unload/visibility-hidden/
+  stop/rotation); the **sampling flush-guard** (no flush while the per-session sampling decision is
+  pending, decided on start + re-decided on rotation); apply masking config to the recorder.
 - **S5 — Example proof + Python N-A row (recipe).** Fernly enables replay by config alone + swaps to a
   mock replay adapter (bar A + bar B); update the parity matrix + `provider.py` docstring moving
   `replay` from "declared slot, awaiting cycle" to **"N-A-BY-PLATFORM, slot permanently `None`"** — an
@@ -193,6 +212,14 @@ Every load-bearing decision below is architect-locked (2026-07-10) so stories do
   neutral primitives** (the adapter's `fetch` seam, gzip, the offline-queue *pattern*) but with its own
   buffer + flush policy. Fully adapter-internal; no transport concept reaches the port. —
   architect (2026-07-10).
+- **The separate delivery path owns three lifecycle behaviors** the capture queue does not provide:
+  (1) a **size-triggered flush** (a single large DOM snapshot flushes on its own, independent of an
+  event-count/time batch), (2) **flush-on-teardown** (unload / visibility-hidden / `stop` / rotation —
+  so the last segment isn't lost), and (3) the **sampling flush-guard** (no flush while the per-session
+  sampling decision is pending). These are the delivery half of the two new lifecycle success criteria
+  above; S4 owns them. Grounded in the reference recorder (`RECORDING_MAX_EVENT_SIZE` size-trigger, the
+  `beforeunload`/`visibilitychange`/`offline`/`online` teardown flush, and the sampling-gated
+  `_flushBuffer`). — architect (2026-07-10, epic-refine).
 
 ### Python N-A treatment (the PY8 category distinction)
 
@@ -208,12 +235,15 @@ Every load-bearing decision below is architect-locked (2026-07-10) so stories do
   platform omission, not a silent gap.") — the same vocabulary the parity audit already uses for
   browser-only rows.
 
-### Open questions (surfaced, not invented — resolve at story-refine)
+### Open questions (closed at epic-refine — kept as decision record)
 
-- **Replay ingest path config.** PostHog allows a separate replay `endpoint`. Whether the neutral config
-  exposes a replay-specific ingest path or reuses `ingestHost` with a fixed path is a library decision
-  the source doesn't settle. Architect lean: **reuse `ingestHost` with a fixed replay path** until a
-  consumer need appears. **Non-blocking** — decide at S4 refine.
+- **Replay ingest path config — CLOSED, reuse `ingestHost` + fixed replay path** (med-high). PostHog
+  sends `$snapshot` events to the same ingestion host, differentiated by path, not a separate host —
+  reuse-with-fixed-path matches that and avoids a second config knob (helps bar B: config-only
+  adoption). **Rejected** a separate replay-endpoint config field for v1 — a knob with no driver;
+  additive later if a consumer need lands. Note the distinction: the **host** is shared with capture,
+  but the **delivery path** (buffer, compression, size-trigger, flush cadence) stays separate from the
+  capture batch queue — see Transport. — architect (2026-07-10).
 
 ## Expansion path
 

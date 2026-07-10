@@ -32,6 +32,13 @@ proof this port shape is right. Architect-consulted against the `posthog-js` che
   call — a browser first-load, a server round-trip, and a future self-hosted HTTP adapter are all
   honest behind it (a sync browser-shaped read would break parity + bar A). Zero vendor vocabulary on
   the port.
+- The `FlagSet` snapshot carries a **neutral degradation signal** so a consumer can distinguish "flag
+  is off" from "evaluation failed / was partial" — a snapshot-level `degraded: boolean` (and/or a
+  neutral `reason(key)` read). Without it, an eval error collapses silently into a `false`/`undefined`
+  read, and the consumer can't tell a real "off" from a failed round-trip. The vendor-specific
+  eval-quality metadata that motivates this (`errorsWhileComputing` / `quotaLimited` / `requestId` /
+  per-flag `reason` / `locallyEvaluated` on PostHog's `FeatureFlagEvaluations`) stays **behind the
+  adapter**; only the neutral degraded/reason signal reaches the port. — architect (2026-07-10).
 - **`FlagContext`** is the one neutral evaluation input: `{ distinctId?, groups?, personProperties?,
   groupProperties?, flagKeys? }`. `distinctId` is **required on the server adapter** (no ambient
   actor — validated by the adapter) and **optional on the browser adapter** (filled from current
@@ -93,14 +100,36 @@ adapters in parallel, then the React binding + example proof._
   emits an analytics event / attaches flag context to other events). Real reference surface but it
   couples flags to the capture pipeline and carries `$feature/*` event shapes — a deliberate scope
   call, deferred. See Open questions.
+- **Stateful flag-eval-input setters** (`setPersonPropertiesForFlags` / `setGroupPropertiesForFlags`
+  — browser mutators that stash props then trigger a reload). The neutral shape carries
+  person/group properties **per-`evaluate`** in `FlagContext`, which is the cleaner, honest form —
+  these stateful setters must NOT enter the seam. Deferred, declared-not-omitted.
 - **Client-side test overrides** (`overrideFeatureFlags`), **encrypted remote-config payloads**
-  (`getRemoteConfigPayload`), **early-access-feature enrollment** — PostHog-product-specific surface,
-  not neutral primitives. Deferred, declared-not-omitted.
+  (`getRemoteConfigPayload`), **early-access-feature enrollment** (`updateEarlyAccessFeatureEnrollment`)
+  — PostHog-product-specific surface, not neutral primitives. Deferred, declared-not-omitted.
+- **Vendor eval telemetry** (`$feature_flag_request_id` / `requestId` and the other
+  `errorsWhileComputing`/`quotaLimited`/per-flag `reason` fields on PostHog's snapshot) stays
+  **adapter-internal** — only the neutral `degraded`/`reason` signal (see Success criteria) reaches the
+  `FlagSet`. The raw vendor telemetry never surfaces on the port.
 - **Session replay** — the other NOW capability, **E14** (browser-only, TS-only).
 
 ## Notes
 
-Every load-bearing decision below is architect-locked (2026-07-10) so stories don't re-litigate it.
+Every load-bearing decision below is architect-locked (2026-07-10, re-validated at epic-refine) so
+stories don't re-litigate it.
+
+### `onChange` on a stateless server snapshot (closed — med-high confidence)
+
+- **`onChange` stays on the port and "fires once with the resolved set" on server.** The browser
+  listener genuinely re-fires on reload (PostHog's `onFeatureFlags`); a stateless server client has no
+  push-based flag stream — flags are pull-per-`evaluate`, so the server contract is the *degenerate
+  case* of the same signature: it fires once on the resolved snapshot, then never again. **Rejected:
+  making `onChange` a browser-primary method server adapters omit** — an optional-method port weakens
+  the seam and breaks bar-A uniformity (consumer code would have to branch on whether the method
+  exists). Same signature, different cardinality — honest and uniform. Document the once-semantics as
+  an adapter property. — architect (2026-07-10). *S1 still confirms the once-fire ergonomics read well
+  against a real Python consumer, but the port shape is locked: `onChange` stays, uniform across
+  adapters.*
 
 ### The async-first snapshot model (the load-bearing neutrality call)
 
@@ -118,11 +147,18 @@ Every load-bearing decision below is architect-locked (2026-07-10) so stories do
 - **v1 port surface (method-by-method, architect-recommended):** `evaluate(context?):
   Promise<FlagSet>` (the one load-bearing method); on the `FlagSet` snapshot — `isEnabled(key):
   boolean`, `getFlag(key): FlagValue | undefined` (variant string / boolean / undefined),
-  `getPayload(key)` (taxonomy-typed, see below), `getAll(): Record<string, FlagValue>`; on the port —
+  `getPayload(key)` (taxonomy-typed, see below), `getAll(): Record<string, FlagValue>`, plus the
+  **neutral degradation signal** (`degraded: boolean` and/or `reason(key)`); on the port —
   `onChange(listener): () => void`. **Simplification taken:** fold `reload` into `evaluate({ refresh?:
   boolean })` so the port is one async method + a listener + a read-only snapshot type — smaller
   neutral surface, easier parity + bar A. Keep `reload` separate only if the browser adapter wants a
   fire-and-forget refresh that returns nothing (decide at S2 refine).
+- **The `evaluate`-single-method shape + async-first snapshot is architect-validated as the SOTA shape
+  (2026-07-10, re-confirmed at epic-refine):** it is the neutralized form of PostHog's own
+  convergence — node's `FeatureFlagEvaluations` is a snapshot returned once from
+  `evaluateFlags(distinctId, options)`, read synchronously, with per-key reads deprecated in favor of
+  the batch snapshot. The one hole in a naive copy is that the snapshot silently swallows eval-quality
+  metadata — closed by the neutral degradation signal above.
 
 ### Local-vs-remote eval placement
 
@@ -194,20 +230,22 @@ Every load-bearing decision below is architect-locked (2026-07-10) so stories do
   of Python and reintroduces the divergence the seam exists to prevent. Split by capability/eval-strategy
   (remote here, local in E13); keep both trees inside each epic. — architect (2026-07-10).
 
-### Open questions (surfaced, not invented — resolve at story-refine)
+### Open questions (all closed at epic-refine — kept as decision record)
 
-- **`onChange` semantics on a server snapshot.** The browser listener fires on async flag arrival +
-  changes; a stateless server snapshot has nothing to "change" — it fires once with the resolved set.
-  Whether that's the right neutral contract, or whether `onChange` should be a browser-primary method
-  (like bootstrap) that server adapters simply don't carry, is a genuine seam call for the S1 spike.
-  Architect lean: keep it on the port, define it as "fires once on server," validate against real
-  Python consumer usage. **Non-blocking** — S1 decides it.
-- **`$feature_flag_called` auto-capture — v1 or deferred?** Both SDKs auto-capture it on flag read
-  (browser `posthog-featureflags.ts:874`; node `_recordAccess`), and node's snapshot has
-  `only()`/`onlyAccessed()` to attach flag context to *other* captured events. Real
-  capability-completeness surface, but it couples flags to the capture pipeline and carries
-  `$feature/*` shapes. **PM decision, currently OUT of scope** (see Out of scope) — flagged as a
-  deliberate coupling call, not a default. Revisit if a consumer needs flag analytics.
+- **`onChange` semantics on a server snapshot — CLOSED** (med-high). Locked above: stays on the port,
+  fires once with the resolved set on server. See "`onChange` on a stateless server snapshot."
+- **`$feature_flag_called` auto-capture — CLOSED, confirmed OUT of v1** (high). It is the single
+  biggest PostHog-leak risk in this epic: node's snapshot `_recordAccess` fires `$feature_flag_called`
+  carrying `$feature/*`, `$feature_flag_response`, `$active_feature_flags`, `$feature_flag_request_id`
+  — all `$`-prefixed vendor shapes — and it couples flag reads to the capture pipeline. Pulling it into
+  v1 would either leak those shapes onto the neutral seam or force an unscoped normalization layer.
+  Confirmed deferred (see Out of scope + Expansion path forward-pointer). — architect (2026-07-10).
+- **Flag-payload nesting depth — CLOSED, flat for v1** (med-high). `PropDecl` stays flat; nested
+  payloads type as `unknown` (the same ceiling `PropsOf` already has, so this is consistent, not a
+  special case). PostHog itself types `getFlagPayload` as loose `JsonType | undefined`, so a recursive
+  JSON-schema `PropType` is real complexity with no reference driver. **Rejected** the recursive
+  `PropType` for v1; noted as a taxonomy hardening follow-up orthogonal to the FF port. —
+  architect (2026-07-10).
 
 ## Expansion path
 
@@ -217,5 +255,8 @@ Every load-bearing decision below is architect-locked (2026-07-10) so stories do
 - A future self-hosted or non-vendor flag backend is **one new adapter, zero consumer change** — it
   satisfies `FeatureFlagPort` and maps `FlagContext`/`FlagSet` to its own wire. The async-first boundary
   is what makes an HTTP-only self-hosted adapter honest here.
-- Deferred surface (`$feature_flag_called` capture, client-side overrides, remote-config payloads,
-  early-access enrollment) extends additively behind the same port later, if a consumer need lands.
+- Deferred surface (flag-exposure auto-capture, stateful flag-input setters, client-side overrides,
+  remote-config payloads, early-access enrollment) extends additively behind the same port later, if a
+  consumer need lands. **When flag-exposure auto-capture is added, exposure events emit through the
+  neutral capture surface with neutral property names — the `$feature/*` / `$feature_flag_called`
+  shapes stay behind the adapter** (never a `$`-shape on the neutral seam).

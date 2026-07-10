@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-10 — Python-parity cycle closed + archived to HISTORY; feature-flags + session-replay pulled into NOW (epics not yet drafted)
+Last updated: 2026-07-10 — Python-parity cycle closed + archived to HISTORY; feature-flags + session-replay pulled into NOW; cycle epics (E12–E14) drafted + architect-refined
 
 ## Status
 
@@ -41,7 +41,8 @@ SOTA / `posthog-js`-capability bar.
 **feature-flags** (sequences first — broadest surface, both trees):
 
 - **[E12-FF-flag-substrate-remote-eval](epics/E12-FF-flag-substrate-remote-eval.md)** — the neutral
-  `FeatureFlagPort` (async-first snapshot model) + `FlagContext` + taxonomy `flags` slot +
+  `FeatureFlagPort` (async-first snapshot model, with a neutral `degraded`/`reason` signal so eval
+  failure is distinguishable from a real "off") + `FlagContext` + taxonomy `flags` slot +
   config-supplied bootstrap + **remote-evaluation** adapters (browser fetch, node round-trip, Python
   server) across both trees + the React flag hook. `blocked_by: []`.
 - **[E13-FF-local-eval](epics/E13-FF-local-eval.md)** — **local (in-process) evaluation**, the
@@ -53,9 +54,10 @@ SOTA / `posthog-js`-capability bar.
 
 - **[E14-SR-session-replay](epics/E14-SR-session-replay.md)** — the neutral `SessionReplayPort`
   (`start`/`stop`/`isActive`/`getReplayId`) + config-only adoption (sampling + privacy masking) +
-  rrweb-behind-the-adapter recorder (separate entrypoint) + session/event linkage + own snapshot
-  delivery path. **Python: N-A-BY-PLATFORM** (slot permanently `None` — a final documented boundary).
-  `blocked_by: []`.
+  rrweb-behind-the-adapter recorder (separate entrypoint) + capture-side session/event linkage
+  (re-key on rotation) + own snapshot delivery path (size-triggered flush, flush-on-teardown, a
+  sampling flush-guard). **Python: N-A-BY-PLATFORM** (slot permanently `None` — a final documented
+  boundary). `blocked_by: []`.
 
 **Dependency graph:** `E12 → E13` (E13 needs E12's shipped port); `E14` is independent. A valid build
 order: **E12 → E13 → E14** (sequence flags before replay per the NOW framing; E14 could run in parallel

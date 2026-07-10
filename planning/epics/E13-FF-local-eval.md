@@ -101,6 +101,18 @@ evaluator/definition-cache substrate first, then per-tree wiring, then the fallb
 - **Fallback must match E12's remote path exactly** — when local eval can't resolve a flag it calls the
   same remote `evaluate` machinery E12 shipped, so a partially-local-partially-remote result is a single
   coherent `FlagSet`. Do not fork a second remote client.
+- **The returned `FlagSet` must be indistinguishable from E12's** — a consumer cannot tell whether a
+  given flag was served by the local evaluator or the remote round-trip. This is what makes
+  "local-vs-remote is adapter-internal" actually true rather than aspirational. Concretely: the local
+  path emits the **same neutral `degraded`/`reason` signal** E12 defined (a flag that fell back and
+  failed reads identically to a remote failure), and the snapshot's read surface
+  (`isEnabled`/`getFlag`/`getPayload`/`getAll`) behaves identically regardless of strategy. — architect
+  (2026-07-10, epic-refine).
+- **Local eval reads person/group properties straight off `FlagContext`** — E12's locked `FlagContext`
+  already carries `personProperties`/`groupProperties`, which is exactly what an in-process
+  `matchProperty` needs to evaluate without a round-trip. This is the concrete reason E12's port shape
+  holds for E13 with zero seam change: the context the remote path forwards is the same context the
+  local path matches against. — architect (2026-07-10).
 
 ## Expansion path
 
