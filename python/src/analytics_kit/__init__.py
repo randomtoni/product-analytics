@@ -26,6 +26,7 @@ from .provider import Analytics
 from .taxonomy import (
     PropDecl,
     PropType,
+    SingleEventCapture,
     Taxonomy,
     TaxonomyDecl,
     define_taxonomy,
@@ -57,4 +58,5 @@ __all__ = [
     "TaxonomyDecl",
     "PropType",
     "PropDecl",
+    "SingleEventCapture",
 ]

@@ -64,4 +64,13 @@ The runtime registry (PY3-S2) is full-fidelity, but the library's headline capab
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files changed:** `python/src/analytics_kit/taxonomy.py` (static layer: guarantee note + `Protocol`+`cast` recipe docstring, `TypedDict`/`Protocol`/`cast` re-exports, optional `SingleEventCapture` generic Protocol), `__init__.py` (export)
+- **Files added:** `python/tests/test_taxonomy_static.py` (mypy honesty tests)
+- **New public API:** `SingleEventCapture(Protocol[...])` (optional single-event boilerplate, NOT the mechanism) + `TypedDict`/`Protocol`/`cast` re-exports; the runtime provider signature is UNCHANGED (bar-B)
+- **Tests added:** the mypy honesty suite — ≥2-overload consumer typed-view via `cast` erroring on bad name / wrong type / missing prop (uniform `# type: ignore[call-overload]`), plus the raw-`Analytics`-is-silent gap proof
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** honesty suite **negative-controlled and REAL** (strip an ignore → `[call-overload]` error in isolation for all three negatives; plant a bogus ignore on the raw call → `[unused-ignore]`, proving the gap is genuine); PY2 `provider.py` diff empty (bar-B honored); `[call-overload]` codes held across the mypy 1.19→2.2.0 jump. **Ratified deviation:** `overload`/`Literal` are NOT re-exported from `analytics_kit.taxonomy` (ruff/pyflakes F811/F821 can't follow a re-export chain for those two special-cased names) — only `TypedDict`/`Protocol`/`cast` are; the recipe imports `overload`/`Literal` from `typing` directly (architect-confirmed; honors the "lint-clean recipe" intent).
+> Reviewer suggestion (2026-07-10): the docstring recipe's import line `from analytics_kit import Analytics, create_analytics` has an unused `Analytics` (F401) — a consumer copy-pasting it fails their own `ruff check`, defeating the lint-clean-recipe goal. Drop `Analytics` → `from analytics_kit import create_analytics`. (Improvement-pass fix.)
+- **Cross-story seams exposed:** closes the two-layer taxonomy — full-fidelity runtime (S2) + honestly-weaker best-effort static (S3), the gap stated AND tested. PY8's parity matrix audits the stated guarantee (runtime-registry parity + best-effort static, NOT TS compile-time parity; capture-only runtime type-validation).

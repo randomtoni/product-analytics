@@ -9,15 +9,90 @@ anything undeclared is out-of-taxonomy and passes through untouched.
 This surface has zero vendor analogue — it is ported from the TypeScript
 ``taxonomy.ts``/``allowlist.ts`` seam, not de-branded from any SDK. It ships no event names:
 the vocabulary is entirely consumer-supplied.
+
+The guarantee (state it, don't hide it)
+---------------------------------------
+This library promises **runtime-registry parity + best-effort static typing — NOT
+compile-time parity with the TypeScript surface.** The runtime registry
+(:func:`define_taxonomy` + :func:`validate_event_props`) is full fidelity: at capture time
+the event name selects its declared prop shape and a wrong-typed prop is caught. The static
+layer is best-effort: Python has no const generics, so the library cannot infer a
+per-event-name → prop-shape map from a single ``define_taxonomy(...)`` value the way the TS
+mapped types (``ShapeOf``/``PropsOf``) do. Static event-name and prop-shape checking exists
+**only where the consumer hand-declares it** — that hand-mirroring is the honest gap.
+
+Best-effort static typing recipe
+--------------------------------
+The consumer authors a typed **view** ``Protocol`` (one ``@overload`` of ``capture`` per
+declared event, each pinning ``event: Literal["<name>"]`` and ``properties`` to a per-event
+``TypedDict``) and applies it with :func:`cast` — a runtime no-op. Because it is a ``cast``,
+not a subclass, there is no LSP / ``[override]`` conflict, and the PY-runtime provider
+signature is untouched (adding a taxonomy is config-only).
+
+Import ``TypedDict``/``Protocol``/``cast`` from this module (re-exported for convenience) and
+``overload``/``Literal`` from ``typing`` directly — linters (ruff/flake8) only recognize the
+``@overload`` decorator and the ``Literal[...]`` special form when imported from ``typing``,
+so taking those two from ``typing`` keeps the pattern lint-clean::
+
+    from typing import Literal, overload
+    from analytics_kit.taxonomy import Protocol, TypedDict, cast
+    from analytics_kit import Analytics, create_analytics
+
+    class SignedUp(TypedDict):
+        plan: str
+        seats: int
+
+    class Checkout(TypedDict):
+        total: int
+
+    class TypedAnalytics(Protocol):
+        @overload
+        def capture(
+            self, distinct_id: str, event: Literal["signed_up"],
+            properties: SignedUp, *, dedupe_id: str | None = ...,
+        ) -> None: ...
+        @overload
+        def capture(
+            self, distinct_id: str, event: Literal["checkout"],
+            properties: Checkout, *, dedupe_id: str | None = ...,
+        ) -> None: ...
+
+    analytics = cast(TypedAnalytics, create_analytics(config, adapter))
+    analytics.capture("u1", "signed_up", {"plan": "pro", "seats": 3})  # checked
+
+Author the view with **two or more overloads**: at ≥2 overloads every static violation (bad
+event name / wrong prop type / missing required prop) surfaces uniformly as
+``[call-overload]``; a single-overload view splits the codes and adds a ``[misc]`` warning.
+The ``Literal`` name union and per-event ``TypedDict``\\ s are consumer-authored — the library
+cannot generate them (the const-generic wall). The runtime ``.decl`` is the source of truth
+the consumer mirrors by hand. A consumer who declares no view keeps the loose runtime
+surface (``event: str``, ``properties: dict[str, object]``) and still type-checks.
 """
 
 from __future__ import annotations
 
 import datetime
-from typing import Literal, TypedDict
+from typing import Literal, Protocol, TypedDict, TypeVar, cast
 
 from .allowlist import ViolationPolicy, emit_violation
 from .neutral_event import NeutralProperties
+
+__all__ = [
+    "PropType",
+    "PropDecl",
+    "TaxonomyDecl",
+    "Taxonomy",
+    "define_taxonomy",
+    "validate_event_props",
+    "derive_allowlist_from_taxonomy",
+    "SingleEventCapture",
+    # Typing re-exports for the best-effort static-typing recipe (see module docstring).
+    # Only the three that re-export lint-cleanly are surfaced here; `overload` and `Literal`
+    # are imported from `typing` directly in the recipe (linters special-case those two).
+    "TypedDict",
+    "Protocol",
+    "cast",
+]
 
 PropType = Literal["string", "number", "boolean", "date"]
 """The per-prop type-witness vocabulary (pure data), ported from TS."""
@@ -166,3 +241,28 @@ def derive_allowlist_from_taxonomy(taxonomy: Taxonomy) -> list[str]:
         for prop_decl in groups.values():
             keys.update(prop_decl)
     return list(keys)
+
+
+_EventName = TypeVar("_EventName", bound=str, contravariant=True)
+_Props = TypeVar("_Props", contravariant=True)
+
+
+class SingleEventCapture(Protocol[_EventName, _Props]):
+    """Optional boilerplate convenience for a ONE-event typed view — NOT the mechanism.
+
+    Parametrizing this binds ``capture`` to a single ``event`` name and its prop shape:
+    ``cast(SingleEventCapture[Literal["signed_up"], SignedUp], create_analytics(...))``. It
+    saves writing one ``@overload`` by hand but expresses only ONE event per parametrization —
+    it cannot carry the whole name→shape map (the const-generic wall). For more than one typed
+    event, author the multi-``@overload`` view ``Protocol`` in the module-docstring recipe;
+    that recipe is the mechanism, this is a shorthand for the single-event case.
+    """
+
+    def capture(
+        self,
+        distinct_id: str,
+        event: _EventName,
+        properties: _Props,
+        *,
+        dedupe_id: str | None = ...,
+    ) -> None: ...
