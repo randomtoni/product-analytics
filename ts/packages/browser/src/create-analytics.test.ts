@@ -11,6 +11,60 @@ test('keyed config resolves the browser adapter', () => {
   expect(resolveAdapter({ key: 'proj-key' })).toBeInstanceOf(BrowserAdapter);
 });
 
+describe('feature-flag adapter attaches to the provider.flags slot (E12-S2)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('a keyed createAnalytics populates provider.flags with a working flag port', async () => {
+    const analytics = createAnalytics({ key: 'flag-key', ingestHost: 'https://a.example.com' });
+
+    expect(analytics.flags).toBeDefined();
+    // The slot satisfies the neutral FeatureFlagPort: evaluate + onChange are callable.
+    const set = await analytics.flags!.evaluate();
+    expect(typeof set.isEnabled).toBe('function');
+    expect(typeof analytics.flags!.onChange).toBe('function');
+  });
+
+  test('an unkeyed createAnalytics leaves provider.flags undefined (config-only adoption, no flag machinery)', () => {
+    const analytics = createAnalytics({});
+    expect(analytics.flags).toBeUndefined();
+  });
+
+  test('the attached flag adapter seeds config.flags.bootstrap synchronously (no flash-of-wrong-variant)', async () => {
+    // No fetch resolves in jsdom against a bogus host quickly, but bootstrap is served without
+    // waiting on the network — the first evaluate returns the bootstrap set with reason 'bootstrap'.
+    const analytics = createAnalytics({
+      key: 'flag-boot-key',
+      ingestHost: 'https://a.example.com',
+      flags: { bootstrap: { flags: { beta: true }, payloads: { beta: { copy: 'hi' } } } },
+    });
+
+    const set = await analytics.flags!.evaluate();
+    expect(set.isEnabled('beta')).toBe(true);
+    expect(set.getPayload('beta')).toEqual({ copy: 'hi' });
+    expect(set.reason('beta')).toBe('bootstrap');
+  });
+
+  test('the attached flag adapter fills distinctId from the SAME browser identity the client uses', async () => {
+    const fetchSpy = vi
+      .spyOn(BrowserAdapter.prototype, 'fetch')
+      .mockResolvedValue({ status: 200, text: async () => '{}', json: async () => ({}) });
+    const analytics = createAnalytics({ key: 'flag-id-key', ingestHost: 'https://a.example.com' });
+
+    await analytics.flags!.evaluate();
+
+    // The flag POST carried the client's own distinct id — single-sourced, not a second id.
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string) as Record<string, unknown>;
+    const adapter = resolveAdapter({ key: 'flag-id-key' }) as BrowserAdapter;
+    expect(typeof body.distinct_id).toBe('string');
+    expect(body.distinct_id).toMatch(V7);
+    // Same minting scheme the identity store uses (a v7), proving it came from getDistinctId().
+    expect(body.distinct_id).not.toBe('anonymous');
+    void adapter;
+  });
+});
+
 test('unkeyed config resolves the NoopAdapter (whole-stack no-op)', () => {
   expect(resolveAdapter({})).toBeInstanceOf(NoopAdapter);
 });

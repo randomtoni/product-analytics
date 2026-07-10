@@ -11,6 +11,7 @@ import {
   type TaxonomyDecl,
 } from 'analytics-kit';
 import { BrowserAdapter } from './browser-adapter';
+import { FlagClient } from './feature-flags';
 
 export function cryptoRandomId(): string {
   return crypto.randomUUID();
@@ -93,14 +94,34 @@ function registerCountry(analytics: AnalyticsProvider, config: AnalyticsConfig):
   }
 }
 
+// Attach the browser flag adapter to the provider's `flags` slot when the client is keyed —
+// the only case a BrowserAdapter (with its identity + fetch SPIs) exists to source. An unkeyed
+// client resolves the NoopAdapter, so the slot stays `undefined` (no flag machinery; the React
+// binding then falls back to the seam's canonical empty snapshot). Config-only — no seam edit;
+// the assignment fills an existing optional interface member, leaving the keyof pin untouched.
+function attachFlags(analytics: AnalyticsProvider, adapter: AnalyticsAdapter, config: AnalyticsConfig): void {
+  if (!(adapter instanceof BrowserAdapter)) {
+    return;
+  }
+  analytics.flags = new FlagClient({
+    key: config.key as string,
+    ingestHost: config.ingestHost,
+    bootstrap: config.flags?.bootstrap,
+    getDistinctId: () => adapter.getDistinctId(),
+    fetch: (url, options) => adapter.fetch(url, options),
+  });
+}
+
 export function createAnalytics<const T extends TaxonomyDecl>(
   config: AnalyticsConfig & { taxonomy: Taxonomy<T> }
 ): RootAnalytics<ShapeOf<T>>;
 export function createAnalytics(config: AnalyticsConfig): RootAnalytics;
 export function createAnalytics(config: AnalyticsConfig): RootAnalytics {
-  const analytics = createSeamAnalytics(config, resolveAdapter(config), {
+  const adapter = resolveAdapter(config);
+  const analytics = createSeamAnalytics(config, adapter, {
     generateUuid: cryptoRandomId,
   });
   registerCountry(analytics, config);
+  attachFlags(analytics, adapter, config);
   return analytics;
 }
