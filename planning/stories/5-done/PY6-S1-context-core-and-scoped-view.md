@@ -64,4 +64,12 @@ The `contextvars` request scope is the server analog of the React provider/hooks
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added:** `python/src/analytics_kit/integrations/context.py` (`contextvars` scope core + `@scoped` + `context(analytics)` view), `tests/test_context.py` (30 cases)
+- **Files changed:** `integrations/__init__.py` (exports both surfaces)
+- **New public API:** middleware-facing (`new_context`, `current_context`, `set_context_distinct_id`/`get_context_distinct_id`, `add_tag`/`get_tags`, `ContextScope`) + consumer-facing (`context(analytics) -> ScopedContextView`, `scoped`, `ScopedContextView`). `provider.py` UNCHANGED (Option B).
+- **Tests added:** async-scope-is-live (survives an `await`), tag-gating-through-the-unmutated-provider (off-list raises/drops, taxonomy-typed tag validated), nesting/`fresh`/no-leak, distinct_id resolution (explicit > context > raise), `Analytics` gained no member
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — **no tag-gate bypass exists** (structurally one path through the unmutated `provider.capture` → `_allowed` + `validate_event_props`; the view exposes only `capture`, no ungated `set`/`group` lane); async-`@scoped` **negative-controlled** (a sync-only wrapper fails the scope-is-live test as predicted); `provider.py` diff empty (`distinct_id` still required, frozen surface untouched); the port deliberately REJECTS posthog's personless-UUID fallback (raises a clear neutral error instead — the #4 ruling). Nesting stress-tested (3-level, exception-mid-scope, `fresh` isolation).
+- **Cross-story seams exposed:** **S2** (Django) + **S3** (ASGI/FastAPI) each drive the MIDDLEWARE-facing surface (`new_context()` per request + `set_context_distinct_id`/`add_tag`) — NOT the `context(analytics)` view (the consumer's call). Both middlewares are thin wrappers over `new_context()`; the async-aware `@scoped` supports the FastAPI `@app.middleware("http")` async-stacking pattern. S2/S3 add `django`/`fastapi`/`starlette` to `[dependency-groups] dev` + the lazy `try/except ImportError` behind their extras.
