@@ -1,11 +1,11 @@
 ---
 id: PY5-QRY-query-client
-status: planned
+status: active
 area: query
 touches: [adapters]
 api_impact: additive
 blocked_by: [PY3-CORE-taxonomy-allowlist]
-updated: 2026-07-09
+updated: 2026-07-10
 ---
 
 # PY5-QRY-query-client — Python query client
@@ -24,11 +24,22 @@ The query client is the durable-KPI-snapshotting surface — the funnel/retentio
 
 ## Stories
 
-_Tentative slice (story files not yet written):_
+Chain — `S1 → {S2, S3}`; S2 and S3 both depend only on S1 (they can build in parallel, like TS E8's HTTP + warehouse tracks). Written to `stories/2-ready-for-dev/`. Fills the empty PY1-skeleton `query.py` (as a `query/` submodule). **Slice note:** the query **no-op** folds into S1 (co-located with the factory, mirroring TS `E8-S2`), NOT S3 — so S3 is the warehouse stub alone.
 
-- **S1** — the `AnalyticsQueryClient` `Protocol` + the taxonomy-typed spec dataclasses (funnel/retention/trend/unique-count/raw) + the flat `QueryResult` shape + a config-selected factory (keyed ⇒ HTTP adapter, unkeyed ⇒ no-op).
-- **S2** — the HTTP query adapter: config-supplied endpoint + personal-key Bearer auth, sync blocking poll, Pydantic wire-response → `QueryResult` decode, fetch-failure normalization at the boundary.
-- **S3** — the warehouse-query-adapter typed stub (bar-A proof) + the query no-op (bar B).
+- **[PY5-S1](../stories/2-ready-for-dev/PY5-S1-query-protocol-specs-result-factory.md)** *(additive, no deps)* — `AnalyticsQueryClient` `Protocol` (5 sync members) + plain-`@dataclass` spec types (funnel/retention/trend/unique-count + `Duration`/`Granularity`/`Aggregation`) + Pydantic `QueryResult`/`QueryColumn` + separate Pydantic `QueryClientConfig` (distinct `personal_key`/`query_endpoint`) + `create_query_client` factory + `QueryNoop` (bar B).
+- **[PY5-S2](../stories/2-ready-for-dev/PY5-S2-http-query-adapter.md)** *(additive, depends on S1)* — `HttpQueryAdapter`: Bearer-auth POST to the config endpoint, **sync-blocking-poll** (TS async poll → `time.sleep` loop, NO asyncio), Pydantic wire→`QueryResult` decode, fetch-failure normalization at the boundary, injectable transport on the ctor, all wire vocab `_WIRE_*`-confined (the highest-neutrality-risk surface — the `HogQLQuery`-leak class).
+- **[PY5-S3](../stories/2-ready-for-dev/PY5-S3-warehouse-adapter-stub.md)** *(additive, depends on S1)* — `WarehouseQueryAdapter` typed not-implemented stub satisfying the Protocol unchanged (**the bar-A proof**: two adapters, one Protocol, zero consumer change) + documented per-method SQL mapping.
+
+Build topo order: `PY5-S1 → PY5-S2` and `PY5-S1 → PY5-S3` (S2/S3 parallel).
+
+**Module map** (a new `query/` submodule under `analytics_kit`, reading the PY2 seam + PY3 taxonomy; does NOT touch the PY4 server-capture path):
+
+- `query/client.py` — `AnalyticsQueryClient` `Protocol` + spec dataclasses + `Duration`/`Granularity`/`Aggregation` + `QueryResult`/`QueryColumn` Pydantic models (S1)
+- `query/config.py` — the separate `QueryClientConfig` Pydantic model (S1)
+- `query/factory.py` — `create_query_client` (S1)
+- `query/noop.py` — `QueryNoop` (S1)
+- `query/http_adapter.py` — `HttpQueryAdapter` + the adapter-owned transport Protocol + `_WIRE_*` wire vocab (S2)
+- `query/warehouse_adapter.py` — `WarehouseQueryAdapter` typed stub (S3)
 
 ## Out of scope
 

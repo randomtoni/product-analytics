@@ -55,7 +55,7 @@ The shape mirrors the TS build: scaffold → seam → taxonomy+allowlist → ser
 - **[PY4-NODE-server-capture](epics/done/PY4-NODE-server-capture.md)** *(done)* — server capture + set/set-group +
   `queue.Queue`/daemon-thread consumer (**drop-oldest to match TS, NOT posthog-python's drop-newest**)
   + adapter-internal wire mapper + `dedupe_id`→`uuid` idempotency + retry classification + no-op.
-- **[PY5-QRY-query-client](epics/PY5-QRY-query-client.md)** — `AnalyticsQueryClient` `Protocol`
+- **[PY5-QRY-query-client](epics/PY5-QRY-query-client.md)** *(active)* — `AnalyticsQueryClient` `Protocol`
   (funnel/retention/trend/unique-count + `raw_query`) + sync HTTP query adapter + warehouse stub (bar-A
   proof) + no-op.
 - **[PY6-RCT-framework-bindings](epics/PY6-RCT-framework-bindings.md)** — the React analog:
