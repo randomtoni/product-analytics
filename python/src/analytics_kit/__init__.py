@@ -23,6 +23,22 @@ from .neutral_event import (
 from .noop import NoopAdapter
 from .ports import FeatureFlagPort, SessionReplayPort
 from .provider import Analytics
+from .query import (
+    Aggregation,
+    AnalyticsQueryClient,
+    Duration,
+    FunnelSpec,
+    Granularity,
+    QueryClientConfig,
+    QueryColumn,
+    QueryNoop,
+    QueryResult,
+    QueryTransport,
+    RetentionSpec,
+    TrendSpec,
+    UniqueCountSpec,
+    create_query_client,
+)
 from .server import (
     BatchConsumer,
     ServerAdapter,
@@ -70,4 +86,18 @@ __all__ = [
     "PropType",
     "PropDecl",
     "SingleEventCapture",
+    "AnalyticsQueryClient",
+    "Duration",
+    "Granularity",
+    "Aggregation",
+    "FunnelSpec",
+    "RetentionSpec",
+    "TrendSpec",
+    "UniqueCountSpec",
+    "QueryColumn",
+    "QueryResult",
+    "QueryTransport",
+    "QueryClientConfig",
+    "create_query_client",
+    "QueryNoop",
 ]

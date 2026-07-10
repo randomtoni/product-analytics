@@ -67,4 +67,13 @@ Establishes the query read substrate: the neutral `AnalyticsQueryClient` `Protoc
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-10.
+
+- **Files added:** `python/src/analytics_kit/query/{__init__,client,config,factory,noop}.py`, `tests/test_query_client.py`
+- **Files removed:** `python/src/analytics_kit/query.py` (empty PY1 placeholder → `query/` package; `import analytics_kit.query` still resolves)
+- **Files changed:** `__init__.py` (query surface exports)
+- **New public API:** `AnalyticsQueryClient` (Protocol, 5 sync members → `QueryResult`), `FunnelSpec`/`RetentionSpec`/`TrendSpec`/`UniqueCountSpec` (plain `@dataclass`), `Duration`/`Granularity`/`Aggregation`, `QueryResult`/`QueryColumn` (Pydantic, matching TS `query-result.ts`), `QueryTransport` (`@runtime_checkable` — for the Pydantic isinstance-guard), `QueryClientConfig` (separate Pydantic, `extra="forbid"`), `create_query_client`, `QueryNoop`
+- **Tests added:** the `_conforms(AnalyticsQueryClient)` type-level sink (the bar-A substrate S2/S3 inherit), spec/result Pydantic split, config distinctness, bar-B no-op, neutrality (no dialect on `__all__`)
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** clean — the `_conforms` sink **negative-controlled 3 ways** (drop a member / `async def` / wrong return → all fail at the type-level sink; the sync posture is genuinely type-enforced); neutrality graded independently (`posthog`+`hogql`/warehouse-dialect grep clean — the only `hogql`/`kind` hits are prohibition docstrings); `QueryResult` matches TS byte-for-byte; the `@runtime_checkable`-only-on-`QueryTransport` split is sound (config needs the runtime isinstance-guard; the bar-A proof is type-level).
+- **Cross-story seams exposed:** **S2** fills `query/factory.py::_build_http_query_client` (currently `NotImplementedError`) with `HttpQueryAdapter` reading `config.query_endpoint`/`personal_key`/`project_id`/`transport`; the injectable `QueryTransport.send(url, method, headers, body: str|None) -> NeutralResponse` (str-bodied — no gzip wrinkle) is on `QueryClientConfig.transport` (S2 supplies the stdlib default); ALL `_WIRE_*` vocab confined to `query/http_adapter.py`; poll is a blocking `time.sleep` loop. **S3** reuses the `_conforms` sink verbatim (bar-A proof) and must match the SYNC `def` signatures (an `async def` fails the sink).
