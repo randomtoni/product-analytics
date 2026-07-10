@@ -10,6 +10,26 @@ Scaffold only. The vendor-neutral seam (provider contract, adapter ``Protocol``,
 allowlist, config-selected factory) is implemented by the Python roadmap cycle.
 """
 
+from .adapter import AnalyticsAdapter, ConsentState, NeutralResponse
+from .neutral_event import (
+    InternalKind,
+    NeutralEvent,
+    NeutralProperties,
+    NeutralTraits,
+)
+from .ports import FeatureFlagPort, SessionReplayPort
+
 __version__ = "0.0.0"
 
-__all__ = ["__version__"]
+__all__ = [
+    "__version__",
+    "NeutralEvent",
+    "NeutralProperties",
+    "NeutralTraits",
+    "InternalKind",
+    "ConsentState",
+    "NeutralResponse",
+    "AnalyticsAdapter",
+    "FeatureFlagPort",
+    "SessionReplayPort",
+]

@@ -80,4 +80,12 @@ The `AnalyticsAdapter` SPI *is* bar A ("provider-swap = one adapter, zero consum
 
 ## Shipped
 
-<!-- Captured by implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-09.
+
+- **Files added:** `python/src/analytics_kit/neutral_event.py`, `adapter.py`, `ports.py`, `tests/test_seam_substrate.py`
+- **Files changed:** `python/src/analytics_kit/__init__.py` (9 public re-exports), `python/tests/test_scaffold.py` (import coverage)
+- **New public API:** `NeutralEvent`, `NeutralProperties`, `NeutralTraits`, `InternalKind` (`set_traits`/`set_group_traits`/`group_identify`), `ConsentState`, `NeutralResponse`, `AnalyticsAdapter` (plain `Protocol`, capture-only + lifecycle), `FeatureFlagPort`, `SessionReplayPort` (sketches)
+- **Tests added:** `test_seam_substrate.py` (8 cases incl. `test_fake_adapter_conforms_structurally` — the bar-A structural-conformance proof, negative-controlled by the reviewer)
+- **Commit:** `core-cycle` (message = story title)
+- **Reviewer notes:** `none` — approved first pass; reviewer negative-controlled the conformance test (dropped a member + drifted a signature → mypy failed both) and ground the capture-only SPI against `ts/packages/node/src/node-analytics.ts:144-194`
+- **Cross-story seams exposed:** the seam's ONE data verb is `AnalyticsAdapter.capture(event: NeutralEvent) -> None`; **S2** mints `set_traits`/`set_group_traits`/`group_identify`-kinded events (owns once-vs-`set_once` + the `{group_type}_{group_key}` composite distinct_id) and routes through `capture` — no adapter set/group verb. `send(...) -> NeutralResponse`; **S3**'s `NoopAdapter` returns `NeutralResponse(status=0, body="")`, factory selects by supplied-vs-`None` (SPI is NOT `@runtime_checkable`). `flush`/`shutdown` sync → **S4** lifecycle. `internal_kind` is PY4's wire-mapper discriminant (never the event name).
