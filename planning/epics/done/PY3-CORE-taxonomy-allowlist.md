@@ -1,6 +1,6 @@
 ---
 id: PY3-CORE-taxonomy-allowlist
-status: active
+status: done
 area: core
 touches: [privacy]
 api_impact: additive
@@ -24,13 +24,13 @@ The typed taxonomy and the payload allowlist are the library's **OWN** surface �
 
 ## Stories
 
-Chain — `S1 → S2 → S3`; topo-sortable via `depends_on`. Written to `stories/2-ready-for-dev/`. **Re-sliced from the tentative shape:** `derive_allowlist_from_taxonomy` moved from S1 to S2 because it needs the taxonomy-registry SHAPE — so S1 is the `enforce_allowlist` half (no taxonomy dep), S2 adds the registry + derive, matching the TS reality (E3-S2 guard → E3-S3 derivation). Fills the PY1-skeleton `allowlist.py` + `taxonomy.py`.
+Chain — `S1 → S2 → S3`. All shipped. **Re-sliced from the tentative shape:** `derive_allowlist_from_taxonomy` moved from S1 to S2 (needs the registry shape), matching the TS reality (E3-S2 guard → E3-S3 derivation).
 
-- **[PY3-S1](../stories/2-ready-for-dev/PY3-S1-allowlist-guard-and-wiring.md)** *(additive, no deps)* — `enforce_allowlist(allowlist, on_violation, *bags) -> bool` (keys-only, variadic, both policy branches, `is not None` activation) ported 1:1 from TS + `ViolationPolicy` + wiring into the PY2 provider call-boundary (gate `properties`+merged `super_properties` on capture, `traits` on set/set-group; routing ids not gated) + `AnalyticsConfig.allowlist`/`on_violation`.
-- **[PY3-S2](../stories/2-ready-for-dev/PY3-S2-taxonomy-registry-and-derive.md)** *(additive, depends on S1)* — `define_taxonomy(decl)` runtime registry (`.decl` + `PropType`→python validator) + `derive_allowlist_from_taxonomy` (consumer-invoked, keys-only, no name leak); **reserves NOTHING** (architect: no reserved event-name set, no `__ak_` prefix server-side); **no auto-derivation from `config.taxonomy`** (the R1 lesson).
-- **[PY3-S3](../stories/2-ready-for-dev/PY3-S3-best-effort-static-typing.md)** *(additive, depends on S2)* — best-effort static layer (`TypedDict`-per-event + `Literal` event-name union + generic keyed surface; NO overloads, NO mypy plugin) + mypy honesty tests proving what IS and ISN'T caught + the stated guarantee (runtime-registry parity + best-effort static, NOT TS compile-time parity).
+- **[PY3-S1](../../stories/5-done/PY3-S1-allowlist-guard-and-wiring.md)** *(done — `a15882b`)* — `enforce_allowlist` ported 1:1 from TS (keys-only, variadic, both policy branches, `is not None` activation, exact message) + `ViolationPolicy` + wiring into the PY2 provider call-boundary (gate merged `properties`+`super_properties` on capture, inner `traits` on set/set-group; routing ids ungated) + `AnalyticsConfig.allowlist`/`on_violation`. Merged-super-props leak class negative-controlled; `throw` raises `ValueError` (parity with TS's plain `Error`).
+- **[PY3-S2](../../stories/5-done/PY3-S2-taxonomy-registry-and-derive.md)** *(done — `d0762a8`)* — `define_taxonomy(decl)` runtime registry (concrete `Taxonomy` class, `.decl`, capture-only `PropType`→python validator with the `bool`-before-`number` gotcha) + `derive_allowlist_from_taxonomy` (consumer-invoked, keys-only, no name leak); **reserves NOTHING** (architect: no reserved event-name set + no `__ak_` prefix — browser mechanisms with no server home); **no auto-derivation from `config.taxonomy`** (the R1 lesson — regression guard negative-controlled).
+- **[PY3-S3](../../stories/5-done/PY3-S3-best-effort-static-typing.md)** *(done — `31553e8`)* — best-effort static layer = consumer-authored `Protocol`+`cast` typed-view (architect-verified against mypy; NO provider subclass / `Unpack` / library-overloads / mypy-plugin — all four killed) + mypy honesty tests (negative-controlled) proving what IS and ISN'T caught + the stated guarantee (runtime-registry parity + best-effort static, NOT TS compile-time parity). PY2 runtime signature unchanged (bar-B).
 
-Build topo order: `PY3-S1 → PY3-S2 → PY3-S3`. Submodules: `allowlist.py` (S1), `taxonomy.py` (S2+S3), plus the `AnalyticsConfig` extension threaded through the factory.
+Build topo order: `PY3-S1 → PY3-S2 → PY3-S3`. Submodules: `allowlist.py` (S1), `taxonomy.py` (S2+S3), + the `AnalyticsConfig` extension threaded through the factory.
 
 ## Out of scope
 
