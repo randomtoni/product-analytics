@@ -1,16 +1,20 @@
 import {
+  buildFlagSet,
   emptyFlagSet,
+  seedBootstrap,
   type FeatureFlagPort,
   type FlagContext,
   type FlagEvaluateOptions,
   type FlagReason,
   type FlagSet,
+  type FlagSnapshot,
   type FlagValue,
   type FlagsConfig,
   type NeutralFetchResponse,
   type DefaultTaxonomyShape,
   type TaxonomyShape,
 } from 'analytics-kit';
+import { joinIngestUrl } from './ingest-url';
 
 // Adapter-internal [WIRE] flag-eval vocabulary: the endpoint path, request-body keys, and
 // response keys this backend's flag endpoint speaks. None of it appears on the neutral
@@ -42,23 +46,12 @@ const FLAG_PAYLOADS_WIRE_KEY = 'featureFlagPayloads';
 // The consumer-observable reasons, mapped from the browser's real fetch states onto the
 // S1-pinned FlagReason union. Named here for the adapter's own use — never widened.
 const REASON_RESOLVED: FlagReason = 'resolved';
-const REASON_BOOTSTRAP: FlagReason = 'bootstrap';
 const REASON_STALE: FlagReason = 'stale';
 
 // The [WIRE] flag-eval response the endpoint returns. Adapter-internal — never neutral surface.
 interface FlagWireResponse {
   [FLAGS_WIRE_KEY]?: Record<string, FlagValue>;
   [FLAG_PAYLOADS_WIRE_KEY]?: Record<string, unknown>;
-}
-
-// A resolved snapshot's backing data plus the reason every read reports. Held in the cache and
-// wrapped by a FlagSet on each `evaluate`; the reason is uniform across a snapshot's keys
-// (bootstrap-seeded, freshly resolved, or stale-served after a failed refresh).
-interface Snapshot {
-  flags: Record<string, FlagValue>;
-  payloads: Record<string, unknown>;
-  reason: FlagReason;
-  degraded: boolean;
 }
 
 export interface FlagAdapterOptions {
@@ -86,22 +79,6 @@ export interface FlagFetchOptions {
   body: string;
 }
 
-// Build a FlagSet snapshot over the given resolved data. The reads are pure synchronous lookups
-// off the frozen backing maps; `reason` reports the same value for every key (the snapshot-level
-// state). `getFlag`/`getPayload` carry the taxonomy generic so a typed consumer's reads narrow.
-function buildFlagSet<TX extends TaxonomyShape>(snapshot: Snapshot): FlagSet<TX> {
-  const { flags, payloads, reason, degraded } = snapshot;
-  return Object.freeze({
-    isEnabled: (key: string): boolean => flags[key] !== undefined && flags[key] !== false,
-    getFlag: (key: string): FlagValue | undefined => flags[key],
-    getPayload: (key: string): unknown => payloads[key],
-    getAll: (): Record<string, FlagValue> => ({ ...flags }),
-    degraded,
-    reason: (key: string): FlagReason | undefined =>
-      flags[key] !== undefined || payloads[key] !== undefined ? reason : undefined,
-  }) as FlagSet<TX>;
-}
-
 // The browser remote-eval feature-flag adapter. Satisfies the frozen S1 FeatureFlagPort: an
 // async `evaluate` resolving an immutable FlagSet read synchronously off a cache, plus a
 // re-firing `onChange` listener. Bootstrap seeds the cache synchronously at construction; a
@@ -117,7 +94,7 @@ export class FlagClient<TX extends TaxonomyShape = DefaultTaxonomyShape>
   private readonly listeners = new Set<(set: FlagSet<TX>) => void>();
   // The resolved snapshot, seeded from bootstrap at construction and replaced on each successful
   // fetch. undefined only when no bootstrap was supplied and no fetch has yet resolved.
-  private cache: Snapshot | undefined;
+  private cache: FlagSnapshot | undefined;
   // Coalesces concurrent evaluate() calls onto one in-flight fetch so a burst of reads issues a
   // single request; cleared when the fetch settles.
   private inFlight: Promise<void> | undefined;
@@ -295,30 +272,10 @@ export class FlagClient<TX extends TaxonomyShape = DefaultTaxonomyShape>
   }
 }
 
-// Seed the cache from config bootstrap: a resolved-shaped snapshot reading 'bootstrap' until a
-// fetch replaces it. undefined when no bootstrap is supplied (the cache starts empty). Not
-// degraded — bootstrap is a real, intentional set, not a failed eval.
-function seedBootstrap(bootstrap: FlagsConfig['bootstrap']): Snapshot | undefined {
-  if (bootstrap === undefined) {
-    return undefined;
-  }
-  return {
-    flags: { ...(bootstrap.flags ?? {}) },
-    payloads: { ...(bootstrap.payloads ?? {}) },
-    reason: REASON_BOOTSTRAP,
-    degraded: false,
-  };
-}
-
 // Resolve the flag-eval URL from the consumer's bare ingest origin, appending the adapter's own
-// [WIRE] flag path. undefined when no host is configured — the adapter then never fetches.
+// [WIRE] flag path via the package's single host-join helper (the same join capture + replay use,
+// so the browser has ONE host-join). undefined when no host is configured — the adapter then never
+// fetches.
 function resolveFlagUrl(ingestHost?: string): string | undefined {
-  if (ingestHost === undefined) {
-    return undefined;
-  }
-  const host = ingestHost.trim().replace(/\/+$/, '');
-  if (host === '') {
-    return undefined;
-  }
-  return `${host}${FLAG_ENDPOINT_WIRE_PATH}`;
+  return joinIngestUrl(ingestHost, FLAG_ENDPOINT_WIRE_PATH);
 }

@@ -39,7 +39,7 @@ export function resolveReplayIngestUrl(ingestHost: string | undefined): string |
 // Join a bare `ingestHost` origin to a [WIRE] path, normalizing the trailing slash on the
 // host and guaranteeing a leading slash on the path so the join is free of `//` and of a
 // missing separator. undefined host (or empty after trim) ⇒ no target.
-function joinIngestUrl(ingestHost: string | undefined, rawPath: string): string | undefined {
+export function joinIngestUrl(ingestHost: string | undefined, rawPath: string): string | undefined {
   if (ingestHost === undefined) {
     return undefined;
   }

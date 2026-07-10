@@ -31,6 +31,8 @@ export type {
   FlagReason,
 } from './ports';
 export { emptyFlagSet } from './ports';
+export { buildFlagSet, seedBootstrap } from './flag-snapshot';
+export type { FlagSnapshot } from './flag-snapshot';
 export { NoopAdapter } from './noop-adapter';
 export { createAnalytics } from './create-analytics';
 export type {

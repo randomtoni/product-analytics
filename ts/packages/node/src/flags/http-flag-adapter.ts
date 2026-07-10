@@ -1,12 +1,14 @@
 import {
+  buildFlagSet,
+  seedBootstrap,
   type FeatureFlagPort,
   type FlagContext,
   type FlagReason,
   type FlagSet,
+  type FlagSnapshot,
   type FlagValue,
   type FlagsConfig,
   type TaxonomyShape,
-  emptyFlagSet,
 } from 'analytics-kit';
 import type { FetchLike } from '../config';
 import { joinHostPath } from '../ingest-url';
@@ -48,23 +50,12 @@ const FLAG_PAYLOADS_WIRE_KEY = 'featureFlagPayloads';
 // The consumer-observable reasons, mapped from the server round-trip states onto the S1-pinned
 // FlagReason union. Named here for the adapter's own use — never widened.
 const REASON_RESOLVED: FlagReason = 'resolved';
-const REASON_BOOTSTRAP: FlagReason = 'bootstrap';
 const REASON_UNRESOLVED: FlagReason = 'unresolved';
 
 // The [WIRE] flag-eval response the endpoint returns. Adapter-internal — never neutral surface.
 interface FlagWireResponse {
   [FLAGS_WIRE_KEY]?: Record<string, FlagValue>;
   [FLAG_PAYLOADS_WIRE_KEY]?: Record<string, unknown>;
-}
-
-// A resolved snapshot's backing data plus the reason every read reports. Wrapped by a FlagSet on
-// each `evaluate`; the reason is uniform across a snapshot's keys (freshly resolved, bootstrap
-// seed/fallback, or unresolved after a failed round-trip with no seed).
-interface Snapshot {
-  flags: Record<string, FlagValue>;
-  payloads: Record<string, unknown>;
-  reason: FlagReason;
-  degraded: boolean;
 }
 
 // The adapter's local-evaluation capability, supplied by the factory ONLY when the config selected a
@@ -92,30 +83,6 @@ export interface HttpFlagAdapterOptions {
   local?: LocalEvalCapability;
 }
 
-// Build a FlagSet snapshot over the given resolved data. The reads are pure synchronous lookups off
-// the frozen backing maps; `reason` reports the same value for every present key (the snapshot-level
-// state). `isEnabled` collapses a missing flag to false; `getFlag`/`getPayload` distinguish missing
-// (undefined) from disabled (false) — the neutralized node snapshot read contract. The taxonomy
-// generic carries so a typed consumer's `getFlag`/`getPayload` reads narrow.
-function buildFlagSet<TX extends TaxonomyShape>(snapshot: Snapshot): FlagSet<TX> {
-  const { flags, payloads, reason, degraded } = snapshot;
-  // A degraded-EMPTY snapshot (nothing resolved) presents as the canonical empty null-object, so
-  // reason(key) reports 'unresolved' for every key — matching the browser + Python adapters + the
-  // seam's emptyFlagSet. A non-empty snapshot keeps per-key reason gating (absent key → undefined).
-  if (Object.keys(flags).length === 0 && Object.keys(payloads).length === 0 && degraded) {
-    return emptyFlagSet<TX>();
-  }
-  return Object.freeze({
-    isEnabled: (key: string): boolean => flags[key] !== undefined && flags[key] !== false,
-    getFlag: (key: string): FlagValue | undefined => flags[key],
-    getPayload: (key: string): unknown => payloads[key],
-    getAll: (): Record<string, FlagValue> => ({ ...flags }),
-    degraded,
-    reason: (key: string): FlagReason | undefined =>
-      flags[key] !== undefined || payloads[key] !== undefined ? reason : undefined,
-  }) as FlagSet<TX>;
-}
-
 // The node/server remote-eval feature-flag adapter. Satisfies the frozen S1 FeatureFlagPort with an
 // entirely different implementation from the browser: no persistence, no init fetch, no cache shared
 // across actors. Each `evaluate` is an independent per-call round-trip for its own `distinctId` (a
@@ -125,7 +92,7 @@ function buildFlagSet<TX extends TaxonomyShape>(snapshot: Snapshot): FlagSet<TX>
 export class HttpFlagAdapter<TX extends TaxonomyShape> implements FeatureFlagPort<TX> {
   private readonly apiKey: string;
   private readonly flagUrl: string | undefined;
-  private readonly bootstrap: Snapshot | undefined;
+  private readonly bootstrap: FlagSnapshot | undefined;
   private readonly doFetch: FetchLike;
   private readonly local: LocalEvalCapability | undefined;
   private readonly listeners = new Set<(set: FlagSet<TX>) => void>();
@@ -174,7 +141,7 @@ export class HttpFlagAdapter<TX extends TaxonomyShape> implements FeatureFlagPor
   // the poller is ready; otherwise the pure remote path E12 shipped. This is the ONLY place the
   // strategy is decided — `evaluate`'s signature and the returned `FlagSet` are indistinguishable
   // across strategies (same snapshot shape, same neutral `reason`/`degraded`).
-  private async resolve(context: FlagContext): Promise<Snapshot> {
+  private async resolve(context: FlagContext): Promise<FlagSnapshot> {
     const local = this.local;
     if (local === undefined || !local.poller.isReady()) {
       // Not local-capable, or definitions haven't loaded yet. Under local-only there is no remote
@@ -196,7 +163,7 @@ export class HttpFlagAdapter<TX extends TaxonomyShape> implements FeatureFlagPor
   private async resolveLocalFirst(
     context: FlagContext,
     local: LocalEvalCapability
-  ): Promise<Snapshot> {
+  ): Promise<FlagSnapshot> {
     const snapshot = local.poller.getSnapshot();
     const definitions =
       context.flagKeys !== undefined
@@ -276,7 +243,7 @@ export class HttpFlagAdapter<TX extends TaxonomyShape> implements FeatureFlagPor
   // failed/aborted round-trip degrades to the bootstrap seed (marked 'stale') when one is supplied,
   // else the seam's 'unresolved' empty set — the neutral degradation signal. Vendor eval-quality
   // fields on the response are never read.
-  private async roundTrip(context: FlagContext): Promise<Snapshot> {
+  private async roundTrip(context: FlagContext): Promise<FlagSnapshot> {
     // No remote endpoint configured (a local-only posture) ⇒ the remote path has nowhere to go;
     // degrade to the neutral empty/seed snapshot rather than fetch. Reached only defensively — the
     // strategy branch never routes to the remote path under local-only.
@@ -368,22 +335,6 @@ function resolveLocalPayload(definition: FlagDefinition, value: FlagValue): unkn
     }
   }
   return raw;
-}
-
-// Seed a snapshot from config bootstrap: a resolved-shaped snapshot read 'bootstrap' (not degraded —
-// a real, intentional set) used as the server round-trip's fallback. undefined when no bootstrap is
-// supplied. The `reason` set here is only the seed identity; `roundTrip` restamps it to 'stale' when
-// it actually serves the seed after a failed round-trip.
-function seedBootstrap(bootstrap: FlagsConfig['bootstrap']): Snapshot | undefined {
-  if (bootstrap === undefined) {
-    return undefined;
-  }
-  return {
-    flags: { ...(bootstrap.flags ?? {}) },
-    payloads: { ...(bootstrap.payloads ?? {}) },
-    reason: REASON_BOOTSTRAP,
-    degraded: false,
-  };
 }
 
 // Resolve the flag-eval URL from the consumer's bare flag origin, appending the adapter's own [WIRE]
