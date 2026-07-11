@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { FetchLike } from '@analytics-kit/node';
-import type { QueryResult } from 'analytics-kit';
+import type { FetchLike } from '@randomtoni/analytics-kit-node';
+import type { QueryResult } from '@randomtoni/analytics-kit';
 import {
   activationFunnelSnapshot,
   activeReviewersSnapshot,

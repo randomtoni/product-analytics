@@ -2,7 +2,7 @@ import { defineConfig } from 'tsup';
 import { baseTsupConfig } from '../../tsup.config.base';
 
 // Two entries: the base target (`src/index.ts` → `dist/index.*`) and the replay target
-// (`src/replay/index.ts` → `dist/replay.*`, the `@analytics-kit/browser/replay` subpath).
+// (`src/replay/index.ts` → `dist/replay.*`, the `@randomtoni/analytics-kit-browser/replay` subpath).
 // The object entry form pins each output name so `src/replay/index.ts` emits the FLAT
 // `dist/replay.*` (not `dist/replay/index.*`) and never collides with `dist/index.*`.
 // `splitting` keeps the heavy rrweb code out of BOTH the ESM and CJS base bundles: the

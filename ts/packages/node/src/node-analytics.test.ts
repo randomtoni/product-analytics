@@ -1,5 +1,5 @@
-import { createAnalytics, defineTaxonomy, NoopAdapter } from 'analytics-kit';
-import type { AnalyticsAdapter, NeutralEvent } from 'analytics-kit';
+import { createAnalytics, defineTaxonomy, NoopAdapter } from '@randomtoni/analytics-kit';
+import type { AnalyticsAdapter, NeutralEvent } from '@randomtoni/analytics-kit';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { NodeAnalyticsClient, type SendBatch } from './node-analytics';
 import { mapEventToWire } from './wire-mapper';
@@ -714,10 +714,10 @@ test('a second shutdown() is a no-op and resolves', async () => {
   await expect(client.shutdown()).resolves.toBeUndefined();
 });
 
-test('node source imports nothing from @analytics-kit/browser', async () => {
+test('node source imports nothing from @randomtoni/analytics-kit-browser', async () => {
   const { readFileSync, readdirSync } = await import('node:fs');
   const { join } = await import('node:path');
-  const browserPkg = ['@analytics-kit', 'browser'].join('/');
+  const browserPkg = ['@randomtoni', 'analytics-kit-browser'].join('/');
   const files = readdirSync(__dirname).filter(
     (f) => f.endsWith('.ts') && !f.endsWith('.test.ts')
   );

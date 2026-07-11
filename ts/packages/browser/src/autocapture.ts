@@ -1,4 +1,4 @@
-import type { NeutralProperties } from 'analytics-kit';
+import type { NeutralProperties } from '@randomtoni/analytics-kit';
 
 // Minimal DOM autocapture, de-branded from posthog-js's autocapture.ts +
 // autocapture-utils.ts. Capture-phase document listeners for click / change / submit

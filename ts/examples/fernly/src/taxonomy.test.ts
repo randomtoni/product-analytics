@@ -1,5 +1,5 @@
 import { expectTypeOf, test } from 'vitest';
-import type { RootAnalytics, ShapeOf } from 'analytics-kit';
+import type { RootAnalytics, ShapeOf } from '@randomtoni/analytics-kit';
 import { createFernlyAnalytics } from './harness';
 import { fernlyTaxonomy } from './taxonomy';
 

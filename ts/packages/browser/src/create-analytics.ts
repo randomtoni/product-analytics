@@ -9,7 +9,7 @@ import {
   type ShapeOf,
   type Taxonomy,
   type TaxonomyDecl,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import { BrowserAdapter } from './browser-adapter';
 import { FlagClient } from './feature-flags';
 import { attachReplay } from './replay-recorder';

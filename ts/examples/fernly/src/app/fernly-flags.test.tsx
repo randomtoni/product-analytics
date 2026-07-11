@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
-import { AnalyticsClientProvider, useFeatureFlags } from '@analytics-kit/react';
-import { createAnalytics } from '@analytics-kit/browser';
+import { AnalyticsClientProvider, useFeatureFlags } from '@randomtoni/analytics-kit-react';
+import { createAnalytics } from '@randomtoni/analytics-kit-browser';
 import type { ReactNode } from 'react';
 import { createFernlyFlagClient, type FernlyFlagShape } from '../flag-harness';
 import { AiSummaryBadge } from './fernly-app';

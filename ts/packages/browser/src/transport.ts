@@ -1,4 +1,4 @@
-import type { NeutralFetchResponse } from 'analytics-kit';
+import type { NeutralFetchResponse } from '@randomtoni/analytics-kit';
 
 // Adapter-internal transport primitives, de-branded from the reference request.ts.
 // A pure utility layer: runtime feature-detection of each transport, the keepalive

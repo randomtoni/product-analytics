@@ -1,4 +1,4 @@
-import { defineTaxonomy } from 'analytics-kit';
+import { defineTaxonomy } from '@randomtoni/analytics-kit';
 
 export const fernlyTaxonomy = defineTaxonomy({
   events: {

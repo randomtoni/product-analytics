@@ -1,5 +1,5 @@
-import type { DefaultTaxonomyShape, ShapeOf } from 'analytics-kit';
-import { defineTaxonomy } from 'analytics-kit';
+import type { DefaultTaxonomyShape, ShapeOf } from '@randomtoni/analytics-kit';
+import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { afterEach, expect, expectTypeOf, test, vi } from 'vitest';
 import { createQueryClient } from './create-query-client';
 import type { QueryClientConfig } from './config';

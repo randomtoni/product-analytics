@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import type { AnalyticsProvider } from 'analytics-kit';
-import { NoopAdapter } from 'analytics-kit';
+import type { AnalyticsProvider } from '@randomtoni/analytics-kit';
+import { NoopAdapter } from '@randomtoni/analytics-kit';
 import { ReplayRecorder, attachReplay } from './replay-recorder';
 import { BrowserAdapter } from './browser-adapter';
 import type { ReplayRecordingHandle } from './replay';

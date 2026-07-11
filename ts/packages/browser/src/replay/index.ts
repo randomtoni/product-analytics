@@ -3,8 +3,8 @@ import { record, type eventWithTime } from 'rrweb';
 // De-branded from posthog's session-recording.ts rrweb integration.
 //
 // This is the HEAVY half of the recorder — the only module that imports rrweb, and the
-// sole reason a consumer who imports base `@analytics-kit/browser` never bundles rrweb.
-// It is the `@analytics-kit/browser/replay` tsup entry (`dist/replay.*`); the base graph
+// sole reason a consumer who imports base `@randomtoni/analytics-kit-browser` never bundles rrweb.
+// It is the `@randomtoni/analytics-kit-browser/replay` tsup entry (`dist/replay.*`); the base graph
 // reaches it ONLY through the shell's dynamic `import('./replay')` in `start()`, so
 // esbuild code-splits rrweb out of `dist/index.*`. rrweb types stay confined here — the
 // neutral `SessionReplayPort` names none of them.

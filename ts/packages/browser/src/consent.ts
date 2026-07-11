@@ -1,4 +1,4 @@
-import type { ConsentState } from 'analytics-kit';
+import type { ConsentState } from '@randomtoni/analytics-kit';
 import type { StorageBackend } from './storage-backends';
 
 const YES_LIKE: ReadonlySet<unknown> = new Set([true, 'true', 1, '1', 'yes']);

@@ -1,4 +1,4 @@
-import type { DefaultTaxonomyShape } from 'analytics-kit';
+import type { DefaultTaxonomyShape } from '@randomtoni/analytics-kit';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { HttpFlagAdapter, type LocalEvalCapability } from './http-flag-adapter';
 import { DefinitionPoller } from './local';

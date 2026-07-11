@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { NoopAdapter } from 'analytics-kit';
+import { NoopAdapter } from '@randomtoni/analytics-kit';
 import { createAnalytics, cryptoRandomId, resolveAdapter } from './create-analytics';
 import { BrowserAdapter } from './browser-adapter';
 import { storeName } from './persistence-keys';

@@ -9,10 +9,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "analytics-kit": "workspace:*",
-    "@analytics-kit/browser": "workspace:*",
-    "@analytics-kit/node": "workspace:*",
-    "@analytics-kit/react": "workspace:*"
+    "@randomtoni/analytics-kit": "workspace:*",
+    "@randomtoni/analytics-kit-browser": "workspace:*",
+    "@randomtoni/analytics-kit-node": "workspace:*",
+    "@randomtoni/analytics-kit-react": "workspace:*"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.0",

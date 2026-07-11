@@ -1,4 +1,4 @@
-import type { RootAnalytics, ScopedAnalytics } from 'analytics-kit';
+import type { RootAnalytics, ScopedAnalytics } from '@randomtoni/analytics-kit';
 import { vi } from 'vitest';
 
 export interface RecordingClient extends RootAnalytics {

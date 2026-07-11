@@ -6,7 +6,7 @@ import {
   type NeutralTraits,
   type PropDecl,
   type TaxonomyShape,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import type { NodeAnalyticsConfig, ViolationPolicy } from './config';
 import { BatchQueue } from './batch-queue';
 import {

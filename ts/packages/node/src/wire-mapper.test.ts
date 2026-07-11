@@ -1,4 +1,4 @@
-import type { NeutralEvent } from 'analytics-kit';
+import type { NeutralEvent } from '@randomtoni/analytics-kit';
 import { expect, test } from 'vitest';
 import {
   assembleBatchEnvelope,

@@ -35,6 +35,36 @@ planning/   # roadmap · epics · stories — governs both languages
 See [`CLAUDE.md`](CLAUDE.md) for the full architecture and
 [`planning/ROADMAP.md`](planning/ROADMAP.md) for what's next.
 
+## Install (consumers)
+
+The TypeScript packages are published to **public npm** under the `@randomtoni` scope — a plain
+`npm install`, no auth or registry config required:
+
+```bash
+# the seam (contracts, taxonomy, allowlist, factory) — a transitive dep of the targets below,
+# install it directly when you import its types/taxonomy helpers
+npm install @randomtoni/analytics-kit
+
+# browser app (createAnalytics + capture, optional session replay)
+npm install @randomtoni/analytics-kit-browser
+
+# server app (server-side capture + the query client)
+npm install @randomtoni/analytics-kit-node
+
+# optional React binding (provider + hooks) — pairs with the browser target
+npm install @randomtoni/analytics-kit-react
+```
+
+A typical browser + React consumer installs both targets in one line (the seam comes along as a
+dependency):
+
+```bash
+npm install @randomtoni/analytics-kit-browser @randomtoni/analytics-kit-react
+```
+
+All four ship at the same version, expose dual ESM + CJS builds with bundled types, and carry no
+vendor references. See [`ts/README.md`](ts/README.md) for the API surface.
+
 ## Working on it
 
 - **TypeScript:** `cd ts && pnpm install && pnpm turbo run build test typecheck lint` (+ `pnpm neutrality-scan`).

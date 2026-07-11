@@ -1,6 +1,18 @@
 {
-  "name": "@analytics-kit/node",
-  "version": "0.0.0",
+  "name": "@randomtoni/analytics-kit-node",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/randomtoni/product-analytics.git",
+    "directory": "ts/packages/node"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -18,7 +30,7 @@
     "build": "tsup"
   },
   "dependencies": {
-    "analytics-kit": "workspace:*"
+    "@randomtoni/analytics-kit": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20"

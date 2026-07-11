@@ -1,4 +1,4 @@
-import type { NeutralFetchResponse } from 'analytics-kit';
+import type { NeutralFetchResponse } from '@randomtoni/analytics-kit';
 
 // The client rate limiter: a token bucket that throttles capture PROACTIVELY, plus
 // a per-scope server cool-off that honours a back-pressure signal the backend

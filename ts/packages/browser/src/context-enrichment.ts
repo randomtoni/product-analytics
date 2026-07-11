@@ -1,4 +1,4 @@
-import type { EnrichmentConfig, NeutralProperties } from 'analytics-kit';
+import type { EnrichmentConfig, NeutralProperties } from '@randomtoni/analytics-kit';
 import { detectDeviceType, parseUserAgent, type DeviceTypeSignals, type UserAgentHints } from './user-agent';
 
 // Per-event auto-enrichment: the neutral page / device-browser-OS / referrer / timezone

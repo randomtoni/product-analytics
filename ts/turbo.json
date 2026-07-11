@@ -38,10 +38,10 @@
     },
     "//#neutrality-scan": {
       "dependsOn": [
-        "analytics-kit#build",
-        "@analytics-kit/browser#build",
-        "@analytics-kit/node#build",
-        "@analytics-kit/react#build"
+        "@randomtoni/analytics-kit#build",
+        "@randomtoni/analytics-kit-browser#build",
+        "@randomtoni/analytics-kit-node#build",
+        "@randomtoni/analytics-kit-react#build"
       ],
       "cache": false
     }

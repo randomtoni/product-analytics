@@ -1,4 +1,4 @@
-import type { DefaultTaxonomyShape, ShapeOf, Taxonomy, TaxonomyDecl } from 'analytics-kit';
+import type { DefaultTaxonomyShape, ShapeOf, Taxonomy, TaxonomyDecl } from '@randomtoni/analytics-kit';
 import type { QueryClientConfig } from './config';
 import { createHttpQueryAdapterFromConfig } from './http-query-adapter';
 import type { AnalyticsQueryClient } from './query-client';

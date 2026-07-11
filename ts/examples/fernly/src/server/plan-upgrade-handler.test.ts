@@ -1,6 +1,6 @@
 import { gunzipSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
-import type { FetchLike, NodeAnalyticsConfig } from '@analytics-kit/node';
+import type { FetchLike, NodeAnalyticsConfig } from '@randomtoni/analytics-kit-node';
 import {
   createFernlyServerAnalytics,
   createShutdownHandler,

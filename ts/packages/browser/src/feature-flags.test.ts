@@ -5,7 +5,7 @@ import {
   type FlagSet,
   type NeutralFetchResponse,
   type ShapeOf,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import { FlagClient, type FlagFetchOptions } from './feature-flags';
 
 // A neutral fetch response over a fixed JSON body + status — the mock the flag adapter's own

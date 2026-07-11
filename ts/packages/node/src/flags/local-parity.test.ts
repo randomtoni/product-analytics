@@ -1,4 +1,4 @@
-import type { DefaultTaxonomyShape } from 'analytics-kit';
+import type { DefaultTaxonomyShape } from '@randomtoni/analytics-kit';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { HttpFlagAdapter, type LocalEvalCapability } from './http-flag-adapter';

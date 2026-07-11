@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import * as analyticsKit from 'analytics-kit';
-import * as node from '@analytics-kit/node';
+import * as analyticsKit from '@randomtoni/analytics-kit';
+import * as node from '@randomtoni/analytics-kit-node';
 import { CAPABILITY_PRESENCE } from './capability-presence';
 
 // E11-S4 capability-presence — RUNTIME half.

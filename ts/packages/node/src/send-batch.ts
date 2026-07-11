@@ -1,4 +1,4 @@
-import type { NeutralEvent } from 'analytics-kit';
+import type { NeutralEvent } from '@randomtoni/analytics-kit';
 import type { NodeAnalyticsConfig } from './config';
 import { gzip } from './gzip';
 import { joinHostPath } from './ingest-url';

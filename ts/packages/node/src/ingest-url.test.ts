@@ -1,4 +1,4 @@
-import type { NeutralEvent } from 'analytics-kit';
+import type { NeutralEvent } from '@randomtoni/analytics-kit';
 import { describe, expect, test, vi } from 'vitest';
 import { joinHostPath } from './ingest-url';
 import { createSendBatch, type NodeFetch } from './send-batch';

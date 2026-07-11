@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, test } from 'vitest';
 
-// The load-bearing entry-boundary guard (no in-repo precedent): the base `@analytics-kit/browser`
+// The load-bearing entry-boundary guard (no in-repo precedent): the base `@randomtoni/analytics-kit-browser`
 // import must NOT pull rrweb into its module graph. rrweb (~100KB+) lives behind the separate
 // `./replay` tsup entry, reached only through the recorder shell's dynamic `import('./replay')`,
 // so esbuild code-splits it into `dist/replay.*` and leaves `dist/index.*` rrweb-free. The

@@ -1,6 +1,6 @@
-import { createAnalytics } from '@analytics-kit/browser';
-import type { RootAnalytics } from '@analytics-kit/browser';
-import type { SessionReplayConfig, SessionReplayPort } from 'analytics-kit';
+import { createAnalytics } from '@randomtoni/analytics-kit-browser';
+import type { RootAnalytics } from '@randomtoni/analytics-kit-browser';
+import type { SessionReplayConfig, SessionReplayPort } from '@randomtoni/analytics-kit';
 import { fernlyTaxonomy } from './taxonomy';
 
 // The masking policy Fernly ships as config (the NEW privacy surface, orthogonal to the

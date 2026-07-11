@@ -1,4 +1,4 @@
-import { defineTaxonomy } from 'analytics-kit';
+import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { expect, expectTypeOf, test } from 'vitest';
 import { createAnalytics } from './create-analytics';
 import type { NodeAnalytics } from './node-analytics';

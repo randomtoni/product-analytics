@@ -1,4 +1,4 @@
-import type { DefaultTaxonomyShape } from 'analytics-kit';
+import type { DefaultTaxonomyShape } from '@randomtoni/analytics-kit';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { FetchLike } from '../config';
 import { createHttpQueryAdapter } from './http-query-adapter';

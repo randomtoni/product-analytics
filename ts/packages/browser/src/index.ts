@@ -7,4 +7,4 @@ export type {
   RootAnalytics,
   ScopedAnalytics,
   CaptureProfile,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';

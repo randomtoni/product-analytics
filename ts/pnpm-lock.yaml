@@ -35,18 +35,18 @@ importers:
 
   examples/fernly:
     dependencies:
-      '@analytics-kit/browser':
-        specifier: workspace:*
-        version: link:../../packages/browser
-      '@analytics-kit/node':
-        specifier: workspace:*
-        version: link:../../packages/node
-      '@analytics-kit/react':
-        specifier: workspace:*
-        version: link:../../packages/react
-      analytics-kit:
+      '@randomtoni/analytics-kit':
         specifier: workspace:*
         version: link:../../packages/analytics-kit
+      '@randomtoni/analytics-kit-browser':
+        specifier: workspace:*
+        version: link:../../packages/browser
+      '@randomtoni/analytics-kit-node':
+        specifier: workspace:*
+        version: link:../../packages/node
+      '@randomtoni/analytics-kit-react':
+        specifier: workspace:*
+        version: link:../../packages/react
     devDependencies:
       '@testing-library/dom':
         specifier: ^10.4.0
@@ -74,7 +74,7 @@ importers:
 
   packages/browser:
     dependencies:
-      analytics-kit:
+      '@randomtoni/analytics-kit':
         specifier: workspace:*
         version: link:../analytics-kit
       fflate:
@@ -90,7 +90,7 @@ importers:
 
   packages/node:
     dependencies:
-      analytics-kit:
+      '@randomtoni/analytics-kit':
         specifier: workspace:*
         version: link:../analytics-kit
     devDependencies:
@@ -100,11 +100,11 @@ importers:
 
   packages/react:
     dependencies:
-      analytics-kit:
+      '@randomtoni/analytics-kit':
         specifier: workspace:*
         version: link:../analytics-kit
     devDependencies:
-      '@analytics-kit/browser':
+      '@randomtoni/analytics-kit-browser':
         specifier: workspace:*
         version: link:../browser
       '@testing-library/dom':

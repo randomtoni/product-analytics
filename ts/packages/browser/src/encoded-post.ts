@@ -1,4 +1,4 @@
-import type { NeutralFetchResponse } from 'analytics-kit';
+import type { NeutralFetchResponse } from '@randomtoni/analytics-kit';
 import { gzipCompress, gzipSyncFallback, isGzipData } from './gzip';
 import { appendCompressedQueryParams, GZIP_CONTENT_TYPE, JSON_CONTENT_TYPE } from './transport-wire';
 import { hasFetch, postViaXhr, KEEPALIVE_THRESHOLD_BYTES } from './transport';

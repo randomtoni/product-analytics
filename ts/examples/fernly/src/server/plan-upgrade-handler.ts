@@ -1,5 +1,5 @@
-import { createAnalytics } from '@analytics-kit/node';
-import type { NodeAnalytics, NodeAnalyticsConfig } from '@analytics-kit/node';
+import { createAnalytics } from '@randomtoni/analytics-kit-node';
+import type { NodeAnalytics, NodeAnalyticsConfig } from '@randomtoni/analytics-kit-node';
 import { fernlyTaxonomy, type FernlyTaxonomy } from '../taxonomy';
 
 export type FernlyServerAnalytics = NodeAnalytics<ShapeOfFernly>;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AnalyticsConfig } from 'analytics-kit';
+import type { AnalyticsConfig } from '@randomtoni/analytics-kit';
 import { createFernlyAnalytics } from './harness';
 import { fernlyTaxonomy } from './taxonomy';
 

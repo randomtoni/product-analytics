@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { NoopAdapter } from 'analytics-kit';
-import type { AnalyticsAdapter, RootAnalytics } from 'analytics-kit';
+import { NoopAdapter } from '@randomtoni/analytics-kit';
+import type { AnalyticsAdapter, RootAnalytics } from '@randomtoni/analytics-kit';
 import { createFernlyAnalytics } from './harness';
 import { RecordingAdapter } from './recording-adapter';
 

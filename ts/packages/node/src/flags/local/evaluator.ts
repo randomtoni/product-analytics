@@ -1,4 +1,4 @@
-import type { FlagContext } from 'analytics-kit';
+import type { FlagContext } from '@randomtoni/analytics-kit';
 import { bucketHash } from './hash';
 import { InconclusiveMatchError, RequiresServerEvaluation } from './errors';
 import { matchProperty } from './match-property';

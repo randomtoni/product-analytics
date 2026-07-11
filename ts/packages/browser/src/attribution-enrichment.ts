@@ -1,4 +1,4 @@
-import type { NeutralProperties } from 'analytics-kit';
+import type { NeutralProperties } from '@randomtoni/analytics-kit';
 
 // De-branded from posthog-js `event-utils.ts` (getCampaignParams / getPersonInfo /
 // getPersonPropsFromInfo / getInitialPersonPropsFromInfo) + `session-props.ts`

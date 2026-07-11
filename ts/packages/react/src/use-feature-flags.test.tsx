@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { act, render, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, expectTypeOf, test, vi } from 'vitest';
-import { emptyFlagSet } from 'analytics-kit';
-import type { FeatureFlagPort, FlagSet, RootAnalytics, ShapeOf } from 'analytics-kit';
+import { emptyFlagSet } from '@randomtoni/analytics-kit';
+import type { FeatureFlagPort, FlagSet, RootAnalytics, ShapeOf } from '@randomtoni/analytics-kit';
 import { AnalyticsClientProvider } from './analytics-client-provider';
 import { useFeatureFlags } from './use-feature-flags';
 import { createRecordingClient } from './recording-client.test-helper';

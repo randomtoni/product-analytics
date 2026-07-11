@@ -9,7 +9,7 @@ import {
   type FlagValue,
   type FlagsConfig,
   type TaxonomyShape,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import type { FetchLike } from '../config';
 import { joinHostPath } from '../ingest-url';
 import {

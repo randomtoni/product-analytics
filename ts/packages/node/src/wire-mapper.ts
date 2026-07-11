@@ -1,4 +1,4 @@
-import type { NeutralEvent, NeutralProperties } from 'analytics-kit';
+import type { NeutralEvent, NeutralProperties } from '@randomtoni/analytics-kit';
 
 // Reserved internal event NAMES the trait verbs mint under — node's own, never a
 // consumer event (mirrors the browser's `MERGE_EVENT = 'identify'` adapter-internal

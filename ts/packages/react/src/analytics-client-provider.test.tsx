@@ -2,8 +2,8 @@ import { StrictMode, useContext, useState } from 'react';
 import { act, render, screen } from '@testing-library/react';
 import { renderToString } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import type { AnalyticsConfig, RootAnalytics } from '@analytics-kit/browser';
-import * as browser from '@analytics-kit/browser';
+import type { AnalyticsConfig, RootAnalytics } from '@randomtoni/analytics-kit-browser';
+import * as browser from '@randomtoni/analytics-kit-browser';
 import { AnalyticsClientProvider } from './analytics-client-provider';
 import {
   AnalyticsClientContext,

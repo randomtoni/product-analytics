@@ -5,7 +5,7 @@ import type {
   Taxonomy,
   TaxonomyDecl,
   TaxonomyShape,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import type { FlagClientConfig } from './config';
 import { FlagNoop } from './flag-noop';
 import { HttpFlagAdapter, type LocalEvalCapability } from './http-flag-adapter';

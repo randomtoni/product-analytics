@@ -1,11 +1,11 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
-import { createAnalytics, RESERVED_PAGE_EVENT, RESERVED_PAGELEAVE_EVENT } from 'analytics-kit';
+import { createAnalytics, RESERVED_PAGE_EVENT, RESERVED_PAGELEAVE_EVENT } from '@randomtoni/analytics-kit';
 import type {
   AnalyticsAdapter,
   AnalyticsConfig,
   NeutralEvent,
   NeutralFetchOptions,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import { BrowserAdapter, type BrowserAdapterOptions } from './browser-adapter';
 import { resolveAdapter } from './create-analytics';
 import { PersistenceStore } from './persistence-store';

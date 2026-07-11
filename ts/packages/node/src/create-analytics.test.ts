@@ -1,4 +1,4 @@
-import { defineTaxonomy } from 'analytics-kit';
+import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { createAnalytics } from './create-analytics';
 import { NodeNoop } from './node-noop';
