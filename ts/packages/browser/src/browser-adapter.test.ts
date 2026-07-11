@@ -114,7 +114,7 @@ test('a fresh store reads back nothing for a never-written key', () => {
 test('exposes a neutral, non-vendor library id and version', () => {
   const adapter = new BrowserAdapter({ key: freshKey() });
   expect(adapter.getLibraryId()).toBe('analytics-kit-browser');
-  expect(adapter.getLibraryVersion()).toBe('0.0.0');
+  expect(adapter.getLibraryVersion()).toBe('0.1.0');
   expect(adapter.getCustomUserAgent()).toBeUndefined();
 });
 
@@ -2346,7 +2346,7 @@ describe('gzip compression (S5)', () => {
     expect(domCalls[0].contentType).toBe('text/plain');
     const url = new URL(domCalls[0].url);
     expect(url.searchParams.get('compression')).toBe('gzip-js');
-    expect(url.searchParams.get('ver')).toBe('0.0.0');
+    expect(url.searchParams.get('ver')).toBe('0.1.0');
     expect(url.searchParams.has('_')).toBe(true);
     // The base path is preserved; only [WIRE] params were appended.
     expect(url.origin + url.pathname).toBe('https://analytics.example.com/batch/');

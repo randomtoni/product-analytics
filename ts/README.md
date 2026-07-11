@@ -163,14 +163,8 @@ app becomes a full consumer by supplying **configuration and generics alone**, e
 the contents (its own event/trait names, its actor model, its permitted keys, its KPI definitions)
 through config and type parameters.
 
-Every lever below is a real shipped export. Install only the target you need:
-
-```sh
-pnpm add @randomtoni/analytics-kit            # the seam: contracts, taxonomy, allowlist, factory
-pnpm add @randomtoni/analytics-kit-browser   # browser target (createAnalytics + track)
-pnpm add @randomtoni/analytics-kit-node      # server target + query client
-pnpm add @randomtoni/analytics-kit-react     # optional React binding (provider + hooks)
-```
+Every lever below is a real shipped export. Install only the target you need — see
+[Install (consumers)](#install-consumers) above for the four package names.
 
 ### 1. Typed taxonomy — declare your own events, traits, groups, page props
 

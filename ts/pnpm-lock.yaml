@@ -75,7 +75,7 @@ importers:
   packages/browser:
     dependencies:
       '@randomtoni/analytics-kit':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../analytics-kit
       fflate:
         specifier: ^0.8.2
@@ -91,7 +91,7 @@ importers:
   packages/node:
     dependencies:
       '@randomtoni/analytics-kit':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../analytics-kit
     devDependencies:
       '@types/node':
@@ -101,7 +101,7 @@ importers:
   packages/react:
     dependencies:
       '@randomtoni/analytics-kit':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../analytics-kit
     devDependencies:
       '@randomtoni/analytics-kit-browser':

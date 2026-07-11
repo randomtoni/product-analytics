@@ -82,7 +82,7 @@ test('client-identity getters return neutral placeholders (no vendor token)', ()
 
   expect(id).toBe('analytics-kit');
   expect(id.length).toBeGreaterThan(0);
-  expect(version).toBe('0.0.0');
+  expect(version).toBe('0.1.0');
   expect(adapter.getCustomUserAgent()).toBeUndefined();
 });
 

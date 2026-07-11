@@ -1,7 +1,7 @@
 import type { AnalyticsAdapter, ConsentState, NeutralFetchResponse } from './adapter';
 
 const NOOP_LIBRARY_ID = 'analytics-kit';
-const NOOP_LIBRARY_VERSION = '0.0.0';
+const NOOP_LIBRARY_VERSION = '0.1.0';
 
 // The unkeyed / whole-stack-no-op distinct id: structurally "no real actor".
 // Lives here (not the facade) so "unkeyed ⇒ anonymous" is a property of the

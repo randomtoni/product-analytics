@@ -30,7 +30,7 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@randomtoni/analytics-kit": "workspace:*"
+    "@randomtoni/analytics-kit": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^20"

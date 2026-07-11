@@ -100,9 +100,9 @@ ts/                     # TypeScript implementation (SHIPPED — R1 complete). S
 ├── packages/
 │   ├── analytics-kit/  #   main entry & vendor-neutral seam: provider contract, adapter interface,
 │   │                   #     typed-taxonomy mechanism, allowlist hook, config-selected factory, shared types
-│   ├── browser/        #   @analytics-kit/browser — browser target: identity/persistence, transport, capture+enrichment
-│   ├── node/           #   @analytics-kit/node — server target: server-side capture + the query client
-│   └── react/          #   @analytics-kit/react — optional React/Next binding (provider + hooks)
+│   ├── browser/        #   @randomtoni/analytics-kit-browser — browser target: identity/persistence, transport, capture+enrichment
+│   ├── node/           #   @randomtoni/analytics-kit-node — server target: server-side capture + the query client
+│   └── react/          #   @randomtoni/analytics-kit-react — optional React/Next binding (provider + hooks)
 ├── examples/fernly/    #   the example consumer (Bar-B proof), a workspace member
 ├── scripts/            #   neutrality-scan.ts + its test (the standing zero-vendor gate)
 └── turbo.json · pnpm-workspace.yaml · tsconfig* · tsup/vitest/eslint config
@@ -116,10 +116,12 @@ posthog-js/             # PostHog/posthog-js reference checkout (git-ignored); p
 ```
 
 Consumers install only the target they need. **Package names are decided**: the seam is the main
-`analytics-kit` package (no package literally named `core` — "core" survives only as the area
-slug), platform targets are `@analytics-kit/*` (TS) / `analytics_kit` submodules (Python). Never
-bake a vendor name into any of them. Adapters are internal modules of their target package, named by
-role, never by vendor.
+`@randomtoni/analytics-kit` package (no package literally named `core` — "core" survives only as the
+area slug), platform targets are `@randomtoni/analytics-kit-*` (TS) / `analytics_kit` submodules
+(Python), published to public npm under the `@randomtoni` scope. The `analytics-kit` bare name stays
+only as the on-disk directory and the wire-level library identity — never as a published npm name.
+Never bake a vendor name into any of them (`@randomtoni` is the publisher's own scope, not a vendor).
+Adapters are internal modules of their target package, named by role, never by vendor.
 
 > **The TS tree moved from `packages/` to `ts/packages/` on 2026-07-09** (the polyglot split).
 > Planning artifacts written before then (done stories/epics, `BRIEF.md`, research) still say
