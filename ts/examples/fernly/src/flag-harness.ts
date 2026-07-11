@@ -1,5 +1,5 @@
-import { createAnalytics } from '@analytics-kit/browser';
-import type { RootAnalytics } from '@analytics-kit/browser';
+import { createAnalytics } from '@randomtoni/analytics-kit-browser';
+import type { RootAnalytics } from '@randomtoni/analytics-kit-browser';
 import type {
   FeatureFlagPort,
   FlagReason,
@@ -7,7 +7,7 @@ import type {
   FlagValue,
   ShapeOf,
   TaxonomyShape,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import { fernlyTaxonomy, type FernlyTaxonomy } from './taxonomy';
 
 export type FernlyFlagShape = ShapeOf<FernlyTaxonomy['decl']>;

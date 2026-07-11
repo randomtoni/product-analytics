@@ -1,4 +1,4 @@
-import type { DefaultTaxonomyShape, ShapeOf, Taxonomy, TaxonomyDecl } from 'analytics-kit';
+import type { DefaultTaxonomyShape, ShapeOf, Taxonomy, TaxonomyDecl } from '@randomtoni/analytics-kit';
 import type { NodeAnalyticsConfig } from './config';
 import { type NodeAnalytics, NodeAnalyticsClient } from './node-analytics';
 import { NodeNoop } from './node-noop';

@@ -1,4 +1,4 @@
-import type { Taxonomy, TaxonomyDecl, ViolationPolicy } from 'analytics-kit';
+import type { Taxonomy, TaxonomyDecl, ViolationPolicy } from '@randomtoni/analytics-kit';
 
 export type { ViolationPolicy };
 

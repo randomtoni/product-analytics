@@ -36,18 +36,32 @@ server stories stay honest.
 Early / greenfield. The public API is not yet stable. The first supported backend is configured by
 an ingest host + project key; a self-hosted backend is planned.
 
-## Install
+## Install (consumers)
+
+Published to **public npm** under the `@randomtoni` scope — a plain `npm install`, no auth or
+registry config required. Install only the target(s) you need:
 
 ```sh
-pnpm add analytics-kit            # the seam: contracts, taxonomy, allowlist, factory
-pnpm add @analytics-kit/browser   # browser target
-pnpm add @analytics-kit/node      # server-side target + query client
+npm install @randomtoni/analytics-kit            # the seam: contracts, taxonomy, allowlist, factory
+npm install @randomtoni/analytics-kit-browser    # browser target (createAnalytics + track)
+npm install @randomtoni/analytics-kit-node       # server-side target + query client
+npm install @randomtoni/analytics-kit-react      # optional React binding (provider + hooks)
 ```
+
+A browser + React app typically installs both targets in one line (the seam arrives as a transitive
+dependency, so it need not be listed unless you import its types/taxonomy helpers directly):
+
+```sh
+npm install @randomtoni/analytics-kit-browser @randomtoni/analytics-kit-react
+```
+
+All four ship at the same version with dual ESM + CJS builds and bundled types. (`pnpm`/`yarn` work
+identically — swap `npm install` for `pnpm add` / `yarn add`.)
 
 ## Usage (sketch)
 
 ```ts
-import { createAnalytics } from "@analytics-kit/browser";
+import { createAnalytics } from "@randomtoni/analytics-kit-browser";
 
 const analytics = createAnalytics({
   // the backend is configuration — no vendor name in the API
@@ -107,7 +121,7 @@ delegates to the backing adapter's corresponding SPI method.
 | `flush()` | Delegates to the live adapter's `flush`; the HTTP adapter force-sends the buffered batch immediately and resolves once the in-flight POST settles, staying usable afterward. | Implement `AnalyticsAdapter.flush(): Promise<void>`: force-send any buffered work and resolve when it settles. |
 | `shutdown()` | Delegates to the live adapter's `shutdown`; the HTTP adapter drains the buffer and quiesces for process/page exit. | Implement `AnalyticsAdapter.shutdown(): Promise<void>`: drain and quiesce for exit. |
 | `flags?` (feature-flag port) | **Implemented** — the `FeatureFlagPort` seam (`packages/analytics-kit/src/ports.ts`) is backed by real adapters: a browser remote-eval adapter, a node remote adapter, and node **local (in-process) eval** (poll flag definitions, evaluate cohort/rollout/hash rules against the `FlagContext`, fall back to remote for undecidable flags). Evaluation strategy is entirely adapter-internal behind the one `evaluate` method; `onlyEvaluateLocally`/poll-interval/definitions-endpoint are adapter config. | Another backend fills this by implementing `FeatureFlagPort` and attaching it as `flags`; a definition-reading backend may additionally supply the local poller/evaluator — the seam is unchanged either way. |
-| `replay?` (session-replay port) | **Implemented** (browser/TS) — the `SessionReplayPort` seam (`packages/analytics-kit/src/ports.ts`) is backed by a real browser recorder (`ReplayRecorder implements SessionReplayPort` in `@analytics-kit/browser`): rrweb behind the adapter on a separate `@analytics-kit/browser/replay` entrypoint so a non-replay consumer never bundles it, enabled config-only via `sessionReplay` (sampling + privacy masking) and session-linked to captured events via `getReplayId`, with its own snapshot delivery path. Browser-shaped: there is no server analog (a server has no DOM to record). | Another backend fills this by implementing `SessionReplayPort` and attaching it as `replay` — the seam is unchanged whether an adapter fills it or leaves `replay` unset. |
+| `replay?` (session-replay port) | **Implemented** (browser/TS) — the `SessionReplayPort` seam (`packages/analytics-kit/src/ports.ts`) is backed by a real browser recorder (`ReplayRecorder implements SessionReplayPort` in `@randomtoni/analytics-kit-browser`): rrweb behind the adapter on a separate `@randomtoni/analytics-kit-browser/replay` entrypoint so a non-replay consumer never bundles it, enabled config-only via `sessionReplay` (sampling + privacy masking) and session-linked to captured events via `getReplayId`, with its own snapshot delivery path. Browser-shaped: there is no server analog (a server has no DOM to record). | Another backend fills this by implementing `SessionReplayPort` and attaching it as `replay` — the seam is unchanged whether an adapter fills it or leaves `replay` unset. |
 
 ### Node — `NodeAnalytics` (server-side capture)
 
@@ -152,10 +166,10 @@ through config and type parameters.
 Every lever below is a real shipped export. Install only the target you need:
 
 ```sh
-pnpm add analytics-kit            # the seam: contracts, taxonomy, allowlist, factory
-pnpm add @analytics-kit/browser   # browser target (createAnalytics + track)
-pnpm add @analytics-kit/node      # server target + query client
-pnpm add @analytics-kit/react     # optional React binding (provider + hooks)
+pnpm add @randomtoni/analytics-kit            # the seam: contracts, taxonomy, allowlist, factory
+pnpm add @randomtoni/analytics-kit-browser   # browser target (createAnalytics + track)
+pnpm add @randomtoni/analytics-kit-node      # server target + query client
+pnpm add @randomtoni/analytics-kit-react     # optional React binding (provider + hooks)
 ```
 
 ### 1. Typed taxonomy — declare your own events, traits, groups, page props
@@ -166,7 +180,7 @@ whose `ShapeOf<T>` is threaded as the `TX` generic through every surface (client
 misnamed event or a wrong-typed property is a compile error, not a runtime surprise.
 
 ```ts
-import { defineTaxonomy, type ShapeOf } from "analytics-kit";
+import { defineTaxonomy, type ShapeOf } from "@randomtoni/analytics-kit";
 
 const taxonomy = defineTaxonomy({
   events: { checkout_completed: { plan: "string", total_cents: "number" } },
@@ -240,7 +254,7 @@ gates every capture, identify, group, and register call before anything reaches 
 off-list property is stopped at the seam.
 
 ```ts
-import { deriveAllowlistFromTaxonomy } from "analytics-kit";
+import { deriveAllowlistFromTaxonomy } from "@randomtoni/analytics-kit";
 
 createAnalytics({
   taxonomy,
@@ -254,12 +268,12 @@ createAnalytics({
 **Consumer supplies:** its KPI definitions as calls to the query client — `funnel`, `retention`,
 `trend`, `uniqueCount`, and the escape-hatch `rawQuery` — plus where snapshots of the results get
 stored (the consumer owns snapshot storage; the library computes, it does not persist reports).
-**Library owns:** the read-side mechanism — `createQueryClient` (from `@analytics-kit/node`) issues
+**Library owns:** the read-side mechanism — `createQueryClient` (from `@randomtoni/analytics-kit-node`) issues
 each primitive against the configured read endpoint and normalizes the response into a neutral
 `QueryResult`. The same taxonomy generic types the step/event names in each spec.
 
 ```ts
-import { createQueryClient } from "@analytics-kit/node";
+import { createQueryClient } from "@randomtoni/analytics-kit-node";
 
 const queries = createQueryClient({
   taxonomy,
@@ -280,10 +294,10 @@ const result = await queries.funnel({
 `AnalyticsClientProvider` at the app root, plus its own route key for page tracking. **Library
 owns:** the wiring — `useAnalytics()` reads the typed client from context, and `usePageView(routeKey)`
 fires a page view on route change. Nothing framework-specific leaks into the core seam; the binding
-is an optional install (`@analytics-kit/react`).
+is an optional install (`@randomtoni/analytics-kit-react`).
 
 ```tsx
-import { AnalyticsClientProvider, useAnalytics, usePageView } from "@analytics-kit/react";
+import { AnalyticsClientProvider, useAnalytics, usePageView } from "@randomtoni/analytics-kit-react";
 
 function App({ analytics, route }) {
   return (
@@ -370,7 +384,7 @@ Consumer code is byte-identical across the swap — only which adapter the seam 
 ### The query-side precedent (already met)
 
 Bar A is **already met on the query side**, shipped. Two adapters sit behind ONE
-`AnalyticsQueryClient` interface, both real exports from `@analytics-kit/node`:
+`AnalyticsQueryClient` interface, both real exports from `@randomtoni/analytics-kit-node`:
 
 - `HttpQueryAdapter` — the first backend: translates each neutral KPI primitive (`funnel`,
   `retention`, `trend`, `uniqueCount`, `rawQuery`) to an HTTP query endpoint and normalizes the wire

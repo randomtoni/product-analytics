@@ -3,7 +3,7 @@ import {
   type FeatureFlagPort,
   type FlagSet,
   type TaxonomyShape,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 
 // The silent no-op flag client. Selected by the factory when `key` is absent (or set but with no
 // `flagEndpoint`), so "unkeyed/endpointless ⇒ evaluates nothing" is a property of this null object

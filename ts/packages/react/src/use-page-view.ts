@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { DefaultTaxonomyShape, TaxonomyShape } from 'analytics-kit';
+import type { DefaultTaxonomyShape, TaxonomyShape } from '@randomtoni/analytics-kit';
 import { useAnalytics } from './use-analytics';
 
 export interface UsePageViewOptions<TX extends TaxonomyShape = DefaultTaxonomyShape> {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { createAnalytics } from '@analytics-kit/browser';
-import type { AnalyticsConfig, RootAnalytics } from '@analytics-kit/browser';
+import { createAnalytics } from '@randomtoni/analytics-kit-browser';
+import type { AnalyticsConfig, RootAnalytics } from '@randomtoni/analytics-kit-browser';
 import { AnalyticsClientContext } from './analytics-client-context';
 
 export type AnalyticsClientProviderProps = { children?: ReactNode } & (

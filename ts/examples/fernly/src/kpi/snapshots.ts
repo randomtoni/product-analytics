@@ -1,6 +1,6 @@
-import { createQueryClient } from '@analytics-kit/node';
-import type { AnalyticsQueryClient, QueryClientConfig } from '@analytics-kit/node';
-import type { QueryResult } from 'analytics-kit';
+import { createQueryClient } from '@randomtoni/analytics-kit-node';
+import type { AnalyticsQueryClient, QueryClientConfig } from '@randomtoni/analytics-kit-node';
+import type { QueryResult } from '@randomtoni/analytics-kit';
 import { fernlyTaxonomy, type FernlyTaxonomy } from '../taxonomy';
 
 export type FernlyQueryClient = AnalyticsQueryClient<ShapeOfFernly>;

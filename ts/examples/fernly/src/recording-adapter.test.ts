@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { NeutralEvent } from 'analytics-kit';
+import type { NeutralEvent } from '@randomtoni/analytics-kit';
 import { RecordingAdapter } from './recording-adapter';
 
 function event(name: string): NeutralEvent {

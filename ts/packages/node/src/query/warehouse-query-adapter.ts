@@ -1,4 +1,4 @@
-import type { QueryResult, TaxonomyShape } from 'analytics-kit';
+import type { QueryResult, TaxonomyShape } from '@randomtoni/analytics-kit';
 import type { AnalyticsQueryClient } from './query-client';
 
 const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implemented';

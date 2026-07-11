@@ -1,4 +1,4 @@
-import type { FlagValue } from 'analytics-kit';
+import type { FlagValue } from '@randomtoni/analytics-kit';
 
 // The adapter-internal [WIRE] flag-DEFINITION vocabulary: the shape the definitions endpoint
 // speaks, which the poller fetches and the evaluator matches against. None of it appears on the

@@ -1,4 +1,4 @@
-import type { NeutralFetchResponse } from 'analytics-kit';
+import type { NeutralFetchResponse } from '@randomtoni/analytics-kit';
 import type { ReplayEvent } from './replay';
 import { isGzipSupported } from './gzip';
 import { appendCompressedQueryParams } from './transport-wire';

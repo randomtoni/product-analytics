@@ -1,4 +1,4 @@
-import type { TaxonomyShape } from 'analytics-kit';
+import type { TaxonomyShape } from '@randomtoni/analytics-kit';
 import type { NodeAnalytics, NodeCapture } from './node-analytics';
 
 // The whole-stack silent no-op node client. Selected by the factory when `config.key`

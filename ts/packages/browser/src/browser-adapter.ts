@@ -11,7 +11,7 @@ import {
   type NeutralFetchResponse,
   type RegisterOptions,
   type ResetOptions,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import {
   buildPropsBackend,
   createMemoryBackend,

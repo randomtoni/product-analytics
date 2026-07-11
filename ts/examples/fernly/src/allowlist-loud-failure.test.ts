@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deriveAllowlistFromTaxonomy } from 'analytics-kit';
-import type { AnalyticsConfig } from 'analytics-kit';
+import { deriveAllowlistFromTaxonomy } from '@randomtoni/analytics-kit';
+import type { AnalyticsConfig } from '@randomtoni/analytics-kit';
 import { createFernlyAnalytics } from './harness';
 import { fernlyTaxonomy } from './taxonomy';
 

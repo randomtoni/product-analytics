@@ -1,5 +1,5 @@
 import { gunzipSync } from 'node:zlib';
-import type { NeutralEvent } from 'analytics-kit';
+import type { NeutralEvent } from '@randomtoni/analytics-kit';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { NodeAnalyticsConfig } from './config';
 import { createSendBatch, type NodeFetch } from './send-batch';

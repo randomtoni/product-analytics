@@ -1,9 +1,9 @@
 import { StrictMode, type ReactNode } from 'react';
 import { renderHook } from '@testing-library/react';
 import { describe, expect, expectTypeOf, test, vi } from 'vitest';
-import { createAnalytics } from '@analytics-kit/browser';
-import { defineTaxonomy } from 'analytics-kit';
-import type { RootAnalytics, ShapeOf } from 'analytics-kit';
+import { createAnalytics } from '@randomtoni/analytics-kit-browser';
+import { defineTaxonomy } from '@randomtoni/analytics-kit';
+import type { RootAnalytics, ShapeOf } from '@randomtoni/analytics-kit';
 import { AnalyticsClientProvider } from './analytics-client-provider';
 import { usePageView } from './use-page-view';
 import { createRecordingClient } from './recording-client.test-helper';

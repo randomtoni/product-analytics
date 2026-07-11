@@ -1,4 +1,4 @@
-import type { QueryColumn, QueryResult, TaxonomyShape } from 'analytics-kit';
+import type { QueryColumn, QueryResult, TaxonomyShape } from '@randomtoni/analytics-kit';
 import type { FetchLike } from '../config';
 import type {
   AnalyticsQueryClient,

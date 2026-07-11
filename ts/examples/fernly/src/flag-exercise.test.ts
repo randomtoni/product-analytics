@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
-import { createAnalytics as createBrowserAnalytics } from '@analytics-kit/browser';
-import { createFlagClient } from '@analytics-kit/node';
-import type { FeatureFlagPort, FlagSet } from 'analytics-kit';
+import { createAnalytics as createBrowserAnalytics } from '@randomtoni/analytics-kit-browser';
+import { createFlagClient } from '@randomtoni/analytics-kit-node';
+import type { FeatureFlagPort, FlagSet } from '@randomtoni/analytics-kit';
 import { fernlyTaxonomy } from './taxonomy';
 import {
   FERNLY_FLAG_BOOTSTRAP,
@@ -33,7 +33,7 @@ function typedFernlyFlagClient(): FeatureFlagPort<FernlyFlagShape> {
 // reads + onChange, a bar-A swap to a mock FeatureFlagPort with ZERO consumer change (browser
 // via provider.flags AND node via createFlagClient), and the unkeyed/endpointless no-flags paths.
 //
-// The behavior proof rides the REAL browser FlagClient (via @analytics-kit/browser createAnalytics
+// The behavior proof rides the REAL browser FlagClient (via @randomtoni/analytics-kit-browser createAnalytics
 // with a stubbed global fetch), not a hand-rolled fake — the fake exists only for the bar-A
 // swap-equivalence proof. Assertions land on the neutral FlagSet reads, never adapter wire keys.
 

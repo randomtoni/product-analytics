@@ -1,4 +1,4 @@
-import type { DefaultTaxonomyShape, FlagSet } from 'analytics-kit';
+import type { DefaultTaxonomyShape, FlagSet } from '@randomtoni/analytics-kit';
 import { describe, expect, test, vi } from 'vitest';
 import { HttpFlagAdapter } from './http-flag-adapter';
 

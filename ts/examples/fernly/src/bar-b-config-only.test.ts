@@ -30,10 +30,10 @@ function readJson(relPath: string): Record<string, unknown> {
 }
 
 const LIBRARY_PACKAGES = [
-  'analytics-kit',
-  '@analytics-kit/browser',
-  '@analytics-kit/node',
-  '@analytics-kit/react',
+  '@randomtoni/analytics-kit',
+  '@randomtoni/analytics-kit-browser',
+  '@randomtoni/analytics-kit-node',
+  '@randomtoni/analytics-kit-react',
 ] as const;
 
 describe('bar B — new-app adoption = config only, zero library change', () => {

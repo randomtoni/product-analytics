@@ -1,14 +1,14 @@
 import type { ReactNode } from 'react';
 import { renderHook } from '@testing-library/react';
 import { describe, expect, expectTypeOf, test } from 'vitest';
-import { createAnalytics } from '@analytics-kit/browser';
-import { defineTaxonomy } from 'analytics-kit';
+import { createAnalytics } from '@randomtoni/analytics-kit-browser';
+import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import type {
   AnalyticsProvider,
   RootAnalytics,
   ShapeOf,
   TaxonomyShape,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import { AnalyticsClientProvider } from './analytics-client-provider';
 import { useAnalytics } from './use-analytics';
 import { createRecordingClient } from './recording-client.test-helper';

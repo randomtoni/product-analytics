@@ -1,11 +1,11 @@
-import { createAnalytics, NoopAdapter } from 'analytics-kit';
+import { createAnalytics, NoopAdapter } from '@randomtoni/analytics-kit';
 import type {
   AnalyticsConfig,
   RootAnalytics,
   ShapeOf,
   Taxonomy,
   TaxonomyDecl,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import { RecordingAdapter } from './recording-adapter';
 import { fernlyTaxonomy } from './taxonomy';
 

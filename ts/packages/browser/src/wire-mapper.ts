@@ -1,4 +1,4 @@
-import type { NeutralEvent, NeutralProperties } from 'analytics-kit';
+import type { NeutralEvent, NeutralProperties } from '@randomtoni/analytics-kit';
 import {
   AUTOCAPTURE_WIRE_EVENT,
   GEOIP_DISABLE_WIRE_KEY,

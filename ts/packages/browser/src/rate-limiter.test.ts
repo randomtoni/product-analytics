@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import type { NeutralFetchResponse } from 'analytics-kit';
+import type { NeutralFetchResponse } from '@randomtoni/analytics-kit';
 import {
   DEFAULT_BATCH_SCOPE,
   DEFAULT_BURST_LIMIT,

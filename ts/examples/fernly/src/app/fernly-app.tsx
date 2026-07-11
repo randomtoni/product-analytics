@@ -4,9 +4,9 @@ import {
   useAnalytics,
   useFeatureFlags,
   usePageView,
-} from '@analytics-kit/react';
-import type { AnalyticsConfig, RootAnalytics } from '@analytics-kit/browser';
-import type { ShapeOf } from 'analytics-kit';
+} from '@randomtoni/analytics-kit-react';
+import type { AnalyticsConfig, RootAnalytics } from '@randomtoni/analytics-kit-browser';
+import type { ShapeOf } from '@randomtoni/analytics-kit';
 import { fernlyTaxonomy, type FernlyTaxonomy } from '../taxonomy';
 
 type FernlyShape = ShapeOf<FernlyTaxonomy['decl']>;

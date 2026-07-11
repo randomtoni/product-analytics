@@ -1,4 +1,4 @@
-import type { FlagsConfig, Taxonomy, TaxonomyDecl } from 'analytics-kit';
+import type { FlagsConfig, Taxonomy, TaxonomyDecl } from '@randomtoni/analytics-kit';
 import type { FetchLike } from '../config';
 
 // The flag client's own server-only config surface — DISTINCT from the ingest

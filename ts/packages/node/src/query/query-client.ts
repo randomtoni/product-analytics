@@ -1,4 +1,4 @@
-import type { QueryResult, TaxonomyShape } from 'analytics-kit';
+import type { QueryResult, TaxonomyShape } from '@randomtoni/analytics-kit';
 
 export interface Duration {
   value: number;

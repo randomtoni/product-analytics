@@ -1,4 +1,4 @@
-import type { AnalyticsProvider, SessionReplayConfig, SessionReplayPort } from 'analytics-kit';
+import type { AnalyticsProvider, SessionReplayConfig, SessionReplayPort } from '@randomtoni/analytics-kit';
 import { BrowserAdapter } from './browser-adapter';
 import { resolveReplayIngestUrl } from './ingest-url';
 import type { ReplayEvent, ReplayMaskingOptions, ReplayRecordingHandle } from './replay';

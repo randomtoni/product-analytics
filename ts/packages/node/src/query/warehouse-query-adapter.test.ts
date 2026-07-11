@@ -1,5 +1,5 @@
-import type { ShapeOf, TaxonomyShape } from 'analytics-kit';
-import { defineTaxonomy } from 'analytics-kit';
+import type { ShapeOf, TaxonomyShape } from '@randomtoni/analytics-kit';
+import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { expect, expectTypeOf, test } from 'vitest';
 import type { AnalyticsQueryClient } from './query-client';
 import { WarehouseQueryAdapter, createWarehouseQueryAdapter } from './warehouse-query-adapter';

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { AnalyticsClientProvider, useAnalytics } from '@analytics-kit/react';
-import { createAnalytics } from '@analytics-kit/browser';
+import { AnalyticsClientProvider, useAnalytics } from '@randomtoni/analytics-kit-react';
+import { createAnalytics } from '@randomtoni/analytics-kit-browser';
 import type { ReactNode } from 'react';
 import { createFernlyReplayClient } from '../replay-harness';
 

@@ -1,5 +1,5 @@
-import type { DefaultTaxonomyShape, FeatureFlagPort, ShapeOf } from 'analytics-kit';
-import { defineTaxonomy } from 'analytics-kit';
+import type { DefaultTaxonomyShape, FeatureFlagPort, ShapeOf } from '@randomtoni/analytics-kit';
+import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { afterEach, describe, expect, expectTypeOf, test, vi } from 'vitest';
 import { createFlagClient } from './create-flag-client';
 import type { NodeFlagClient } from './create-flag-client';

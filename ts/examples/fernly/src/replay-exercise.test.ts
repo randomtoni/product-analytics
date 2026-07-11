@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createAnalytics as createBrowserAnalytics } from '@analytics-kit/browser';
-import { startRecording } from '@analytics-kit/browser/replay';
-import type { SessionReplayPort } from 'analytics-kit';
+import { createAnalytics as createBrowserAnalytics } from '@randomtoni/analytics-kit-browser';
+import { startRecording } from '@randomtoni/analytics-kit-browser/replay';
+import type { SessionReplayPort } from '@randomtoni/analytics-kit';
 import { fernlyTaxonomy } from './taxonomy';
 import {
   FERNLY_REPLAY_MASKING,
@@ -16,7 +16,7 @@ import {
 // the disabled/unkeyed no-replay paths. Mirrors flag-exercise.test.ts (the flag bar-A/bar-B
 // precedent reached via provider.flags), NOT the capture-SPI swap (bar-a-adapter-swap.test.ts).
 //
-// The behavior proof rides the REAL browser ReplayRecorder (via @analytics-kit/browser
+// The behavior proof rides the REAL browser ReplayRecorder (via @randomtoni/analytics-kit-browser
 // createAnalytics with replay enabled by config); the fake port exists only for the bar-A
 // swap-equivalence proof. Assertions land on the neutral port verbs, never adapter wire keys or
 // rrweb internals. The recorder's rrweb body loads async behind a dynamic import — stop() disposes
@@ -188,7 +188,7 @@ describe('Fernly replay — the replay entrypoint is separately importable by a 
     // test; startRecording here is invoked directly to prove the subpath is reachable, then stopped.
   });
 
-  it('@analytics-kit/browser/replay exposes startRecording (the separate rrweb entrypoint)', () => {
+  it('@randomtoni/analytics-kit-browser/replay exposes startRecording (the separate rrweb entrypoint)', () => {
     // The recorder body lives behind its own subpath export so a non-replay consumer never bundles
     // rrweb. A replay consumer can reach it directly; here we prove the subpath resolves and its
     // recording control (a stop fn) is real — then stop it so no live rrweb recording leaks.

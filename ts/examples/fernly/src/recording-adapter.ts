@@ -7,7 +7,7 @@ import type {
   NeutralTraits,
   RegisterOptions,
   ResetOptions,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 
 const LIBRARY_ID = 'fernly-example';
 const LIBRARY_VERSION = '0.0.0';

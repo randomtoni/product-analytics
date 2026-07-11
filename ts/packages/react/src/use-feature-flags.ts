@@ -1,12 +1,12 @@
 import { useContext, useEffect, useMemo, useState } from 'react';
-import { emptyFlagSet } from 'analytics-kit';
+import { emptyFlagSet } from '@randomtoni/analytics-kit';
 import type {
   DefaultTaxonomyShape,
   FeatureFlagPort,
   FlagSet,
   RootAnalytics,
   TaxonomyShape,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import { AnalyticsClientContext, NOT_IN_PROVIDER } from './analytics-client-context';
 
 export function useFeatureFlags<

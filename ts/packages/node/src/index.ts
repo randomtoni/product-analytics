@@ -25,4 +25,4 @@ export type {
   FlagSet,
   FlagValue,
   FlagReason,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { RESERVED_PAGELEAVE_EVENT, RESERVED_PAGE_EVENT, type NeutralEvent } from 'analytics-kit';
+import { RESERVED_PAGELEAVE_EVENT, RESERVED_PAGE_EVENT, type NeutralEvent } from '@randomtoni/analytics-kit';
 import { assembleBatchBody, mapEventToWire } from './wire-mapper';
 import { containsInsertId } from './wire-scan.test-helper';
 import {

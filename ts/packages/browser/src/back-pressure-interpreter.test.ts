@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import type { NeutralFetchResponse } from 'analytics-kit';
+import type { NeutralFetchResponse } from '@randomtoni/analytics-kit';
 import { interpretBodyBackPressure } from './back-pressure-interpreter';
 import { DEFAULT_BATCH_SCOPE, SERVER_COOLOFF_MS } from './rate-limiter';
 

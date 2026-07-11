@@ -13,7 +13,7 @@ import {
   type NeutralFetchResponse,
   type DefaultTaxonomyShape,
   type TaxonomyShape,
-} from 'analytics-kit';
+} from '@randomtoni/analytics-kit';
 import { joinIngestUrl } from './ingest-url';
 
 // Adapter-internal [WIRE] flag-eval vocabulary: the endpoint path, request-body keys, and

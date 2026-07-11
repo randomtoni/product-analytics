@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import type { DefaultTaxonomyShape, RootAnalytics, TaxonomyShape } from 'analytics-kit';
+import type { DefaultTaxonomyShape, RootAnalytics, TaxonomyShape } from '@randomtoni/analytics-kit';
 import { AnalyticsClientContext, NOT_IN_PROVIDER } from './analytics-client-context';
 
 export function useAnalytics<

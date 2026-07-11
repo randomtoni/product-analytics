@@ -21,8 +21,8 @@ import type {
   FlagSet,
   QueryResult,
   SessionReplayPort,
-} from 'analytics-kit';
-import type { NodeAnalytics, AnalyticsQueryClient } from '@analytics-kit/node';
+} from '@randomtoni/analytics-kit';
+import type { NodeAnalytics, AnalyticsQueryClient } from '@randomtoni/analytics-kit-node';
 
 // Invariant mutual-assignability equality: resolves to `true` ONLY when A and B are the exact same
 // key union (order-independent). The `(<T>() => …)` form is the strict "exact equality" primitive;
