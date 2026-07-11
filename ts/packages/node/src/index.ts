@@ -1,4 +1,4 @@
-export const version = '0.0.0';
+export const version = '0.1.0';
 
 export { createAnalytics } from './create-analytics';
 export type { NodeAnalytics, NodeCapture, CaptureOptions } from './node-analytics';

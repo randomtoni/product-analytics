@@ -9,7 +9,7 @@ import {
 import type { PropsParam } from './index';
 
 test('exposes the package version', () => {
-  expect(version).toBe('0.0.0');
+  expect(version).toBe('0.1.0');
 });
 
 test('exposes deriveAllowlistFromTaxonomy from the public entry', () => {
