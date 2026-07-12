@@ -38,8 +38,17 @@ an ingest host + project key; a self-hosted backend is planned.
 
 ## Install (consumers)
 
-Published to **public npm** under the `@randomtoni` scope — a plain `npm install`, no auth or
-registry config required. Install only the target(s) you need:
+Published **privately to GitHub Packages** under the `@randomtoni` scope. Point the scope at the
+GitHub registry and authenticate with a GitHub token that has `read:packages`: add a project
+`.npmrc`
+
+```ini
+@randomtoni:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
+
+and export `GITHUB_PACKAGES_TOKEN` (a PAT with `read:packages`). Then install only the target(s)
+you need:
 
 ```sh
 npm install @randomtoni/analytics-kit            # the seam: contracts, taxonomy, allowlist, factory

@@ -8,7 +8,7 @@
     "directory": "ts/packages/analytics-kit"
   },
   "publishConfig": {
-    "access": "public"
+    "registry": "https://npm.pkg.github.com"
   },
   "files": [
     "dist"

@@ -118,7 +118,8 @@ posthog-js/             # PostHog/posthog-js reference checkout (git-ignored); p
 Consumers install only the target they need. **Package names are decided**: the seam is the main
 `@randomtoni/analytics-kit` package (no package literally named `core` — "core" survives only as the
 area slug), platform targets are `@randomtoni/analytics-kit-*` (TS) / `analytics_kit` submodules
-(Python), published to public npm under the `@randomtoni` scope. The `analytics-kit` bare name stays
+(Python), published privately to GitHub Packages under the `@randomtoni` scope. The `analytics-kit`
+bare name stays
 only as the on-disk directory and the wire-level library identity — never as a published npm name.
 Never bake a vendor name into any of them (`@randomtoni` is the publisher's own scope, not a vendor).
 Adapters are internal modules of their target package, named by role, never by vendor.

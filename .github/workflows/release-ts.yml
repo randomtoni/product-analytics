@@ -8,6 +8,9 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     defaults:
       run:
         working-directory: ts
@@ -58,14 +61,15 @@ jobs:
           pnpm turbo run build test typecheck lint
           pnpm neutrality-scan
 
-      # Auth via pnpm's own trusted user-level config. pnpm 11 IGNORES env-expanded auth in a
-      # project .npmrc (it could leak a committed secret), so write the token to the user config
-      # with `pnpm config set` — the exact remedy pnpm's own warning points to. --access is
-      # omitted deliberately: each package's publishConfig.access governs its own visibility, so a
-      # future restricted package is never force-published public by a blanket CLI flag.
+      # Publishes to GitHub Packages (each package's publishConfig.registry points there) using
+      # the workflow's own GITHUB_TOKEN — no external registry secret. Auth goes through pnpm's
+      # trusted user-level config: pnpm 11 IGNORES env-expanded auth in a project .npmrc (it could
+      # leak a committed secret), so write the token with `pnpm config set` — the exact remedy
+      # pnpm's own warning points to.
       - name: Publish
         run: |
-          pnpm config set "//registry.npmjs.org/:_authToken" "$NODE_AUTH_TOKEN"
+          pnpm config set "@randomtoni:registry" "https://npm.pkg.github.com"
+          pnpm config set "//npm.pkg.github.com/:_authToken" "$NODE_AUTH_TOKEN"
           pnpm -r publish --no-git-checks
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

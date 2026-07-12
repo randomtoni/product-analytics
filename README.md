@@ -37,8 +37,17 @@ See [`CLAUDE.md`](CLAUDE.md) for the full architecture and
 
 ## Install (consumers)
 
-The TypeScript packages are published to **public npm** under the `@randomtoni` scope — a plain
-`npm install`, no auth or registry config required:
+The TypeScript packages are published **privately to GitHub Packages** under the `@randomtoni`
+scope. Consumers point the scope at the GitHub registry and authenticate with a GitHub token that
+has the `read:packages` scope. Add a project `.npmrc`:
+
+```ini
+@randomtoni:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
+
+and export `GITHUB_PACKAGES_TOKEN` (a PAT with `read:packages`) in the environment. Then install
+only the target(s) you need:
 
 ```bash
 # the seam (contracts, taxonomy, allowlist, factory) — a transitive dep of the targets below,
