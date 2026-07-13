@@ -88,4 +88,13 @@ rewrite it. It mirrors TS E15-S4 (minus writing the artifact, which E15 already 
 
 ## Shipped
 
-<!-- Empty at draft. Filled by /implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-13.
+
+- **Files changed:** `python/README.md` — documented the per-primitive snake_case row shapes in the `### Query verbs → the query read client` matrix (each of the five methods states its row contents: `funnel` → `QueryResult[FunnelStepRow]` rows of `{ step, event, count, conversion_rate, breakdown? }`, `retention` → `{ cohort, period_index, value, breakdown? }`, `trend`/`unique_count` → `{ bucket, value, breakdown? }`, `raw_query` → default verbatim column-keyed pass-through) + its intro sentence + the `### Query primitives — direct-analog` parity table; added the two cross-references.
+- **Files added:** none
+- **New public API:** none — docs only. `api_impact: additive`.
+- **Tests added:** none — docs only.
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, **no critical AND no suggestions** — a clean first review. Reviewer ground-truthed every claim against the shipped `client.py` dataclasses AND the S3 fixtures: funnel `conversion_rate` computed-relative-to-first-step, retention `period_index 0 = cohort`, `unique_count` its own named concept (not collapsed into trend), `raw_query` verbatim default — all backed by code line-for-line. Exact snake_case (grep confirmed no `conversionRate`/`periodIndex`); zero vendor tokens (both neutrality modes clean incl. `--full`). Both cross-references resolve (`../planning/QUERY-ROW-CONTRACT.md` as the parity source of truth both trees port to; `tests/query_contract_fixtures.py` as the executable form). Conceptually parity-consistent with the TS README (only casing + `[TRow]` vs `<TRow>` differ). The intra-doc anchor slug verified.
+- **Retry history:** none — shipped first attempt.
+- **Cross-story seams exposed:** none — this closes E16. The Python read side now documents the same neutral row contract as TS, cased idiomatically; `planning/QUERY-ROW-CONTRACT.md` remains the single shared source of truth both trees satisfy.

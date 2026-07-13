@@ -92,15 +92,18 @@ as the construction-time `super_properties` lever (the idiomatic adaptation note
 
 ### Query primitives — direct-analog
 
-The read surface maps one-to-one; only the naming is idiomatic.
+The read surface maps one-to-one; only the naming is idiomatic. The four structured primitives return
+**documented per-primitive neutral rows** (snake_case here vs. camelCase on the TS surface — see
+[Query verbs → the query read client](#query-verbs--the-query-read-client) for each row shape);
+`raw_query` alone keeps the default column-keyed pass-through.
 
 | Reference primitive | Disposition | Python surface |
 | --- | --- | --- |
-| `funnel` | direct-analog | `funnel(FunnelSpec)` |
-| `retention` | direct-analog | `retention(RetentionSpec)` |
-| `trend` | direct-analog | `trend(TrendSpec)` |
-| `uniqueCount` | direct-analog | `unique_count(UniqueCountSpec)` |
-| `rawQuery` | direct-analog | `raw_query(expr)` — the one dialect escape hatch; the dialect is a **value** (a string), never a type |
+| `funnel` | direct-analog | `funnel(FunnelSpec)` → rows of `{ step, event, count, conversion_rate, breakdown? }` |
+| `retention` | direct-analog | `retention(RetentionSpec)` → rows of `{ cohort, period_index, value, breakdown? }` |
+| `trend` | direct-analog | `trend(TrendSpec)` → rows of `{ bucket, value, breakdown? }` |
+| `uniqueCount` | direct-analog | `unique_count(UniqueCountSpec)` → rows of `{ bucket, value, breakdown? }` (its own named row concept) |
+| `rawQuery` | direct-analog | `raw_query(expr)` — the one dialect escape hatch; the dialect is a **value** (a string), never a type; keeps the default verbatim column-keyed row |
 
 ### N-A-by-platform mechanisms — by-design server-shaped omissions
 
@@ -158,16 +161,25 @@ idempotency `uuid` (the neutral `dedupe_id`, defaulted per call when unset).
 
 The shipped read backend translates each spec into an adapter-internal query body, POSTs it to the
 configured query endpoint with Bearer-key auth, and resolves the response synchronously (an immediate
-result, or a bounded blocking poll for an async status) into one flat `QueryResult`. All dialect
-vocabulary is sealed inside the adapter — it never reaches the neutral surface.
+result, or a bounded blocking poll for an async status) into a `QueryResult`. The four structured
+primitives (`funnel` / `retention` / `trend` / `unique_count`) return **documented per-primitive
+neutral rows** — the adapter flattens the backend's insight shapes into a narrowed
+`QueryResult[TRow]` whose snake_case row fields are the contract consumers key on (no engine-internal
+key leaks); `raw_query` alone keeps the default column-keyed mapping as a verbatim pass-through. All
+dialect vocabulary is sealed inside the adapter — it never reaches the neutral surface. The row
+shapes below satisfy the language-neutral [`../planning/QUERY-ROW-CONTRACT.md`](../planning/QUERY-ROW-CONTRACT.md)
+(the source of truth both trees port to, cased snake_case here vs. camelCase on the TS surface); the
+per-primitive wire→neutral-row fixtures at
+[`tests/query_contract_fixtures.py`](tests/query_contract_fixtures.py) are its executable form,
+mirroring the TS `query-contract.fixtures.ts` values cell-for-cell.
 
 | Verb | Shipped implementation (by role / wire shape) | Future warehouse / self-hosted cell |
 | --- | --- | --- |
-| `funnel` | translates `FunnelSpec` (ordered steps + window + optional breakdown) into the query body, POSTs to the configured query endpoint with Bearer-key auth, decodes to `QueryResult` | satisfy `AnalyticsQueryClient.funnel` — emit ordered step-completion counts over the taxonomy-typed view restricted to the window; normalize rows/columns into `QueryResult` |
-| `retention` | translates `RetentionSpec` (cohort + return event, bucketed horizon) into the query body, same POST + decode | satisfy `.retention` — self-join cohort vs return rows bucketed by granularity for the period count; normalize into `QueryResult` |
-| `trend` | translates `TrendSpec` (event + aggregation + window) into the query body, same POST + decode | satisfy `.trend` — a time series over the window at the derived interval, aggregated per the spec; normalize into `QueryResult` |
-| `unique_count` | translates `UniqueCountSpec` (event + window) into the query body, same POST + decode | satisfy `.unique_count` — count distinct actors over the window; normalize into `QueryResult` |
-| `raw_query` | passes the dialect **value** (a string) through as the query body, same POST + decode; the escape hatch is for the query language only — the result contract stays the flat `QueryResult` | satisfy `.raw_query` — pass the expression to the backend's own dialect and normalize the result into `QueryResult` |
+| `funnel` | translates `FunnelSpec` (ordered steps + window + optional breakdown) into the query body, POSTs to the configured query endpoint with Bearer-key auth, normalizes the response into `QueryResult[FunnelStepRow]` — rows of `{ step, event, count, conversion_rate, breakdown? }` (one row per funnel step; `conversion_rate` is computed relative to the first step, per-group when broken down) | satisfy `AnalyticsQueryClient.funnel` — emit ordered step-completion counts over the taxonomy-typed view restricted to the window; normalize into the same neutral rows |
+| `retention` | translates `RetentionSpec` (cohort + return event, bucketed horizon) into the query body, same POST, normalizes into `QueryResult[RetentionRow]` — rows of `{ cohort, period_index, value, breakdown? }` (one row per cohort×period cell; `period_index` 0 is the cohort's own period) | satisfy `.retention` — self-join cohort vs return rows bucketed by granularity for the period count; normalize into the same neutral rows |
+| `trend` | translates `TrendSpec` (event + aggregation + window) into the query body, same POST, normalizes into `QueryResult[TrendRow]` — rows of `{ bucket, value, breakdown? }` (one row per time bucket; one row-series per `breakdown` when present) | satisfy `.trend` — a time series over the window at the derived interval, aggregated per the spec; normalize into the same neutral rows |
+| `unique_count` | translates `UniqueCountSpec` (event + window) into the query body, same POST, normalizes into `QueryResult[UniqueCountRow]` — rows of `{ bucket, value, breakdown? }` (same neutral row shape as `trend` — a trend with distinct-id math, kept its own named row concept) | satisfy `.unique_count` — count distinct actors over the window; normalize into the same neutral rows |
+| `raw_query` | passes the dialect **value** (a string) through as the query body, same POST; keeps the default `QueryResult` row — a verbatim column-keyed mapping whose keys are the consumer's own SELECT projection (the one place a dialect-keyed shape legitimately surfaces); the escape hatch is for the query language only | satisfy `.raw_query` — pass the expression to the backend's own dialect and normalize the result into the default column-keyed `QueryResult` |
 
 The `WarehouseQueryAdapter` typed stub is the concrete second-adapter proof: it satisfies the same
 `AnalyticsQueryClient` seam by shape (each method typed, bodies as the fill-in seat), so a
