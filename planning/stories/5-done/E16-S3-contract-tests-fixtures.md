@@ -192,6 +192,23 @@ executable, not just prose. It mirrors TS E15-S3.
 - **`touches` stays `[node]`** (the Python server target; the query surface lives in the node-analog
   package). Every file this story edits/adds lives in the Python query test surface.
 
+> Reviewer suggestion (2026-07-13): `ENGINE_ROW_FIELD_NAMES` in `query_contract_fixtures.py` is a
+> plain `list[str]`; the TS reference exports it `as const` (readonly). A `Final`/`tuple` would mirror
+> the immutability intent and prevent a test mutating the shared seal list. Cosmetic.
+> Reviewer suggestion (2026-07-13): the seal-specific wire fixtures (`_SEAL_TREND_WIRE`, etc.) are
+> defined inline in `test_http_query_adapter.py` rather than in `query_contract_fixtures.py` — correct
+> (they deliberately over-load every engine key, unlike the TS-parity payloads), but a one-line note on
+> WHY they're separate would stop a future reader mistaking them for parity fixtures that drifted.
+
 ## Shipped
 
-<!-- Empty at draft. Filled by /implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-13.
+
+- **Files changed:** `python/tests/test_http_query_adapter.py` (repointed the two stale columns-present-through-structured tests, moved column-zip coverage onto `raw_query` + added a real-funnel-insight test, added 8 fixture-driven contract tests + a non-vacuous row-level engine seal across immediate+poll branches + a present-null-breakdown test), `python/tests/test_real_stack_query_probe.py` (`_CANNED_RESPONSE` → real trend insight; `:119` asserts `TrendRow`s; `:156` strengthened into a row-level engine seal), `python/tests/test_query_client.py` (narrowed `_AltQueryClient`'s four structured returns to the Protocol — the one mypy break — + `_fixed_result -> QueryResult[Any]`), `python/examples/quillstream/tests/test_query_exercise.py` (`_WIRE_BY_KIND` structured entries → real insight shapes, assertions → neutral rows; source untouched)
+- **Files added:** `python/tests/query_contract_fixtures.py` — the Python analog of `query-contract.fixtures.ts` (non-`test_`-prefixed; the 8 named fixtures + `ENGINE_ROW_FIELD_NAMES`, values mirroring TS cell-for-cell, two renames only)
+- **New public API:** none — tests + fixtures only.
+- **Tests added:** +15 net (main suite 575 → 590): 8 contract tests, real-funnel-insight, immediate+poll row-level seal, present-null-breakdown, and repointed assertions upgraded to full-row equality.
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review. **Cross-language parity verified cell-for-cell** — reviewer diffed all 9 TS exports against the Python fixtures: every wire payload verbatim, every expected-row value identical (funnel conversion_rate 0.62/0.41/0.5/0.25, retention period_index 0/1/2, event precedence), only the two sanctioned renames differ → a fixture diff is now a real drift detector. **Debt cleared by STRENGTHENING** — column-zip coverage moved to `raw_query` + a new funnel-insight test (net coverage up), poll plumbing kept + an attempt-count assertion added, `len()` checks upgraded to full-row equality; `test_columns_absent_rows_pass_through_as_records` stays green (not inverted). **Seal non-vacuous** — engine keys genuinely on the wire, `model_dump_json()` recurses into the frozen rows, driven through immediate AND poll branches (sync≡async at row level); `breakdown: null` present-null asserted (not TS key-absence). `_AltQueryClient` narrowing tightens the two-shapes-one-Protocol proof. Quillstream source untouched. Reviewer ran all gates independently: main 590/1-skip, mypy 0, ruff 0, fast neutrality clean; quillstream 41, mypy 0.
+- **Retry history:** none — shipped first attempt (the quillstream repoint was pre-authorized, avoiding E15-S3's scope-correction retry).
+- **Cross-story seams exposed:** E16's contract is COMPLETE on the code side. **KNOWN pre-existing S2 bug the orchestrator fixes before epic close:** the `--full` (artifact) neutrality scan fails on committed S2 `http_adapter.py` — its builder functions carry "De-branded from posthog's …" provenance inside DOCSTRINGS (~L371/456/473), which ship in the wheel; the scan exempts `#` comments but NOT docstrings. Fix = move the provenance to `#` comments. S3 introduces ZERO new violations (fixtures module vendor-clean). S4 is docs-only: cite `python/tests/query_contract_fixtures.py` as the executable contract.

@@ -21,11 +21,15 @@ import pytest
 from analytics_kit import (
     Duration,
     FunnelSpec,
+    FunnelStepRow,
     NeutralResponse,
     QueryClientConfig,
     QueryResult,
     RetentionSpec,
+    RetentionRow,
+    TrendRow,
     TrendSpec,
+    UniqueCountRow,
     UniqueCountSpec,
     create_query_client,
 )
@@ -35,6 +39,18 @@ from analytics_kit.query.http_adapter import (
     _QueryError,
     _UrllibQueryTransport,
     create_http_query_adapter,
+)
+
+from query_contract_fixtures import (
+    ENGINE_ROW_FIELD_NAMES,
+    funnel_breakdown,
+    funnel_event_precedence,
+    funnel_plain,
+    funnel_zero_first_step,
+    retention_cohorts,
+    trend_breakdown,
+    trend_single_series,
+    unique_count_single_series,
 )
 
 
@@ -242,12 +258,36 @@ def test_breakdown_is_omitted_when_absent() -> None:
 
 
 def test_immediate_envelope_normalizes_rows_keyed_by_column() -> None:
+    # The columns-present cell-array zip belongs to raw_query — the ONE primitive that consults
+    # columns. (A structured insight response never carries columns; that coverage moved here off
+    # funnel, which now flattens a real insight shape — see the funnel-insight test below.)
     transport = _CannedTransport([_immediate()])
-    result = _adapter(transport).funnel(FunnelSpec(steps=["a"], within=Duration(1, "day")))
+    result = _adapter(transport).raw_query("select a, b from events")
     assert isinstance(result, QueryResult)
     assert result.rows == [{"a": 1, "b": 2}]
     assert [c.name for c in result.columns] == ["a", "b"]
     assert [c.type for c in result.columns] == ["int", "int"]
+    assert result.generated_at
+
+
+def _funnel_insight(**extra: object) -> NeutralResponse:
+    """A real funnel insight envelope: per-step objects (no columns), the columns-ABSENT branch."""
+    body: dict[str, object] = {"results": list(funnel_plain.wire_results)}
+    body.update(extra)
+    return _ok(body)
+
+
+def test_immediate_funnel_insight_flattens_to_neutral_funnel_step_rows() -> None:
+    # After S2, funnel reads a per-step insight shape (order/count/name), NOT a columns-present
+    # cell-array — it flattens to FunnelStepRows with a computed conversion_rate.
+    transport = _CannedTransport([_funnel_insight()])
+    result = _adapter(transport).funnel(FunnelSpec(steps=["a"], within=Duration(1, "day")))
+    assert isinstance(result, QueryResult)
+    assert result.rows == funnel_plain.expected_rows
+    assert all(isinstance(row, FunnelStepRow) for row in result.rows)
+    # A structured insight carries no columns — the result is built with columns=[] so a spurious
+    # wire columns array can never re-surface engine column names.
+    assert result.columns == []
     assert result.generated_at
 
 
@@ -281,7 +321,13 @@ def _pending(status_id: str = "q-1") -> NeutralResponse:
 
 
 def _complete(**extra: object) -> NeutralResponse:
-    status: dict[str, object] = {"id": "q-1", "complete": True, "results": [[9]], "columns": ["n"]}
+    # A real trend insight (days/data, the columns-ABSENT branch) inside a completed status — so a
+    # polled trend flattens to the same TrendRows an inline one does.
+    status: dict[str, object] = {
+        "id": "q-1",
+        "complete": True,
+        "results": list(trend_single_series.wire_results),
+    }
     status.update(extra)
     return _ok({"query_status": status})
 
@@ -291,11 +337,14 @@ def test_async_status_is_polled_until_complete_then_normalized() -> None:
     result = _adapter(transport).trend(
         TrendSpec(event="e", aggregation="total", window=Duration(7, "day"))
     )
-    assert result.rows == [{"n": 9}]
-    # POST submit + two GET polls (second returns complete).
+    # The polled result flattens to the neutral TrendRows (identical to the inline path).
+    assert result.rows == trend_single_series.expected_rows
+    assert all(isinstance(row, TrendRow) for row in result.rows)
+    # POST submit + two GET polls (second returns complete) — the poll plumbing is unchanged.
     assert transport.sends[0].method == "POST"
     assert transport.sends[1].method == "GET"
     assert transport.sends[1].url == "https://query.example/api/projects/42/query/q-1/"
+    assert len([s for s in transport.sends if s.method == "GET"]) == 2
 
 
 def test_immediate_result_returns_without_polling() -> None:
@@ -306,10 +355,11 @@ def test_immediate_result_returns_without_polling() -> None:
 
 def test_a_completed_status_in_the_post_response_does_not_poll() -> None:
     # The async-detection foot-gun: a completed poll STILL carries query_status. Keying on
-    # presence would loop forever; keying on complete != True resolves immediately.
+    # presence would loop forever; keying on complete != True resolves immediately. Driven through
+    # raw_query, whose columns-absent branch passes the wire result objects through verbatim.
     transport = _CannedTransport([_complete()])
     result = _adapter(transport).raw_query("q")
-    assert result.rows == [{"n": 9}]
+    assert result.rows == list(trend_single_series.wire_results)
     assert len(transport.sends) == 1  # no extra poll GET — detection keys on complete, not presence
 
 
@@ -433,3 +483,207 @@ def test_wire_kind_tokens_are_confined_to_module_level_wire_constants() -> None:
     assert http_adapter._WIRE_BEARER_SCHEME == "Bearer"
     # The confined names are underscore-prefixed (non-public) and absent from any __all__.
     assert not hasattr(http_adapter, "__all__") or "_WIRE_RAW_QUERY_KIND" not in http_adapter.__all__
+
+
+# --- per-primitive wire→neutral-row contract (mirrors query-contract.fixtures.ts) --------
+#
+# Each fixture pairs a real insight wire payload with the exact neutral rows the primitive must
+# emit; the VALUES mirror the TS query-contract.fixtures.ts cell-for-cell (two casing renames).
+# Driving the same fixture through a structured primitive proves the flatten, executably.
+
+
+def _fixture_run(
+    method: str, wire_results: list[object], **envelope_extra: object
+) -> QueryResult[Any]:
+    """POST a canned immediate envelope carrying `wire_results` through the named primitive."""
+    body: dict[str, object] = {"results": wire_results}
+    body.update(envelope_extra)
+    transport = _CannedTransport([_ok(body)])
+    adapter = _adapter(transport)
+    if method == "funnel":
+        return adapter.funnel(FunnelSpec(steps=["a"], within=Duration(1, "day")))
+    if method == "retention":
+        return adapter.retention(
+            RetentionSpec(cohort_event="a", return_event="b", periods=3, granularity="day")
+        )
+    if method == "trend":
+        return adapter.trend(TrendSpec(event="a", aggregation="total", window=Duration(7, "day")))
+    return adapter.unique_count(UniqueCountSpec(event="a", window=Duration(7, "day")))
+
+
+def test_trend_single_series_flattens_to_neutral_rows() -> None:
+    result = _fixture_run("trend", list(trend_single_series.wire_results))
+    assert result.rows == trend_single_series.expected_rows
+    assert all(isinstance(row, TrendRow) for row in result.rows)
+
+
+def test_trend_breakdown_flattens_to_one_row_series_per_breakdown() -> None:
+    result = _fixture_run("trend", list(trend_breakdown.wire_results))
+    assert result.rows == trend_breakdown.expected_rows
+    # The breakdown label is stringified onto each row; the engine breakdown_value key is gone.
+    assert [row.breakdown for row in result.rows] == ["pro", "pro", "free", "free"]
+
+
+def test_unique_count_flattens_to_its_own_named_rows() -> None:
+    result = _fixture_run("unique_count", list(unique_count_single_series.wire_results))
+    assert result.rows == unique_count_single_series.expected_rows
+    assert all(isinstance(row, UniqueCountRow) for row in result.rows)
+
+
+def test_funnel_plain_flattens_with_computed_conversion_rate() -> None:
+    result = _fixture_run("funnel", list(funnel_plain.wire_results))
+    assert result.rows == funnel_plain.expected_rows
+    assert [row.conversion_rate for row in result.rows] == [1, 0.62, 0.41]
+
+
+def test_funnel_zero_first_step_guards_conversion_rate_to_zero() -> None:
+    result = _fixture_run("funnel", list(funnel_zero_first_step.wire_results))
+    assert result.rows == funnel_zero_first_step.expected_rows
+    assert [row.conversion_rate for row in result.rows] == [0, 0]
+
+
+def test_funnel_event_precedence_custom_name_then_name_then_action_id() -> None:
+    result = _fixture_run("funnel", list(funnel_event_precedence.wire_results))
+    assert result.rows == funnel_event_precedence.expected_rows
+    # Empty-string custom_name / name are skipped; the first present non-empty wins.
+    assert [row.event for row in result.rows] == ["Renamed Step", "order_placed", "act_3"]
+
+
+def test_funnel_breakdown_array_of_arrays_per_group_conversion_rate() -> None:
+    result = _fixture_run("funnel", list(funnel_breakdown.wire_results))
+    assert result.rows == funnel_breakdown.expected_rows
+    # conversion_rate is per-GROUP (each group's own count[0]); breakdown on every row.
+    assert [(row.conversion_rate, row.breakdown) for row in result.rows] == [
+        (1, "pro"),
+        (0.5, "pro"),
+        (1, "free"),
+        (0.25, "free"),
+    ]
+
+
+def test_retention_period_index_zero_is_the_cohort() -> None:
+    result = _fixture_run("retention", list(retention_cohorts.wire_results))
+    assert result.rows == retention_cohorts.expected_rows
+    assert [row.period_index for row in result.rows] == [0, 1, 2, 0, 1, 2]
+
+
+# --- row-level engine-field seal: engine keys absent from the serialized ROWS -------------
+#
+# Non-vacuous: each seal fixture carries EVERY engine key genuinely on the wire (breakdown_value,
+# average_conversion_time, aggregation_value, aggregated_value, converted_people_url). The seal
+# serializes the FULL result via model_dump_json() (Pydantic v2 recurses into the frozen-dataclass
+# rows) and asserts each engine key appears NOWHERE — paired with a POSITIVE assertion the neutral
+# fields surfaced with the right values (including present-null breakdown where not broken down).
+
+_SEAL_TREND_WIRE: list[object] = [
+    {
+        "label": "order_placed",
+        "days": ["2026-07-01", "2026-07-02"],
+        "data": [12, 30],
+        "count": 42,
+        "aggregated_value": 42,
+        "aggregation_value": 42,
+    },
+]
+_SEAL_TREND_ROWS = [
+    TrendRow(bucket="2026-07-01", value=12),
+    TrendRow(bucket="2026-07-02", value=30),
+]
+
+_SEAL_TREND_BREAKDOWN_WIRE: list[object] = [
+    {
+        "breakdown_value": "pro",
+        "days": ["2026-07-01"],
+        "data": [8],
+        "aggregated_value": 8,
+    },
+]
+_SEAL_TREND_BREAKDOWN_ROWS = [TrendRow(bucket="2026-07-01", value=8, breakdown="pro")]
+
+_SEAL_FUNNEL_WIRE: list[object] = [
+    {
+        "order": 0,
+        "name": "signed_up",
+        "count": 1000,
+        "average_conversion_time": None,
+        "converted_people_url": "/people/0",
+        "breakdown_value": "pro",
+    },
+    {
+        "order": 1,
+        "name": "order_placed",
+        "count": 500,
+        "average_conversion_time": 3600,
+        "converted_people_url": "/people/1",
+        "breakdown_value": "pro",
+    },
+]
+_SEAL_FUNNEL_ROWS = [
+    FunnelStepRow(step=0, event="signed_up", count=1000, conversion_rate=1, breakdown="pro"),
+    FunnelStepRow(step=1, event="order_placed", count=500, conversion_rate=0.5, breakdown="pro"),
+]
+
+_SEAL_RETENTION_WIRE: list[object] = [
+    {
+        "date": "2026-07-01",
+        "breakdown_value": "pro",
+        "values": [{"count": 500}, {"count": 300}],
+    },
+]
+_SEAL_RETENTION_ROWS = [
+    RetentionRow(cohort="2026-07-01", period_index=0, value=500, breakdown="pro"),
+    RetentionRow(cohort="2026-07-01", period_index=1, value=300, breakdown="pro"),
+]
+
+_SEAL_CASES: list[tuple[str, list[object], list[object]]] = [
+    ("trend", _SEAL_TREND_WIRE, list(_SEAL_TREND_ROWS)),
+    ("trend", _SEAL_TREND_BREAKDOWN_WIRE, list(_SEAL_TREND_BREAKDOWN_ROWS)),
+    ("unique_count", _SEAL_TREND_WIRE, [UniqueCountRow(bucket=r.bucket, value=r.value) for r in _SEAL_TREND_ROWS]),
+    ("funnel", _SEAL_FUNNEL_WIRE, list(_SEAL_FUNNEL_ROWS)),
+    ("retention", _SEAL_RETENTION_WIRE, list(_SEAL_RETENTION_ROWS)),
+]
+
+
+def _assert_sealed(result: QueryResult[Any], expected_rows: list[object]) -> None:
+    # (a) NO engine row field name survives into the serialized rows.
+    dumped = result.model_dump_json()
+    for engine_field in ENGINE_ROW_FIELD_NAMES:
+        assert engine_field not in dumped, f"engine key {engine_field!r} leaked into {dumped}"
+    # (b) POSITIVE: the neutral fields surfaced with the expected values (field-and-value equality,
+    # NOT TS-style key-absence — breakdown is a present-null str | None field by design).
+    assert result.rows == expected_rows
+
+
+def test_engine_row_fields_are_sealed_out_of_the_immediate_branch() -> None:
+    for method, wire, expected in _SEAL_CASES:
+        result = _fixture_run(method, list(wire))
+        _assert_sealed(result, expected)
+
+
+def test_engine_row_fields_are_sealed_out_of_the_poll_to_complete_branch() -> None:
+    # Sync ≡ async at the row level: the same fixture through the poll-to-complete path yields
+    # identically-sealed rows.
+    for method, wire, expected in _SEAL_CASES:
+        completed = _ok({"query_status": {"id": "q-1", "complete": True, "results": list(wire)}})
+        transport = _CannedTransport([_pending(), completed])
+        adapter = _adapter(transport)
+        if method == "funnel":
+            result: QueryResult[Any] = adapter.funnel(FunnelSpec(steps=["a"], within=Duration(1, "day")))
+        elif method == "retention":
+            result = adapter.retention(
+                RetentionSpec(cohort_event="a", return_event="b", periods=3, granularity="day")
+            )
+        elif method == "trend":
+            result = adapter.trend(TrendSpec(event="a", aggregation="total", window=Duration(7, "day")))
+        else:
+            result = adapter.unique_count(UniqueCountSpec(event="a", window=Duration(7, "day")))
+        _assert_sealed(result, expected)
+
+
+def test_not_broken_down_rows_serialize_breakdown_as_present_null() -> None:
+    # The Python row shape difference from TS: breakdown is a defaulted str | None field, so it
+    # serializes as present-null ("breakdown": null) when not broken down — the correct honest
+    # shape, NOT a leak. Do NOT assert breakdown absent.
+    result = _fixture_run("trend", list(trend_single_series.wire_results))
+    dumped = json.loads(result.model_dump_json())
+    assert all("breakdown" in row and row["breakdown"] is None for row in dumped["rows"])

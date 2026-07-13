@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+from typing import Any
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -22,6 +23,7 @@ from analytics_kit import (
     AnalyticsQueryClient,
     Duration,
     FunnelSpec,
+    FunnelStepRow,
     Granularity,
     NeutralResponse,
     QueryClientConfig,
@@ -29,8 +31,11 @@ from analytics_kit import (
     QueryNoop,
     QueryResult,
     QueryTransport,
+    RetentionRow,
     RetentionSpec,
+    TrendRow,
     TrendSpec,
+    UniqueCountRow,
     UniqueCountSpec,
     create_query_client,
     define_taxonomy,
@@ -52,16 +57,16 @@ class _AltQueryClient:
     future adapter (the HTTP adapter, the warehouse stub) so bar A is provable in S1.
     """
 
-    def funnel(self, spec: FunnelSpec) -> QueryResult:
+    def funnel(self, spec: FunnelSpec) -> QueryResult[FunnelStepRow]:
         return _fixed_result()
 
-    def retention(self, spec: RetentionSpec) -> QueryResult:
+    def retention(self, spec: RetentionSpec) -> QueryResult[RetentionRow]:
         return _fixed_result()
 
-    def trend(self, spec: TrendSpec) -> QueryResult:
+    def trend(self, spec: TrendSpec) -> QueryResult[TrendRow]:
         return _fixed_result()
 
-    def unique_count(self, spec: UniqueCountSpec) -> QueryResult:
+    def unique_count(self, spec: UniqueCountSpec) -> QueryResult[UniqueCountRow]:
         return _fixed_result()
 
     def raw_query(self, expr: str) -> QueryResult:
@@ -85,7 +90,9 @@ class _RecordingTransport:
         return NeutralResponse(status=200, body="{}")
 
 
-def _fixed_result() -> QueryResult:
+def _fixed_result() -> QueryResult[Any]:
+    # An empty result (rows=[]) is compatible with any TRow parametrization — the four narrowed
+    # _AltQueryClient methods and raw_query all return it; the Any row type unifies with each.
     return QueryResult(rows=[], columns=[], generated_at="2026-07-10T00:00:00+00:00")
 
 

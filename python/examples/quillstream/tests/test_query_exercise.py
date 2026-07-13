@@ -22,38 +22,44 @@ from analytics_kit import (
     AnalyticsQueryClient,
     Duration,
     FunnelSpec,
+    FunnelStepRow,
     NeutralResponse,
     QueryClientConfig,
     QueryResult,
+    RetentionRow,
     RetentionSpec,
+    TrendRow,
     TrendSpec,
+    UniqueCountRow,
     UniqueCountSpec,
     create_query_client,
 )
 
 _TRow = TypeVar("_TRow")
 
+# Real structured-insight wire shapes (the columns-ABSENT branch a structured primitive actually
+# receives): funnel per-step objects, retention cohort objects with an indexed values array, trend
+# parallel days/data. A structured primitive NEVER receives a columns-present cell-array — the
+# adapter flattens these into the neutral rows a snapshot job reads.
 _WIRE_BY_KIND: dict[str, dict[str, object]] = {
     "FunnelsQuery": {
-        "columns": ["step", "count"],
-        "types": ["String", "UInt64"],
         "results": [
-            ["workspace_created", 1000],
-            ["document_created", 620],
-            ["document_published", 410],
+            {"order": 0, "name": "workspace_created", "count": 1000},
+            {"order": 1, "name": "document_created", "count": 620},
+            {"order": 2, "name": "document_published", "count": 410},
         ],
         "is_cached": False,
     },
     "RetentionQuery": {
-        "columns": ["period", "retained"],
-        "types": ["UInt8", "UInt64"],
-        "results": [[0, 500], [1, 310], [2, 190]],
+        "results": [
+            {"date": "2026-07-01", "values": [{"count": 500}, {"count": 310}, {"count": 190}]},
+        ],
         "is_cached": False,
     },
     "TrendsQuery": {
-        "columns": ["day", "value"],
-        "types": ["Date", "UInt64"],
-        "results": [["2026-07-01", 42], ["2026-07-02", 55]],
+        "results": [
+            {"days": ["2026-07-01", "2026-07-02"], "data": [42, 55]},
+        ],
         "is_cached": True,
     },
 }
@@ -131,11 +137,13 @@ def test_funnel_normalizes_to_a_flat_query_result() -> None:
     )
 
     _assert_well_formed(result)
-    assert [c.name for c in result.columns] == ["step", "count"]
+    # A structured insight carries no columns — the adapter flattens per-step objects into the
+    # neutral FunnelStepRows a snapshot job reads (conversion_rate computed off the first step).
+    assert result.columns == []
     assert result.rows == [
-        {"step": "workspace_created", "count": 1000},
-        {"step": "document_created", "count": 620},
-        {"step": "document_published", "count": 410},
+        FunnelStepRow(step=0, event="workspace_created", count=1000, conversion_rate=1),
+        FunnelStepRow(step=1, event="document_created", count=620, conversion_rate=0.62),
+        FunnelStepRow(step=2, event="document_published", count=410, conversion_rate=0.41),
     ]
     assert result.from_cache is False
 
@@ -152,11 +160,11 @@ def test_retention_normalizes_to_a_flat_query_result() -> None:
     )
 
     _assert_well_formed(result)
-    assert [c.name for c in result.columns] == ["period", "retained"]
+    assert result.columns == []
     assert result.rows == [
-        {"period": 0, "retained": 500},
-        {"period": 1, "retained": 310},
-        {"period": 2, "retained": 190},
+        RetentionRow(cohort="2026-07-01", period_index=0, value=500),
+        RetentionRow(cohort="2026-07-01", period_index=1, value=310),
+        RetentionRow(cohort="2026-07-01", period_index=2, value=190),
     ]
 
 
@@ -167,10 +175,10 @@ def test_trend_normalizes_to_a_flat_query_result() -> None:
     )
 
     _assert_well_formed(result)
-    assert [c.name for c in result.columns] == ["day", "value"]
+    assert result.columns == []
     assert result.rows == [
-        {"day": "2026-07-01", "value": 42},
-        {"day": "2026-07-02", "value": 55},
+        TrendRow(bucket="2026-07-01", value=42),
+        TrendRow(bucket="2026-07-02", value=55),
     ]
     # The trend canned body flags a cached response — the optional wire flag decodes onto the seam.
     assert result.from_cache is True
@@ -184,8 +192,11 @@ def test_unique_count_normalizes_to_a_flat_query_result() -> None:
     )
 
     _assert_well_formed(result)
-    assert [c.name for c in result.columns] == ["day", "value"]
-    assert len(result.rows) == 2
+    assert result.columns == []
+    assert result.rows == [
+        UniqueCountRow(bucket="2026-07-01", value=42),
+        UniqueCountRow(bucket="2026-07-02", value=55),
+    ]
 
 
 def test_endpointless_config_is_the_query_footgun_no_op() -> None:

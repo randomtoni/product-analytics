@@ -34,8 +34,8 @@ import pytest
 
 from analytics_kit import (
     QueryClientConfig,
-    QueryColumn,
     QueryResult,
+    TrendRow,
     TrendSpec,
     create_query_client,
 )
@@ -88,11 +88,20 @@ class _QueryLoopbackServer:
         self._thread.join(timeout=5)
 
 
-# A canned IMMEDIATE (non-query_status) result envelope: cell-array rows zipped by the columns list.
+# A canned IMMEDIATE (non-query_status) result envelope carrying a REAL trend insight shape
+# (parallel days/data, the columns-ABSENT branch a structured trend actually receives) — with the
+# engine-internal breakdown_value/aggregated_value keys GENUINELY on the wire, so the seal below is
+# non-vacuous. The client flattens this into neutral TrendRows over a real socket.
 _CANNED_RESPONSE = {
-    "results": [["2026-07-01", 12], ["2026-07-02", 34]],
-    "columns": ["day", "count"],
-    "types": ["DateTime", "UInt64"],
+    "results": [
+        {
+            "label": "pageview",
+            "days": ["2026-07-01", "2026-07-02"],
+            "data": [12, 34],
+            "breakdown_value": None,
+            "aggregated_value": 46,
+        }
+    ],
     "is_cached": False,
 }
 
@@ -124,16 +133,15 @@ def test_query_client_decodes_a_real_loopback_response_into_neutral_query_result
         TrendSpec(event="pageview", aggregation="total", window=Duration(value=7, unit="day"))
     )
 
-    # The decoded shape is the NEUTRAL QueryResult, Pydantic-validated at the inbound boundary.
+    # The decoded shape is the NEUTRAL QueryResult — the real trend insight flattened into neutral
+    # TrendRows over a real socket (days/data → one row per bucket; engine keys never surface).
     assert isinstance(result, QueryResult)
     assert result.rows == [
-        {"day": "2026-07-01", "count": 12},
-        {"day": "2026-07-02", "count": 34},
+        TrendRow(bucket="2026-07-01", value=12),
+        TrendRow(bucket="2026-07-02", value=34),
     ]
-    assert result.columns == [
-        QueryColumn(name="day", type="DateTime"),
-        QueryColumn(name="count", type="UInt64"),
-    ]
+    # A structured insight carries no columns — the result is built with columns=[].
+    assert result.columns == []
     assert result.from_cache is False
     assert isinstance(result.generated_at, str)
 
@@ -158,11 +166,22 @@ def test_query_probe_body_carries_no_dollar_or_vendor_tokens_on_the_neutral_resu
 ) -> None:
     # The neutral RESULT the consumer receives carries no wire/dialect/vendor vocabulary — the
     # $-free/vendor-free invariant on the read side (wire kinds stay confined to _WIRE_* constants).
+    # Non-vacuous at the ROW level: _CANNED_RESPONSE carries breakdown_value/aggregated_value
+    # genuinely on the wire, so a leak would surface in the serialized rows.
     client = _client(query_server.host)
     result = client.trend(
         TrendSpec(event="signup", aggregation="unique", window=Duration(value=30, unit="day"))
     )
-    dumped = result.model_dump_json().lower()
+    serialized = result.model_dump_json()
+    dumped = serialized.lower()
     assert "$" not in dumped
     assert "posthog" not in dumped
     assert "hogql" not in dumped
+    # The engine ROW field names present on the wire appear NOWHERE in the serialized rows.
+    for engine_field in ("breakdown_value", "aggregated_value", "aggregation_value"):
+        assert engine_field not in serialized
+    # POSITIVE: the neutral rows surfaced (present-null breakdown is the correct honest shape).
+    assert result.rows == [
+        TrendRow(bucket="2026-07-01", value=12),
+        TrendRow(bucket="2026-07-02", value=34),
+    ]
