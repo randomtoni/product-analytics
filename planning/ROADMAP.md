@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-10 — E12–E14 all shipped + archived: NOW cycle COMPLETE (feature-flags both trees + session-replay browser/TS, Python N-A). Cycle exit criteria met — awaiting `/roadmap promote`
+Last updated: 2026-07-13 — E15 (query row contract) went active; sections still awaiting `/roadmap promote` reconciliation
 
 ## Status
 
@@ -89,7 +89,13 @@ first, via `/roadmap add-later` → promote, once the NOW push is scoped._
 
 ## LATER
 
-_Empty._
+- **[E15-QRY-response-row-contract](epics/E15-QRY-response-row-contract.md)** *(active)* *(query; **breaking** → pre-1.0 breaking minor)* —
+  neutral, documented per-primitive read-side row contract (`TrendRow`/`UniqueCountRow`/`FunnelStepRow`/
+  `RetentionRow`) + generic `QueryResult<TRow>`, closing an **acceptance-bar-1 leak**: the HTTP query
+  adapter currently passes engine-internal insight keys (`breakdown_value`, `average_conversion_time`, …)
+  through verbatim. Sourced from consumer feedback (Tutore hit two S5-criticals) + a conclusive architect
+  consult. Creates a contract the Python query client must mirror (parity). **Landed here via
+  `add-later`; awaiting `/roadmap promote` to NOW** — see recommendation in the drafting note.
 
 ## Cycle history
 
