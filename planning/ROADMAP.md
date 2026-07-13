@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-13 — E15 (query row contract) shipped + archived; NOW/LATER sections still awaiting `/roadmap promote` reconciliation
+Last updated: 2026-07-13 — E15 (query row contract) shipped + archived; E16 (its Python parity port) drafted into LATER, then taken active via `/implement-epics E16` (stories promoted to ready-for-dev; the Python `QueryResult[TRow]` shape resolved by architect consult); NOW/LATER section reconciliation still awaits `/roadmap promote`
 
 ## Status
 
@@ -95,6 +95,15 @@ first, via `/roadmap add-later` → promote, once the NOW push is scoped._
   adapter passed engine-internal insight keys through verbatim. Row-level seal + `planning/QUERY-ROW-CONTRACT.md`
   parity artifact shipped. (Built out of LATER via `/implement-epics E15`; NOW/LATER section reconciliation
   still awaits `/roadmap promote`.)
+- **[E16-QRY-python-row-contract](epics/E16-QRY-python-row-contract.md)** *(active)* *(query, touches node/adapters; **breaking**)* —
+  the **Python parity port** of E15's read-side row contract. The identical leak is live in Python
+  (`http_adapter.py` `_normalize_result` forwards engine insight objects verbatim on the columns-absent
+  branch); this ports the four neutral snake_case rows (`{ bucket, value, breakdown? }` ·
+  `{ step, event, count, conversion_rate, breakdown? }` · `{ cohort, period_index, value, breakdown? }`),
+  the per-primitive normalizers, the row-level seal, and fixtures mirroring the TS values — against the
+  LOCKED `planning/QUERY-ROW-CONTRACT.md`. The Python generic-`QueryResult[TRow]` shape is RESOLVED
+  (architect 2026-07-13: frozen-dataclass rows + `Generic[TRow]` Pydantic envelope, PEP-696 `TypeVar`
+  via `typing_extensions`). In flight via `/implement-epics E16`; stays in LATER until `/roadmap promote`.
 
 ## Cycle history
 
