@@ -15,8 +15,7 @@ only in this test double; the ASSERTIONS stay on the neutral flat ``QueryResult`
 from __future__ import annotations
 
 import json
-
-from typing_extensions import TypeVar
+from typing import Any
 
 from analytics_kit import (
     AnalyticsQueryClient,
@@ -34,8 +33,6 @@ from analytics_kit import (
     UniqueCountSpec,
     create_query_client,
 )
-
-_TRow = TypeVar("_TRow")
 
 # Real structured-insight wire shapes (the columns-ABSENT branch a structured primitive actually
 # receives): funnel per-step objects, retention cohort objects with an indexed values array, trend
@@ -109,7 +106,7 @@ def _keyed_client(transport: FakeQueryTransport) -> AnalyticsQueryClient:
     return create_query_client(config)
 
 
-def _assert_well_formed(result: QueryResult[_TRow]) -> None:
+def _assert_well_formed(result: QueryResult[Any]) -> None:
     assert isinstance(result.rows, list)
     assert isinstance(result.columns, list)
     assert isinstance(result.generated_at, str)

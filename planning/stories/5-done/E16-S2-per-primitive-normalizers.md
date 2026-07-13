@@ -177,3 +177,9 @@ its neutral row type — the fix that closes the leak. It mirrors TS E15-S2.
 - **THE key review call — 7 failing tests verified S3-owned inversions, NOT regressions.** Reviewer reproduced the builder's `git stash` counter-check (restoring S1's `http_adapter.py` makes all failing tests pass → they pin the OLD leak), and confirmed each feeds a columns-present cell-array through a structured primitive (impossible wire state → correct `[]`), failing ONLY on `.rows`/`.columns` while poll/transport/URL/error/neutrality assertions pass.
 - **Retry history:** none — shipped first attempt.
 - **Cross-story seams exposed:** Python pytest is 575/3-fail + quillstream 37/4-fail + 3+3 test-side mypy at S2 close — **S3 must clear ALL of it**: repoint the stale cell-array fixtures (`test_http_query_adapter.py:248`/`:289`, `test_real_stack_query_probe.py:129`, quillstream `test_query_exercise.py:135`/`:156`/`:171` + the 4 stale-fixture asserts) to realistic insight shapes; fix the `test_query_client.py:104` `_AltQueryClient` test-double Protocol pin; add/extend the row-level engine-key seal (`model_dump_json()`); add the per-primitive contract fixtures mirroring the TS values. After S3 the full Python + quillstream suites + mypy must be green.
+
+## Follow-up
+
+> Improvement pass (2026-07-13, commit `E16 improvement pass`).
+- **`_first_step_count` return symmetry.** Its zero/fallback path now returns `0.0` (was the int literal `0`) to match the `conversion_rate = 0.0` literal — cosmetic, `0 == 0.0`, row output byte-identical. All gates green.
+- (The separate `--full` neutrality fix — moving the port provenance from S2's builder docstrings to `#` comments — shipped as its own commit `a93ded3` BEFORE epic close, since it was a real artifact-scan gate failure rather than a nicety.)

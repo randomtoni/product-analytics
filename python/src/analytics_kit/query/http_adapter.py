@@ -421,7 +421,7 @@ def _first_step_count(steps: list[object]) -> float:
         count = first.get(_WIRE_COUNT_KEY)
         if isinstance(count, (int, float)) and not isinstance(count, bool):
             return count
-    return 0
+    return 0.0
 
 
 def _funnel_group_rows(steps: list[object]) -> list[FunnelStepRow]:

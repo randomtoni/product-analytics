@@ -26,7 +26,7 @@ accept floats; ``conversion_rate`` is the one float on the row, and it is COMPUT
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Generic
+from typing import Final, Generic
 
 from typing_extensions import TypeVar
 
@@ -218,10 +218,10 @@ retention_cohorts: WireRowFixture[RetentionRow] = WireRowFixture(
 
 # The engine-internal ROW field names a neutral row must NEVER carry. The seal tests serialize the
 # returned rows and assert each of these is absent from the output.
-ENGINE_ROW_FIELD_NAMES = [
+ENGINE_ROW_FIELD_NAMES: Final = (
     "breakdown_value",
     "average_conversion_time",
     "aggregation_value",
     "aggregated_value",
     "converted_people_url",
-]
+)
