@@ -1,4 +1,12 @@
-import type { QueryResult, ShapeOf, TaxonomyShape } from '@randomtoni/analytics-kit';
+import type {
+  FunnelStepRow,
+  QueryResult,
+  RetentionRow,
+  ShapeOf,
+  TaxonomyShape,
+  TrendRow,
+  UniqueCountRow,
+} from '@randomtoni/analytics-kit';
 import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { expect, expectTypeOf, test } from 'vitest';
 import type {
@@ -24,17 +32,17 @@ declare const client: AnalyticsQueryClient<TX>;
 
 // Compile-time assertions only — validated by `tsc --noEmit`, never executed.
 
-const _funnelStepsTypeCheck = (): Promise<QueryResult> =>
+const _funnelStepsTypeCheck = (): Promise<QueryResult<FunnelStepRow>> =>
   client.funnel({
     steps: ['signed_up', 'order_placed'],
     within: { value: 7, unit: 'day' },
     breakdown: 'plan',
   });
 
-const _trendEventTypeChecks = (): Promise<QueryResult> =>
+const _trendEventTypeChecks = (): Promise<QueryResult<TrendRow>> =>
   client.trend({ event: 'order_placed', aggregation: 'total', window: { value: 30, unit: 'day' } });
 
-const _retentionEventsTypeCheck = (): Promise<QueryResult> =>
+const _retentionEventsTypeCheck = (): Promise<QueryResult<RetentionRow>> =>
   client.retention({
     cohortEvent: 'signed_up',
     returnEvent: 'order_placed',
@@ -42,7 +50,7 @@ const _retentionEventsTypeCheck = (): Promise<QueryResult> =>
     granularity: 'week',
   });
 
-const _uniqueCountEventTypeChecks = (): Promise<QueryResult> =>
+const _uniqueCountEventTypeChecks = (): Promise<QueryResult<UniqueCountRow>> =>
   client.uniqueCount({ event: 'logged_out', window: { value: 1, unit: 'month' } });
 
 const _rawQueryTakesAPlainString = (): Promise<QueryResult> =>
@@ -100,9 +108,9 @@ test('AnalyticsQueryClient exposes exactly its own five query members, each retu
   expectTypeOf<keyof AnalyticsQueryClient<never>>().toEqualTypeOf<
     'funnel' | 'retention' | 'trend' | 'uniqueCount' | 'rawQuery'
   >();
-  expectTypeOf<AnalyticsQueryClient<never>['funnel']>().returns.toEqualTypeOf<Promise<QueryResult>>();
-  expectTypeOf<AnalyticsQueryClient<never>['retention']>().returns.toEqualTypeOf<Promise<QueryResult>>();
-  expectTypeOf<AnalyticsQueryClient<never>['trend']>().returns.toEqualTypeOf<Promise<QueryResult>>();
-  expectTypeOf<AnalyticsQueryClient<never>['uniqueCount']>().returns.toEqualTypeOf<Promise<QueryResult>>();
+  expectTypeOf<AnalyticsQueryClient<never>['funnel']>().returns.toEqualTypeOf<Promise<QueryResult<FunnelStepRow>>>();
+  expectTypeOf<AnalyticsQueryClient<never>['retention']>().returns.toEqualTypeOf<Promise<QueryResult<RetentionRow>>>();
+  expectTypeOf<AnalyticsQueryClient<never>['trend']>().returns.toEqualTypeOf<Promise<QueryResult<TrendRow>>>();
+  expectTypeOf<AnalyticsQueryClient<never>['uniqueCount']>().returns.toEqualTypeOf<Promise<QueryResult<UniqueCountRow>>>();
   expectTypeOf<AnalyticsQueryClient<never>['rawQuery']>().returns.toEqualTypeOf<Promise<QueryResult>>();
 });

@@ -18,36 +18,28 @@ interface WireBody {
   refresh: string;
 }
 
-// A canned wire response per `kind` in the SYNC envelope shape the adapter's
-// `normalizeResult` consumes: `{ results, columns?, types? }` at HTTP 200 with NO
-// `query_status` so the inline sync branch is taken (never a real HogQL POST). Rows are
-// cell-arrays that get zipped into keyed objects by the parallel `columns`.
-const WIRE_BY_KIND: Record<string, { results: unknown[]; columns: string[]; types: string[] }> = {
+// A canned wire response per `kind` at HTTP 200 with NO `query_status` so the inline sync
+// branch is taken (never a real HogQL POST). The STRUCTURED primitives (funnel/retention/
+// trend) carry columns-ABSENT insight objects — per-step objects / cohort objects with an
+// indexed `values` array / parallel `days`/`data` arrays — which the adapter flattens into
+// the neutral per-primitive rows (`{step,event,count,conversionRate}` / `{cohort,periodIndex,
+// value}` / `{bucket,value}`). Only the rawQuery/HogQL path is columns-PRESENT cell-arrays
+// zipped into keyed objects by the consumer's own SELECT projection.
+const WIRE_BY_KIND: Record<string, { results: unknown[]; columns?: string[]; types?: string[] }> = {
   FunnelsQuery: {
-    columns: ['step', 'count'],
-    types: ['String', 'UInt64'],
     results: [
-      ['signup_started', 1000],
-      ['signup_completed', 620],
-      ['document_uploaded', 410],
+      { order: 0, name: 'signup_started', count: 1000 },
+      { order: 1, name: 'signup_completed', count: 620 },
+      { order: 2, name: 'document_uploaded', count: 410 },
     ],
   },
   RetentionQuery: {
-    columns: ['period', 'retained'],
-    types: ['UInt8', 'UInt64'],
     results: [
-      [0, 500],
-      [1, 310],
-      [2, 190],
+      { date: '2026-07-01', values: [{ count: 500 }, { count: 310 }, { count: 190 }] },
     ],
   },
   TrendsQuery: {
-    columns: ['day', 'value'],
-    types: ['Date', 'UInt64'],
-    results: [
-      ['2026-07-01', 42],
-      ['2026-07-02', 55],
-    ],
+    results: [{ label: 'comment_added', days: ['2026-07-01', '2026-07-02'], data: [42, 55] }],
   },
   HogQLQuery: {
     columns: ['plan', 'upgrades'],
@@ -115,11 +107,13 @@ describe('Fernly KPI/snapshot definitions call every query primitive (E8)', () =
 
     expect(record.name).toBe('activation_funnel');
     expectWellFormed(record.result);
-    expect(record.result.columns.map((c) => c.name)).toEqual(['step', 'count']);
+    // A structured insight response carries no SELECT projection — columns is empty; the
+    // adapter flattens the per-step insight objects into the neutral FunnelStepRow contract.
+    expect(record.result.columns).toEqual([]);
     expect(record.result.rows).toEqual([
-      { step: 'signup_started', count: 1000 },
-      { step: 'signup_completed', count: 620 },
-      { step: 'document_uploaded', count: 410 },
+      { step: 0, event: 'signup_started', count: 1000, conversionRate: 1 },
+      { step: 1, event: 'signup_completed', count: 620, conversionRate: 0.62 },
+      { step: 2, event: 'document_uploaded', count: 410, conversionRate: 0.41 },
     ]);
     expect(record.result.fromCache).toBe(false);
   });
@@ -131,8 +125,12 @@ describe('Fernly KPI/snapshot definitions call every query primitive (E8)', () =
     expect(record.name).toBe('reviewer_retention');
     expectWellFormed(record.result);
     expect(bodies[0]!.query.kind).toBe('RetentionQuery');
-    expect(record.result.rows).toHaveLength(3);
-    expect(record.result.rows[0]).toEqual({ period: 0, retained: 500 });
+    // One neutral RetentionRow per (cohort, period) cell; periodIndex 0 = the cohort itself.
+    expect(record.result.rows).toEqual([
+      { cohort: '2026-07-01', periodIndex: 0, value: 500 },
+      { cohort: '2026-07-01', periodIndex: 1, value: 310 },
+      { cohort: '2026-07-01', periodIndex: 2, value: 190 },
+    ]);
   });
 
   it('trend (engagement) normalizes the mocked response into a well-formed QueryResult', async () => {
@@ -142,9 +140,10 @@ describe('Fernly KPI/snapshot definitions call every query primitive (E8)', () =
     expect(record.name).toBe('comment_engagement');
     expectWellFormed(record.result);
     expect(bodies[0]!.query.kind).toBe('TrendsQuery');
+    // One neutral TrendRow per bucket — flattened from the parallel days[]/data[] arrays.
     expect(record.result.rows).toEqual([
-      { day: '2026-07-01', value: 42 },
-      { day: '2026-07-02', value: 55 },
+      { bucket: '2026-07-01', value: 42 },
+      { bucket: '2026-07-02', value: 55 },
     ]);
   });
 
@@ -154,9 +153,14 @@ describe('Fernly KPI/snapshot definitions call every query primitive (E8)', () =
 
     expect(record.name).toBe('active_reviewers');
     expectWellFormed(record.result);
-    // uniqueCount rides the trends wire node.
+    // uniqueCount rides the trends wire node — same columns-absent insight shape, flattened
+    // into neutral TrendRows (no SELECT projection, so columns is empty).
     expect(bodies[0]!.query.kind).toBe('TrendsQuery');
-    expect(record.result.columns.map((c) => c.name)).toEqual(['day', 'value']);
+    expect(record.result.columns).toEqual([]);
+    expect(record.result.rows).toEqual([
+      { bucket: '2026-07-01', value: 42 },
+      { bucket: '2026-07-02', value: 55 },
+    ]);
   });
 
   it('rawQuery (escape hatch) normalizes the mocked response into a well-formed QueryResult', async () => {

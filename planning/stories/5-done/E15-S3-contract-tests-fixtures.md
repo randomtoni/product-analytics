@@ -94,3 +94,24 @@ wire→neutral-row fixtures that double as the documented contract.
   the node package. Keep the new fixtures in the node query test surface (e.g. alongside
   `http-query-adapter.test.ts`, or a co-located `*.fixtures.ts`) so S4's cross-reference (which points the
   README/parity artifact at "the per-primitive contract fixtures") resolves to a stable node-package path.
+
+> Reviewer suggestion (2026-07-13): `ENGINE_ROW_FIELD_NAMES` lists `aggregation_value` (an epic-named
+> engine field), but the trend total the fixtures actually emit is `aggregated_value` (near-homograph),
+> asserted absent on a separate line. Add a one-line comment on the constant (or add `aggregated_value`
+> to the list) so the next maintainer doesn't read the loop as covering the trend total when it doesn't.
+> Reviewer suggestion (2026-07-13): `WireRowFixture<TRow>` exposes a `description` field no test
+> consumes — it's intended for S4's docs cross-reference. S4 should either render it in the docs or drop
+> it so it doesn't become dead metadata.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-13.
+
+- **Files changed:** `ts/packages/node/src/query/query-client.test.ts` (repointed all 8 broken type-pins — 4 `toEqualTypeOf` return pins to the narrowed rows + 4 helper-arrow annotations; `rawQuery` stays bare), `ts/packages/node/src/query/http-query-adapter.test.ts` (inverted the pass-through test to assert normalization, extended the sync seal to the row level, replaced the stale sync trend fixture, added the CONTRACT tests), `ts/packages/node/src/query/http-query-adapter-async.test.ts` (replaced the 3 stale async cell-array fixtures with realistic insight shapes, extended the async seal to the row level), `ts/examples/fernly/src/kpi/snapshots.test.ts` (swapped the stale HogQL-cell-array funnel/retention/trend mocks for columns-absent insight shapes + repointed assertions to the neutral rows; HogQL/rawQuery columns-present mock left as-is)
+- **Files added:** `ts/packages/node/src/query/query-contract.fixtures.ts` — per-primitive wire→neutral-row contract fixtures + `ENGINE_ROW_FIELD_NAMES` (the contract fixtures the origin feedback asked for; S4 points the docs at these)
+- **New public API:** none — tests + fixtures only.
+- **Tests added:** 8 `CONTRACT …` tests (trend single/breakdown, uniqueCount, funnel plain/zero-first-step/event-precedence/array-of-arrays-breakdown, retention cohorts) covering every reviewer-required case; inverted normalization test; both seal tests extended to row level. Node suite 332 → **340**.
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review. **Debt cleared by STRENGTHENING, not weakening** — inverted test asserts normalization (not `.skip`/tautology); both seals extended to the ROW level and made NON-VACUOUS (fed fixtures where `breakdown_value`/`aggregated_value` are genuinely present on the wire, paired with a positive assertion the neutral `breakdown` key surfaced); the 8 type-pins repoint to the EXACT narrowed rows (a widen wouldn't compile); replaced runtime assertions moved from `toHaveLength` to full `toEqual(expectedRows)` deep-equality. Contract fixtures traced against the real normalizer — trend breakdown, funnel per-group conversionRate, `count[0]===0→0` guard, `custom_name→name→action_id` precedence (empty-string skip), retention `periodIndex 0 = cohort` all verified. Fernly fix corrects accidental-green stale fixtures (architect-confirmed the mocks modeled an impossible HogQL-through-structured-primitive shape), fernly SOURCE untouched. No adapter/type/source code changed. Provenance discipline exemplary (one sanctioned `// De-branded from posthog's …` comment). Reviewer ran gates independently: 21/21 turbo, node 340/340, 30/30 neutrality.
+- **Retry history:** 1 continuation — the initial pass cleared all node debt but left 3 fernly tests red under S3's original "leave fernly untouched" constraint; the orchestrator authorized the fernly fixture fix (the constraint rested on an architect-refuted premise), and the builder completed it to full green. Not a critical-issue retry — a scope correction.
+- **Cross-story seams exposed:** E15's contract is now COMPLETE on the code side (types S1, normalizers S2, tests+fixtures+seal S3, all green). S4 is docs-only: point the README query table + the language-neutral `planning/QUERY-ROW-CONTRACT.md` at `query-contract.fixtures.ts` as the executable contract; state `UniqueCountRow` as its own named concept (S1 reviewer note) so the Python port doesn't collapse it into `TrendRow`; decide the `WireRowFixture.description` field's fate (render or drop).

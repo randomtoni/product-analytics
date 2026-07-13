@@ -8,6 +8,17 @@ import {
   HttpQueryAdapter,
   normalizeResult,
 } from './http-query-adapter';
+import {
+  ENGINE_ROW_FIELD_NAMES,
+  funnelBreakdown,
+  funnelEventPrecedence,
+  funnelPlain,
+  funnelZeroFirstStep,
+  retentionCohorts,
+  trendBreakdown,
+  trendSingleSeries,
+  uniqueCountSingleSeries,
+} from './query-contract.fixtures';
 
 interface Call {
   url: string;
@@ -185,19 +196,16 @@ test('breakdown, when supplied, becomes an event breakdownFilter; omitted otherw
   expect('breakdownFilter' in b2.query && b2.query.breakdownFilter !== undefined).toBe(false);
 });
 
-test('sync envelope normalizes to QueryResult: rows keyed by column, columns ordered, fromCache from is_cached', async () => {
-  const { client } = adapter(SYNC_ENVELOPE);
+test('sync trend insight envelope normalizes to neutral TrendRows: bucket/value rows, no columns, fromCache from is_cached', async () => {
+  // A real trend insight response carries structured `results` objects (days[]/data[]) and
+  // NO parallel columns — the columns-absent branch. The adapter flattens it to TrendRows.
+  const { client } = adapter({ results: trendSingleSeries.wireResults, is_cached: true });
 
   const result = await client.trend({ event: 'order_placed', aggregation: 'total', window: { value: 7, unit: 'day' } });
 
-  expect(result.rows).toEqual([
-    { day: '2026-07-01', count: 12 },
-    { day: '2026-07-02', count: 30 },
-  ]);
-  expect(result.columns).toEqual([
-    { name: 'day', type: 'DateTime' },
-    { name: 'count', type: 'UInt64' },
-  ]);
+  expect(result.rows).toEqual(trendSingleSeries.expectedRows);
+  // Structured insight results carry no SELECT projection — columns is empty for a primitive.
+  expect(result.columns).toEqual([]);
   expect(result.fromCache).toBe(true);
   expect(typeof result.generatedAt).toBe('string');
   expect(Number.isNaN(Date.parse(result.generatedAt))).toBe(false);
@@ -236,14 +244,30 @@ test('is_cached: false present → fromCache is false', async () => {
 });
 
 test('the raw vendor envelope shape (results/columns/types/hogql/is_cached/kind) appears NOWHERE in the returned value', async () => {
-  const { client } = adapter(SYNC_ENVELOPE);
-  const result = await client.trend({ event: 'order_placed', aggregation: 'total', window: { value: 7, unit: 'day' } });
+  // Feed a broken-down insight fixture so each wire entry carries `breakdown_value` (and the
+  // trend total `aggregated_value`) — a row that COULD leak engine field names if unsealed.
+  const { client } = adapter({
+    results: [
+      { label: 'order_placed - pro', breakdown_value: 'pro', days: ['2026-07-01'], data: [8], aggregated_value: 8 },
+      { label: 'order_placed - free', breakdown_value: 'free', days: ['2026-07-01'], data: [4], aggregated_value: 4 },
+    ],
+    is_cached: true,
+  });
+  const result = await client.trend({ event: 'order_placed', aggregation: 'total', window: { value: 7, unit: 'day' }, breakdown: 'plan' });
 
   const serialized = JSON.stringify(result);
   expect(serialized).not.toContain('is_cached');
   expect(serialized).not.toContain('hogql');
   expect(serialized).not.toContain('"results"');
   expect(serialized).not.toContain('kind');
+  // Row-level seal: no engine-internal ROW field name survives into the serialized rows.
+  const rowsSerialized = JSON.stringify(result.rows);
+  for (const field of ENGINE_ROW_FIELD_NAMES) {
+    expect(rowsSerialized).not.toContain(field);
+  }
+  expect(rowsSerialized).not.toContain('aggregated_value');
+  // The neutral breakdown value DID surface — under the neutral `breakdown` key, not `breakdown_value`.
+  expect(result.rows[0]).toEqual({ bucket: '2026-07-01', value: 8, breakdown: 'pro' });
   // The neutral value carries `rows`/`columns`/`generatedAt`/`fromCache` only.
   expect(Object.keys(result).sort()).toEqual(['columns', 'fromCache', 'generatedAt', 'rows']);
 });
@@ -257,14 +281,21 @@ test('normalizeResult zips cell-array rows when columns are present', () => {
   expect(result.fromCache).toBe(true);
 });
 
-test('normalizeResult passes object entries through when columns are ABSENT (insight-object results)', () => {
-  // Trends/funnels/retention responses carry result OBJECTS with no parallel columns.
-  const result = normalizeResult(
-    { results: [{ label: 'Mon', count: 3 }, { label: 'Tue', count: 5 }] },
-    undefined
-  );
+test('a columns-ABSENT insight object is NORMALIZED into the neutral row type by the primitive (NOT passed through)', async () => {
+  // Trends/funnels/retention responses carry result OBJECTS with no parallel columns. The
+  // engine-internal shape must NOT pass through — the primitive flattens it into neutral
+  // rows. (Pre-E15 this test pinned pass-through as correct; that was the leak this epic closed.)
+  const { client } = adapter({ results: trendSingleSeries.wireResults });
+
+  const result = await client.trend({ event: 'order_placed', aggregation: 'total', window: { value: 7, unit: 'day' } });
+
   expect(result.columns).toEqual([]);
-  expect(result.rows).toEqual([{ label: 'Mon', count: 3 }, { label: 'Tue', count: 5 }]);
+  // Normalized to TrendRows — the raw insight keys (`label`, `days`, `data`, `count`) are gone.
+  expect(result.rows).toEqual(trendSingleSeries.expectedRows);
+  const serialized = JSON.stringify(result.rows);
+  for (const rawKey of ['label', '"days"', '"data"', '"count"']) {
+    expect(serialized).not.toContain(rawKey);
+  }
   expect('fromCache' in result).toBe(false);
 });
 
@@ -321,6 +352,60 @@ test('createHttpQueryAdapterFromConfig defaults an absent projectId to the empty
   await client.rawQuery('SELECT 1');
 
   expect(calls[0].url).toBe('https://query.example/api/projects//query/');
+});
+
+// ── Per-primitive wire→neutral-row CONTRACT fixtures ─────────────────────────
+// The authoritative documented contract (S4 points the README/parity artifact here): a
+// realistic wire insight response per structured primitive, asserted against its exact
+// neutral rows. Each drives the fixture through the primitive method, proving the adapter's
+// normalizer produces the neutral contract — not the engine-internal insight shape.
+
+test('CONTRACT trend, single series → one neutral TrendRow per (bucket, value)', async () => {
+  const { client } = adapter({ results: trendSingleSeries.wireResults });
+  const result = await client.trend({ event: 'order_placed', aggregation: 'total', window: { value: 7, unit: 'day' } });
+  expect(result.rows).toEqual(trendSingleSeries.expectedRows);
+});
+
+test('CONTRACT trend, breakdown → one row-series per breakdown_value, neutral breakdown on each row', async () => {
+  const { client } = adapter({ results: trendBreakdown.wireResults });
+  const result = await client.trend({ event: 'order_placed', aggregation: 'total', window: { value: 7, unit: 'day' }, breakdown: 'plan' });
+  expect(result.rows).toEqual(trendBreakdown.expectedRows);
+});
+
+test('CONTRACT uniqueCount → same neutral TrendRow shape as trend (shared wire shape)', async () => {
+  const { client } = adapter({ results: uniqueCountSingleSeries.wireResults });
+  const result = await client.uniqueCount({ event: 'active_reviewers', window: { value: 7, unit: 'day' } });
+  expect(result.rows).toEqual(uniqueCountSingleSeries.expectedRows);
+});
+
+test('CONTRACT funnel, plain → step rows with COMPUTED conversionRate (count/count[0])', async () => {
+  const { client } = adapter({ results: funnelPlain.wireResults });
+  const result = await client.funnel({ steps: ['signed_up', 'order_placed', 'document_uploaded'], within: { value: 7, unit: 'day' } });
+  expect(result.rows).toEqual(funnelPlain.expectedRows);
+});
+
+test('CONTRACT funnel, count[0] === 0 → conversionRate 0 on every step (guarded division)', async () => {
+  const { client } = adapter({ results: funnelZeroFirstStep.wireResults });
+  const result = await client.funnel({ steps: ['signed_up', 'order_placed'], within: { value: 7, unit: 'day' } });
+  expect(result.rows).toEqual(funnelZeroFirstStep.expectedRows);
+});
+
+test('CONTRACT funnel, event precedence custom_name → name → action_id (first present non-empty)', async () => {
+  const { client } = adapter({ results: funnelEventPrecedence.wireResults });
+  const result = await client.funnel({ steps: ['signed_up', 'order_placed', 'checkout'], within: { value: 7, unit: 'day' } });
+  expect(result.rows).toEqual(funnelEventPrecedence.expectedRows);
+});
+
+test('CONTRACT funnel, array-of-arrays breakdown → per-GROUP conversionRate + breakdown on each row', async () => {
+  const { client } = adapter({ results: funnelBreakdown.wireResults });
+  const result = await client.funnel({ steps: ['signed_up', 'order_placed'], within: { value: 7, unit: 'day' }, breakdown: 'plan' });
+  expect(result.rows).toEqual(funnelBreakdown.expectedRows);
+});
+
+test('CONTRACT retention → one row per (cohort, periodIndex); periodIndex 0 = the cohort itself', async () => {
+  const { client } = adapter({ results: retentionCohorts.wireResults });
+  const result = await client.retention({ cohortEvent: 'signed_up', returnEvent: 'order_placed', periods: 3, granularity: 'week' });
+  expect(result.rows).toEqual(retentionCohorts.expectedRows);
 });
 
 test('bar A: HttpQueryAdapter is assignable to AnalyticsQueryClient<TX> (a second backend swaps in with zero consumer change)', () => {

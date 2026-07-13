@@ -2,6 +2,11 @@ import type { DefaultTaxonomyShape } from '@randomtoni/analytics-kit';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { FetchLike } from '../config';
 import { createHttpQueryAdapter } from './http-query-adapter';
+import {
+  ENGINE_ROW_FIELD_NAMES,
+  funnelPlain,
+  trendSingleSeries,
+} from './query-contract.fixtures';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -66,6 +71,9 @@ const PENDING = {
   json: { query_status: { id: 'qs-1', complete: false, query_async: true } },
 };
 
+// A completed poll carrying a realistic TREND insight payload (structured days[]/data[]
+// objects, NO parallel columns — the columns-absent branch). The completed
+// `query_status.results` is normalized by the SAME per-primitive builder as the sync path.
 const COMPLETE = {
   ok: true,
   status: 200,
@@ -73,12 +81,20 @@ const COMPLETE = {
     query_status: {
       id: 'qs-1',
       complete: true,
-      results: [
-        ['2026-07-01', 12],
-        ['2026-07-02', 30],
-      ],
-      columns: ['day', 'count'],
-      types: ['DateTime', 'UInt64'],
+      results: trendSingleSeries.wireResults,
+    },
+  },
+};
+
+// A completed poll carrying a realistic FUNNEL insight payload (per-step objects).
+const COMPLETE_FUNNEL = {
+  ok: true,
+  status: 200,
+  json: {
+    query_status: {
+      id: 'qs-1',
+      complete: true,
+      results: funnelPlain.wireResults,
     },
   },
 };
@@ -97,16 +113,10 @@ test('async: POST returns pending {query_status:{complete:false}} → polls to c
   expect(calls[1].url).toBe('https://query.example/api/projects/proj-42/query/qs-1/');
   expect(calls[1].headers['Authorization']).toBe('Bearer pk_read');
 
-  // The completed result nested at query_status.results is normalized by the SAME builder
-  // as the sync path — rows keyed by column, columns ordered.
-  expect(result.rows).toEqual([
-    { day: '2026-07-01', count: 12 },
-    { day: '2026-07-02', count: 30 },
-  ]);
-  expect(result.columns).toEqual([
-    { name: 'day', type: 'DateTime' },
-    { name: 'count', type: 'UInt64' },
-  ]);
+  // The completed trend insight nested at query_status.results is normalized by the SAME
+  // per-primitive builder as the sync path — neutral TrendRows, no columns for a primitive.
+  expect(result.rows).toEqual(trendSingleSeries.expectedRows);
+  expect(result.columns).toEqual([]);
   expect(typeof result.generatedAt).toBe('string');
 });
 
@@ -137,15 +147,16 @@ test('async: multiple pending poll responses before completion — loop keeps po
     PENDING, // POST
     { json: { query_status: { id: 'qs-1', complete: false } } }, // poll 1
     { json: { query_status: { id: 'qs-1', complete: false } } }, // poll 2
-    COMPLETE, // poll 3
+    COMPLETE_FUNNEL, // poll 3
   ]);
 
-  const result = await client.funnel({ steps: ['a', 'b'], within: { value: 7, unit: 'day' } });
+  const result = await client.funnel({ steps: ['signed_up', 'order_placed', 'document_uploaded'], within: { value: 7, unit: 'day' } });
 
   expect(calls).toHaveLength(4);
   expect(calls.slice(1).every((c) => c.method === 'GET')).toBe(true);
   expect(calls.slice(1).every((c) => c.url === 'https://query.example/api/projects/proj-42/query/qs-1/')).toBe(true);
-  expect(result.rows).toHaveLength(2);
+  // The completed funnel insight normalizes to neutral FunnelStepRows — sealed row-level.
+  expect(result.rows).toEqual(funnelPlain.expectedRows);
 });
 
 test('sync: an inline envelope (no query_status) takes the sync branch unchanged — S3 regression', async () => {
@@ -171,13 +182,9 @@ test('sync: an inline envelope (no query_status) takes the sync branch unchanged
 });
 
 test('sync and async return the SAME QueryResult shape — a caller cannot tell them apart', async () => {
-  const syncEnvelope = {
-    json: {
-      results: [['2026-07-01', 12], ['2026-07-02', 30]],
-      columns: ['day', 'count'],
-      types: ['DateTime', 'UInt64'],
-    },
-  };
+  // Same realistic trend insight payload delivered inline (sync) vs nested in the completed
+  // status (async) — the caller cannot tell the two paths apart.
+  const syncEnvelope = { json: { results: trendSingleSeries.wireResults } };
   const syncClient = adapter([syncEnvelope]);
   const asyncClient = adapter([PENDING, COMPLETE]);
 
@@ -186,6 +193,7 @@ test('sync and async return the SAME QueryResult shape — a caller cannot tell 
 
   expect(Object.keys(fromSync).sort()).toEqual(Object.keys(fromAsync).sort());
   expect(fromSync.rows).toEqual(fromAsync.rows);
+  expect(fromSync.rows).toEqual(trendSingleSeries.expectedRows);
   expect(fromSync.columns).toEqual(fromAsync.columns);
 });
 
@@ -225,7 +233,7 @@ test('async: the poll loop is drivable under FAKE timers with the real setTimeou
   const result = await promise;
 
   expect(calls[1].method).toBe('GET');
-  expect(result.rows).toHaveLength(2);
+  expect(result.rows).toEqual(trendSingleSeries.expectedRows);
 });
 
 test('async: a query_status.error completion surfaces as a neutral error (no envelope leak)', async () => {
@@ -298,13 +306,37 @@ test('a non-OK POLL response throws a neutral error', async () => {
 });
 
 test('bar A: the returned value carries ONLY neutral keys — no query_status / results / is_cached leak', async () => {
-  const { client } = adapter([PENDING, COMPLETE]);
-  const result = await client.trend({ event: 'e', aggregation: 'total', window: { value: 30, unit: 'day' } });
+  // A completed broken-down trend insight — each wire row carries `breakdown_value` and the
+  // engine total `aggregated_value`, a row that COULD leak engine field names if unsealed.
+  const completeBreakdown = {
+    ok: true,
+    status: 200,
+    json: {
+      query_status: {
+        id: 'qs-bd',
+        complete: true,
+        results: [
+          { label: 'e - pro', breakdown_value: 'pro', days: ['2026-07-01'], data: [8], aggregated_value: 8 },
+          { label: 'e - free', breakdown_value: 'free', days: ['2026-07-01'], data: [4], aggregated_value: 4 },
+        ],
+      },
+    },
+  };
+  const { client } = adapter([PENDING, completeBreakdown]);
+  const result = await client.trend({ event: 'e', aggregation: 'total', window: { value: 30, unit: 'day' }, breakdown: 'plan' });
 
   const serialized = JSON.stringify(result);
   expect(serialized).not.toContain('query_status');
   expect(serialized).not.toContain('is_cached');
   expect(serialized).not.toContain('"results"');
   expect(serialized).not.toMatch(/posthog/i);
+  // Row-level seal: no engine-internal ROW field name survives into the serialized rows.
+  const rowsSerialized = JSON.stringify(result.rows);
+  for (const field of ENGINE_ROW_FIELD_NAMES) {
+    expect(rowsSerialized).not.toContain(field);
+  }
+  expect(rowsSerialized).not.toContain('aggregated_value');
+  // The neutral breakdown DID surface — under `breakdown`, not `breakdown_value`.
+  expect(result.rows[0]).toEqual({ bucket: '2026-07-01', value: 8, breakdown: 'pro' });
   expect(Object.keys(result).sort()).toEqual(['columns', 'generatedAt', 'rows']);
 });
