@@ -13,7 +13,7 @@ from .adapter import ConsentState, NeutralResponse
 from .neutral_event import NeutralEvent
 
 NOOP_LIBRARY_ID = "analytics-kit"
-NOOP_LIBRARY_VERSION = "0.0.0"
+NOOP_LIBRARY_VERSION = "0.1.0"
 
 
 class NoopAdapter:

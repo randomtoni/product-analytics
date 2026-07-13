@@ -156,7 +156,7 @@ def test_noop_identity_getters_are_neutral_placeholders() -> None:
     adapter = NoopAdapter()
 
     assert adapter.get_library_id() == "analytics-kit"
-    assert adapter.get_library_version() == "0.0.0"
+    assert adapter.get_library_version() == "0.1.0"
     assert "posthog" not in adapter.get_library_id().lower()
     assert "posthog" not in adapter.get_library_version().lower()
 
