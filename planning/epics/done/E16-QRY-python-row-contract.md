@@ -1,6 +1,6 @@
 ---
 id: E16-QRY-python-row-contract
-status: active
+status: done
 area: query
 touches: [node, adapters]
 api_impact: breaking
@@ -57,10 +57,12 @@ re-decide the shape.
 
 ## Stories
 
-- **[E16-S1](../stories/2-ready-for-dev/E16-S1-neutral-row-types.md)** *(breaking, no deps)* — four `frozen=True @dataclass` row concepts (`TrendRow`/`UniqueCountRow`/`FunnelStepRow`/`RetentionRow`) + make `QueryResult` a `Generic[TRow]` Pydantic `BaseModel` with `rows: Sequence[TRow]` (PEP-696 `TypeVar` default via `typing_extensions`, gate resolved); narrow the four Protocol returns, `raw_query` keeps the default; ripple across `noop.py`/`warehouse_adapter.py`/`factory.py`/`__init__.py` + top-level exports.
-- **[E16-S2](../stories/2-ready-for-dev/E16-S2-per-primitive-normalizers.md)** *(breaking, depends on E16-S1)* — split `_normalize_result`'s columns-absent branch in `http_adapter.py` into four flattening normalizers constructing the S1 dataclass rows (trend/unique_count share one; funnel computes `conversion_rate`; retention double-loop), threaded through the sync `_run` + async `_result_from_status` seam; `raw_query` pass-through unchanged.
-- **[E16-S3](../stories/2-ready-for-dev/E16-S3-contract-tests-fixtures.md)** *(breaking, depends on E16-S2)* — invert the pass-through-pinning pytest, extend the envelope-seal down to the row level (assert engine keys absent from `model_dump_json()`, present-null `breakdown` is correct), add per-primitive wire→neutral-row fixtures MIRRORING the TS `query-contract.fixtures.ts` values (trend breakdown, funnel array-of-arrays/zero-first-step/event-precedence, retention period_index 0 = cohort).
-- **[E16-S4](../stories/2-ready-for-dev/E16-S4-contract-docs.md)** *(additive, depends on E16-S1; sequence after S3)* — state the per-primitive snake_case row shapes in the Python README query section; cross-reference the existing `planning/QUERY-ROW-CONTRACT.md` (do NOT rewrite it) + the S3 fixtures; confirm conceptual parity with the TS docs.
+- **[E16-S1](../stories/5-done/E16-S1-neutral-row-types.md)** *(done — `ea3d8b6`)* — four `frozen=True @dataclass` row concepts (`TrendRow`/`UniqueCountRow`/`FunnelStepRow`/`RetentionRow`) + make `QueryResult` a `Generic[TRow]` Pydantic `BaseModel` with `rows: Sequence[TRow]` (unbounded PEP-696 `TypeVar` default via `typing_extensions`); narrow the four Protocol returns, `raw_query` keeps the default; ripple across `noop.py`/`warehouse_adapter.py`/`factory.py`/`__init__.py` + top-level exports.
+- **[E16-S2](../stories/5-done/E16-S2-per-primitive-normalizers.md)** *(done — `b74bfe3`)* — split `_normalize_result`'s columns-absent branch in `http_adapter.py` into four flattening normalizers constructing the S1 dataclass rows (trend/unique_count share one; funnel computes `conversion_rate` with an explicit `ZeroDivisionError` guard; retention double-loop), threaded through all THREE completion sinks; `raw_query` pass-through unchanged.
+- **[E16-S3](../stories/5-done/E16-S3-contract-tests-fixtures.md)** *(done — `a44adaa`)* — repoint the stale columns-present-through-structured tests, add a non-vacuous row-level engine seal (`model_dump_json()`, present-null `breakdown` is correct), add per-primitive fixtures MIRRORING the TS `query-contract.fixtures.ts` values cell-for-cell (executable cross-language parity), fix the `_AltQueryClient` mypy pin, repoint the quillstream mocks.
+- **[E16-S4](../stories/5-done/E16-S4-contract-docs.md)** *(done — `7503b17`)* — state the per-primitive snake_case row shapes in the Python README query section; cross-reference `planning/QUERY-ROW-CONTRACT.md` + the S3 fixtures; conceptual parity with the TS docs confirmed.
+
+**Shipped:** all four stories green end-to-end (main suite 590 pass, quillstream 41 pass, mypy 0, ruff 0, neutrality both fast AND `--full` = 0 violations). The Python columns-absent leak is closed at parity with TS E15 — the four structured primitives return documented neutral snake_case rows, the row-level seal proves no engine key survives, `raw_query` keeps documented verbatim pass-through, and the Python fixtures mirror the TS values cell-for-cell against the shared `planning/QUERY-ROW-CONTRACT.md`. A follow-up moved the port provenance from docstrings to `#` comments so the `--full` artifact scan is clean (`a93ded3`). Breaking → coordinate the Python release/version with the user (packaging-coordination question in Notes).
 
 ## Out of scope
 

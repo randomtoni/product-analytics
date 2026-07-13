@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-13 — E15 (query row contract) shipped + archived; E16 (its Python parity port) drafted into LATER, then taken active via `/implement-epics E16` (stories promoted to ready-for-dev; the Python `QueryResult[TRow]` shape resolved by architect consult); NOW/LATER section reconciliation still awaits `/roadmap promote`
+Last updated: 2026-07-13 — E15 (TS query row contract) + E16 (its Python parity port) both shipped + archived; the shared read-side row contract is now satisfied in both trees. NOW/LATER section reconciliation still awaits `/roadmap promote`
 
 ## Status
 
@@ -95,15 +95,13 @@ first, via `/roadmap add-later` → promote, once the NOW push is scoped._
   adapter passed engine-internal insight keys through verbatim. Row-level seal + `planning/QUERY-ROW-CONTRACT.md`
   parity artifact shipped. (Built out of LATER via `/implement-epics E15`; NOW/LATER section reconciliation
   still awaits `/roadmap promote`.)
-- **[E16-QRY-python-row-contract](epics/E16-QRY-python-row-contract.md)** *(active)* *(query, touches node/adapters; **breaking**)* —
-  the **Python parity port** of E15's read-side row contract. The identical leak is live in Python
-  (`http_adapter.py` `_normalize_result` forwards engine insight objects verbatim on the columns-absent
-  branch); this ports the four neutral snake_case rows (`{ bucket, value, breakdown? }` ·
-  `{ step, event, count, conversion_rate, breakdown? }` · `{ cohort, period_index, value, breakdown? }`),
-  the per-primitive normalizers, the row-level seal, and fixtures mirroring the TS values — against the
-  LOCKED `planning/QUERY-ROW-CONTRACT.md`. The Python generic-`QueryResult[TRow]` shape is RESOLVED
-  (architect 2026-07-13: frozen-dataclass rows + `Generic[TRow]` Pydantic envelope, PEP-696 `TypeVar`
-  via `typing_extensions`). In flight via `/implement-epics E16`; stays in LATER until `/roadmap promote`.
+- **[E16-QRY-python-row-contract](epics/done/E16-QRY-python-row-contract.md)** *(done — `7503b17`)* *(query, touches node/adapters; **breaking**)* —
+  the **Python parity port** of E15's read-side row contract, shipped. Closed the identical columns-absent
+  leak in the Python `http_adapter.py`: the four structured primitives now return documented neutral
+  snake_case rows (`{ bucket, value, breakdown? }` · `{ step, event, count, conversion_rate, breakdown? }` ·
+  `{ cohort, period_index, value, breakdown? }`), with a row-level seal and fixtures mirroring the TS values
+  cell-for-cell against `planning/QUERY-ROW-CONTRACT.md`. Both trees now satisfy the shared read-side row
+  contract. (Built out of LATER via `/implement-epics E16`; NOW/LATER reconciliation still awaits `/roadmap promote`.)
 
 ## Cycle history
 
