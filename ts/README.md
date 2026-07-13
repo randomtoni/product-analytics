@@ -150,17 +150,23 @@ delivery seam is injected.
 
 Read-side KPI primitives. The shipped adapter issues the query over an HTTP query endpoint
 authenticated with a Bearer personal key and normalizes the wire envelope into the neutral
-`QueryResult`. The `WarehouseQueryAdapter` typed stub is the second-adapter proof; its intended
-per-method SQL mapping (emitting portable SQL over a taxonomy-generated typed view) is the
-fill-in-the-blanks contract below.
+`QueryResult`. The four structured primitives (`funnel`/`retention`/`trend`/`uniqueCount`) return
+**documented per-primitive neutral rows** — the adapter flattens the backend's insight shapes into a
+narrowed `QueryResult<TRow>` whose row fields are the contract consumers key on (no engine-internal
+keys leak); `rawQuery` alone keeps the default `Record<string, unknown>` verbatim column-keyed row.
+The per-primitive wire→neutral-row contract fixtures live at
+[`packages/node/src/query/query-contract.fixtures.ts`](packages/node/src/query/query-contract.fixtures.ts)
+(the executable form of the contract). The `WarehouseQueryAdapter` typed stub is the second-adapter
+proof; its intended per-method SQL mapping (emitting portable SQL over a taxonomy-generated typed
+view) is the fill-in-the-blanks contract below.
 
 | Method | Shipped implementation (by role + wire shape) | Future warehouse/SQL or self-hosted fill-in |
 |---|---|---|
-| `funnel(spec)` | HTTP query endpoint (Bearer personal key): sends the ordered-step funnel spec, normalizes the response into `QueryResult`. | `SELECT` ordered step-completion counts from the typed view, restricted to `spec.steps` in order, keeping only distinct ids whose step timestamps fall inside `spec.within`; `GROUP BY spec.breakdown` when present; normalize rows into `QueryResult`. |
-| `retention(spec)` | HTTP query endpoint (Bearer personal key): sends the cohort/return retention spec, normalizes the response into `QueryResult`. | Self-join the typed view: cohort rows (`spec.cohortEvent`) against return rows (`spec.returnEvent`) bucketed by `spec.granularity` for `spec.periods` periods; `GROUP BY spec.breakdown` when present; normalize into `QueryResult`. |
-| `trend(spec)` | HTTP query endpoint (Bearer personal key): sends the time-series trend spec with its aggregation, normalizes the response into `QueryResult`. | `SELECT` a time series over `spec.window` at the derived interval, aggregated per `spec.aggregation` (count for total, distinct-id count for unique/dau); `GROUP BY spec.breakdown` when present; normalize into `QueryResult`. |
-| `uniqueCount(spec)` | HTTP query endpoint (Bearer personal key): sends the unique-count spec, normalizes the response into `QueryResult`. | `SELECT count(distinct distinct_id)` over `spec.window` for the event; normalize into `QueryResult`. |
-| `rawQuery(expr)` | HTTP query endpoint (Bearer personal key): passes `expr` through in the HTTP adapter's query dialect, normalizes the response into `QueryResult`. | Pass `expr` to the SQL engine as SQL (this adapter's dialect is SQL); normalize the driver's rows/columns into `QueryResult`. |
+| `funnel(spec)` | HTTP query endpoint (Bearer personal key): sends the ordered-step funnel spec, normalizes the response into `QueryResult<{ step, event, count, conversionRate, breakdown? }>` (one row per funnel step; `conversionRate` is computed relative to the first step, per-group when broken down). | `SELECT` ordered step-completion counts from the typed view, restricted to `spec.steps` in order, keeping only distinct ids whose step timestamps fall inside `spec.within`; `GROUP BY spec.breakdown` when present; normalize rows into `QueryResult`. |
+| `retention(spec)` | HTTP query endpoint (Bearer personal key): sends the cohort/return retention spec, normalizes the response into `QueryResult<{ cohort, periodIndex, value, breakdown? }>` (one row per cohort×period cell; `periodIndex` 0 is the cohort's own period). | Self-join the typed view: cohort rows (`spec.cohortEvent`) against return rows (`spec.returnEvent`) bucketed by `spec.granularity` for `spec.periods` periods; `GROUP BY spec.breakdown` when present; normalize into `QueryResult`. |
+| `trend(spec)` | HTTP query endpoint (Bearer personal key): sends the time-series trend spec with its aggregation, normalizes the response into `QueryResult<{ bucket, value, breakdown? }>` (one row per time bucket; one row-series per `breakdown` when present). | `SELECT` a time series over `spec.window` at the derived interval, aggregated per `spec.aggregation` (count for total, distinct-id count for unique/dau); `GROUP BY spec.breakdown` when present; normalize into `QueryResult`. |
+| `uniqueCount(spec)` | HTTP query endpoint (Bearer personal key): sends the unique-count spec, normalizes the response into `QueryResult<{ bucket, value, breakdown? }>` (same neutral row shape as `trend` — a trend with distinct-id math). | `SELECT count(distinct distinct_id)` over `spec.window` for the event; normalize into `QueryResult`. |
+| `rawQuery(expr)` | HTTP query endpoint (Bearer personal key): passes `expr` through in the HTTP adapter's query dialect, normalizes the response into the default `QueryResult<Record<string, unknown>>` — verbatim column-keyed pass-through, the row keys are `expr`'s own SELECT projection (the one place a dialect-keyed shape legitimately surfaces). | Pass `expr` to the SQL engine as SQL (this adapter's dialect is SQL); normalize the driver's rows/columns into `QueryResult`. |
 
 ## Adopt in a new app
 

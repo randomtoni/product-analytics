@@ -77,3 +77,23 @@ port to (parity by shared contract, not shared code).
 - Parity discipline mirrors the Python-parity cycle precedent: the shipped TS seam is the reference the
   Python port ports to; parity is by shared contract, not shared code. The artifact is that shared
   contract for the read side. — from HISTORY (`Python parity` cycle) + architect (2026-07-13)
+
+> Reviewer suggestion (2026-07-13): in `planning/QUERY-ROW-CONTRACT.md`, the table cells `str | None`
+> use a bare pipe, which a strict Markdown renderer reads as a cell delimiter — escape as `str \| None`
+> so the cells render cleanly. Cosmetic (dev-facing, not scanned).
+> Reviewer suggestion (2026-07-13): the artifact's field-concept `value` description ("numeric measure
+> for a bucket (trend) or a cohort×period cell (retention)") omits that `value` is also the uniqueCount
+> measure — the dedicated §uniqueCount makes it unambiguous, but a one-word add would complete it.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-13.
+
+- **Files changed:** `ts/README.md` — rewrote the query-section intro (~L151) to state the four structured primitives return documented per-primitive neutral rows + a brief S3-fixtures cross-reference; updated all 5 rows of the `### Query — AnalyticsQueryClient (KPI primitives)` table so each states its concrete neutral row shape (`trend`/`uniqueCount` → `QueryResult<{ bucket, value, breakdown? }>`, `funnel` → `QueryResult<{ step, event, count, conversionRate, breakdown? }>`, `retention` → `QueryResult<{ cohort, periodIndex, value, breakdown? }>`, `rawQuery` → default `QueryResult<Record<string, unknown>>` verbatim pass-through)
+- **Files added:** `planning/QUERY-ROW-CONTRACT.md` — the language-neutral per-primitive row contract, marked as the source of truth the Python query client ports TO (TS camelCase + Python snake_case columns; `UniqueCountRow` stated as its own named concept with a "do not collapse into trend" port note; deferred extras marked "not yet shipped"; S3 fixtures cross-referenced as the executable form)
+- **New public API:** none — docs only. `api_impact: additive`.
+- **Tests added:** none — docs only.
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review. **Docs-vs-shipped accuracy confirmed** — reviewer ground-truthed every claim against `query-result.ts` (types), `http-query-adapter.ts` (normalizers), and `query-contract.fixtures.ts` (S3 executable contract): funnel `conversionRate` computed per-group, retention `periodIndex 0 = cohort`, uniqueCount ≡ trend shape, rawQuery verbatim default — all backed by code. Exact S1 camelCase in both docs, zero drift; snake_case confined to the artifact's "Python cases as" column, never the README. Zero vendor tokens (grep clean; README neutrality 25/25). Fixture cross-reference path resolves. `UniqueCountRow`-own-concept port note called out as a genuinely good parity call. Two cosmetic suggestions captured (Markdown pipe-escaping + a `value`-description completeness word).
+- **Retry history:** none — shipped first attempt.
+- **Cross-story seams exposed:** none — this closes E15. `planning/QUERY-ROW-CONTRACT.md` is the standing parity artifact the Python query cycle ports to.
