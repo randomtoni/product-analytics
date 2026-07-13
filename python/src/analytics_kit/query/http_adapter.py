@@ -367,13 +367,14 @@ def _optional_breakdown(value: object) -> str | None:
     return None if value is None else str(value)
 
 
+# De-branded from posthog's trends result.
 def _build_trend_rows(raw_results: list[object]) -> list[TrendRow]:
-    """De-branded from posthog's trends result: each ``results`` entry carries positionally-parallel
-    ``days: str[]`` (ISO bucket dates) and ``data: number[]`` (one value per bucket), flattened to
-    one neutral row per index. ``unique_count`` is byte-identical on the wire (same shape, only
-    server-side math differs) — it uses :func:`_build_unique_count_rows`, a thin wrapper over the
-    same walk. With a breakdown the backend returns one top-level entry per breakdown value, each
-    with its own ``days``/``data`` + ``breakdown_value`` (stringified onto ``breakdown``).
+    """Each ``results`` entry carries positionally-parallel ``days: str[]`` (ISO bucket dates) and
+    ``data: number[]`` (one value per bucket), flattened to one neutral row per index.
+    ``unique_count`` is byte-identical on the wire (same shape, only server-side math differs) — it
+    uses :func:`_build_unique_count_rows`, a thin wrapper over the same walk. With a breakdown the
+    backend returns one top-level entry per breakdown value, each with its own ``days``/``data`` +
+    ``breakdown_value`` (stringified onto ``breakdown``).
     """
     rows: list[TrendRow] = []
     for entry in raw_results:
@@ -452,12 +453,13 @@ def _funnel_group_rows(steps: list[object]) -> list[FunnelStepRow]:
     return out
 
 
+# De-branded from posthog's funnel result.
 def _build_funnel_rows(raw_results: list[object]) -> list[FunnelStepRow]:
-    """De-branded from posthog's funnel result: ``results`` is per-step objects (an array-of-arrays
-    when broken down — the outer layer is unwrapped per breakdown group). Each step carries ``order``
-    (0-based index), ``count``, and ``custom_name``/``name``/``action_id`` for the event identity.
-    ``conversion_rate`` is NOT a wire field — COMPUTED as ``count[step] / count[0]`` (overall
-    conversion from the first step, guarded ``count[0] == 0 -> 0.0`` to avoid a ``ZeroDivisionError``).
+    """``results`` is per-step objects (an array-of-arrays when broken down — the outer layer is
+    unwrapped per breakdown group). Each step carries ``order`` (0-based index), ``count``, and
+    ``custom_name``/``name``/``action_id`` for the event identity. ``conversion_rate`` is NOT a wire
+    field — COMPUTED as ``count[step] / count[0]`` (overall conversion from the first step, guarded
+    ``count[0] == 0 -> 0.0`` to avoid a ``ZeroDivisionError``).
     """
     rows: list[FunnelStepRow] = []
     for group in raw_results:
@@ -469,11 +471,12 @@ def _build_funnel_rows(raw_results: list[object]) -> list[FunnelStepRow]:
     return rows
 
 
+# De-branded from posthog's retention result.
 def _build_retention_rows(raw_results: list[object]) -> list[RetentionRow]:
-    """De-branded from posthog's retention result: ``results`` is cohort objects, each with ``date``
-    (the cohort start, ISO) and ``values: [{ count }]`` where the array index is the period (0 = the
-    cohort itself). Double loop: one neutral row per (cohort, period) cell; ``breakdown`` from the
-    cohort's ``breakdown_value`` when present.
+    """``results`` is cohort objects, each with ``date`` (the cohort start, ISO) and
+    ``values: [{ count }]`` where the array index is the period (0 = the cohort itself). Double loop:
+    one neutral row per (cohort, period) cell; ``breakdown`` from the cohort's ``breakdown_value``
+    when present.
     """
     rows: list[RetentionRow] = []
     for cohort in raw_results:
