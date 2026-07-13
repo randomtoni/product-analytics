@@ -1,6 +1,6 @@
 [project]
 name = "analytics-kit"
-version = "0.0.0"
+version = "0.1.0"
 description = "Vendor-neutral analytics abstraction library — Python implementation (scaffold)."
 readme = "README.md"
 requires-python = ">=3.10"

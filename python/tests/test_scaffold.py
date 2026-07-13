@@ -10,7 +10,7 @@ import analytics_kit.taxonomy
 
 
 def test_package_imports_with_version() -> None:
-    assert analytics_kit.__version__ == "0.0.0"
+    assert analytics_kit.__version__ == "0.1.0"
 
 
 def test_submodules_import() -> None:
