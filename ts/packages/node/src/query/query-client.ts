@@ -1,4 +1,11 @@
-import type { QueryResult, TaxonomyShape } from '@randomtoni/analytics-kit';
+import type {
+  FunnelStepRow,
+  QueryResult,
+  RetentionRow,
+  TaxonomyShape,
+  TrendRow,
+  UniqueCountRow,
+} from '@randomtoni/analytics-kit';
 
 export interface Duration {
   value: number;
@@ -37,9 +44,9 @@ export interface UniqueCountSpec<TX extends TaxonomyShape> {
 }
 
 export interface AnalyticsQueryClient<TX extends TaxonomyShape> {
-  funnel(spec: FunnelSpec<TX>): Promise<QueryResult>;
-  retention(spec: RetentionSpec<TX>): Promise<QueryResult>;
-  trend(spec: TrendSpec<TX>): Promise<QueryResult>;
-  uniqueCount(spec: UniqueCountSpec<TX>): Promise<QueryResult>;
+  funnel(spec: FunnelSpec<TX>): Promise<QueryResult<FunnelStepRow>>;
+  retention(spec: RetentionSpec<TX>): Promise<QueryResult<RetentionRow>>;
+  trend(spec: TrendSpec<TX>): Promise<QueryResult<TrendRow>>;
+  uniqueCount(spec: UniqueCountSpec<TX>): Promise<QueryResult<UniqueCountRow>>;
   rawQuery(expr: string): Promise<QueryResult>;
 }

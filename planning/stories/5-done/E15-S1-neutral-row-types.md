@@ -113,3 +113,23 @@ return, establishing the contract the normalizer (S2) fills.
 - Breaking: consumers keying on the old engine-internal fields (`row.breakdown_value` etc.) will not
   compile / will get `undefined`. That is intended — it is the whole point of the contract-establishing
   release. — architect (2026-07-13)
+
+> Reviewer suggestion (2026-07-13): `snapshots.test.ts`'s `expectWellFormed` was widened to
+> `QueryResult<unknown>` (correct, row-agnostic). If S3/S4 add a row-level well-formedness assertion,
+> this helper is the natural home; `unknown` keeps it open to that.
+> Reviewer suggestion (2026-07-13): `UniqueCountRow = TrendRow` is a TS alias per the locked contract,
+> but the S4 language-neutral artifact should state `UniqueCountRow` as its own named concept (same
+> field set) so the Python port doesn't collapse it into `TrendRow` and lose the primitive's identity.
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-13.
+
+- **Files changed:** `ts/packages/analytics-kit/src/query-result.ts` (generic `QueryResult<TRow>` + four neutral row types), `ts/packages/analytics-kit/src/index.ts` (seam export of the row types), `ts/packages/node/src/query/query-client.ts` (narrowed the four structured primitives; `rawQuery` on default), `ts/packages/node/src/query/query-noop.ts` (narrowed signatures + generic `emptyResult<TRow>()` no-cast fix), `ts/packages/node/src/query/warehouse-query-adapter.ts` (narrowed signatures), `ts/packages/node/src/query/http-query-adapter.ts` (signature-only narrowing behind a temporary, provenance-commented S1→S2 bridge cast — `run()`/`normalizeResult` body unchanged), `ts/examples/fernly/src/kpi/snapshots.ts` (generic `SnapshotRecord<TRow>`/`snapshot<TRow>` threading — required, not predicted), `ts/examples/fernly/src/kpi/snapshots.test.ts` (`expectWellFormed` widened to `QueryResult<unknown>`), `ts/examples/fernly/src/capability-presence.ts` (the four Layer-2 query pins tightened from bare `QueryResult` to the narrowed row types)
+- **Files added:** none
+- **New public API:** `TrendRow`, `UniqueCountRow`, `FunnelStepRow`, `RetentionRow` + generic `QueryResult<TRow = Record<string, unknown>>` — all on the seam surface (`@randomtoni/analytics-kit`)
+- **Tests added:** none — S1 is pure type-declaration + ripple; test-pin work is S3. Full existing suite (1553) stays green.
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review. Row types confirmed genuinely neutral (neutrality 30/30, none of `breakdown_value`/`average_conversion_time`/`aggregation_value`/`converted_people_url` appear). **Closed-type discipline is load-bearing and correct** — no `[k: string]: unknown` index signature added; the 8 tsc errors ("Index signature ... is missing in type 'FunnelStepRow'") are themselves the proof the row types are exact. `capability-presence.ts` pins *tightened* (stronger frozen-surface tripwire), not weakened. Fernly generic threading is scope-justified necessity (the story's "compiles unchanged" prediction was wrong: TS interfaces carry no implicit index signature), correctly handled with a generic not a laundering cast. S1→S2 bridge cast is signature-only, zero runtime impact, adapter-internal. Two suggestions captured above. 8 typecheck failures are exactly and only the S3-owned pins (structured four fail, `rawQuery` passes — positive evidence the narrowing is surgical).
+- **Retry history:** none — shipped first attempt.
+- **Cross-story seams exposed:** S2 must remove the four `as unknown as Promise<QueryResult<Row>>` bridge casts in `http-query-adapter.ts` by making `normalizeResult` actually produce the typed rows. S3 owns **8** query-client.test.ts breaks (not 4 as the story estimated — 4 arrow-annotation returns at lines ~27/34/37/45 + 4 `toEqualTypeOf` pins at ~103-106); the architect note is to re-annotate the arrow returns to the narrowed row type (positive narrowing pins) rather than widen/drop them and lose coverage. The four row types + generic envelope are the exact contract S2 fills and S4 documents.

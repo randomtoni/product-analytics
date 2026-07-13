@@ -1,6 +1,12 @@
 import { createQueryClient } from '@randomtoni/analytics-kit-node';
 import type { AnalyticsQueryClient, QueryClientConfig } from '@randomtoni/analytics-kit-node';
-import type { QueryResult } from '@randomtoni/analytics-kit';
+import type {
+  FunnelStepRow,
+  QueryResult,
+  RetentionRow,
+  TrendRow,
+  UniqueCountRow,
+} from '@randomtoni/analytics-kit';
 import { fernlyTaxonomy, type FernlyTaxonomy } from '../taxonomy';
 
 export type FernlyQueryClient = AnalyticsQueryClient<ShapeOfFernly>;
@@ -19,17 +25,19 @@ export function createFernlyQueryClient(config: FernlyQueryConfig): FernlyQueryC
 // A consumer-owned snapshot record: the neutral QueryResult a persistence job stores,
 // wrapped with Fernly's own naming + capture timestamp. Snapshot STORAGE lives here in
 // the example, never in the library — the library owns only the query primitives.
-export interface SnapshotRecord {
+export interface SnapshotRecord<TRow = Record<string, unknown>> {
   name: string;
   capturedAt: string;
-  result: QueryResult;
+  result: QueryResult<TRow>;
 }
 
-function snapshot(name: string, result: QueryResult): SnapshotRecord {
+function snapshot<TRow>(name: string, result: QueryResult<TRow>): SnapshotRecord<TRow> {
   return { name, capturedAt: new Date().toISOString(), result };
 }
 
-export async function activationFunnelSnapshot(client: FernlyQueryClient): Promise<SnapshotRecord> {
+export async function activationFunnelSnapshot(
+  client: FernlyQueryClient
+): Promise<SnapshotRecord<FunnelStepRow>> {
   const result = await client.funnel({
     steps: ['signup_started', 'signup_completed', 'document_uploaded'],
     within: { value: 7, unit: 'day' },
@@ -37,7 +45,9 @@ export async function activationFunnelSnapshot(client: FernlyQueryClient): Promi
   return snapshot('activation_funnel', result);
 }
 
-export async function reviewerRetentionSnapshot(client: FernlyQueryClient): Promise<SnapshotRecord> {
+export async function reviewerRetentionSnapshot(
+  client: FernlyQueryClient
+): Promise<SnapshotRecord<RetentionRow>> {
   const result = await client.retention({
     cohortEvent: 'signup_completed',
     returnEvent: 'review_completed',
@@ -47,7 +57,9 @@ export async function reviewerRetentionSnapshot(client: FernlyQueryClient): Prom
   return snapshot('reviewer_retention', result);
 }
 
-export async function commentEngagementSnapshot(client: FernlyQueryClient): Promise<SnapshotRecord> {
+export async function commentEngagementSnapshot(
+  client: FernlyQueryClient
+): Promise<SnapshotRecord<TrendRow>> {
   const result = await client.trend({
     event: 'comment_added',
     aggregation: 'total',
@@ -56,7 +68,9 @@ export async function commentEngagementSnapshot(client: FernlyQueryClient): Prom
   return snapshot('comment_engagement', result);
 }
 
-export async function activeReviewersSnapshot(client: FernlyQueryClient): Promise<SnapshotRecord> {
+export async function activeReviewersSnapshot(
+  client: FernlyQueryClient
+): Promise<SnapshotRecord<UniqueCountRow>> {
   const result = await client.uniqueCount({
     event: 'review_requested',
     window: { value: 30, unit: 'day' },
@@ -71,7 +85,17 @@ export async function plansMixSnapshot(client: FernlyQueryClient): Promise<Snaps
   return snapshot('plans_mix', result);
 }
 
-export async function allFernlySnapshots(client: FernlyQueryClient): Promise<SnapshotRecord[]> {
+export async function allFernlySnapshots(
+  client: FernlyQueryClient
+): Promise<
+  [
+    SnapshotRecord<FunnelStepRow>,
+    SnapshotRecord<RetentionRow>,
+    SnapshotRecord<TrendRow>,
+    SnapshotRecord<UniqueCountRow>,
+    SnapshotRecord,
+  ]
+> {
   return Promise.all([
     activationFunnelSnapshot(client),
     reviewerRetentionSnapshot(client),

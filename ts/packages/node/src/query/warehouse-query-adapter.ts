@@ -1,4 +1,11 @@
-import type { QueryResult, TaxonomyShape } from '@randomtoni/analytics-kit';
+import type {
+  FunnelStepRow,
+  QueryResult,
+  RetentionRow,
+  TaxonomyShape,
+  TrendRow,
+  UniqueCountRow,
+} from '@randomtoni/analytics-kit';
 import type { AnalyticsQueryClient } from './query-client';
 
 const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implemented';
@@ -32,19 +39,19 @@ const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implement
 export class WarehouseQueryAdapter<TX extends TaxonomyShape>
   implements AnalyticsQueryClient<TX>
 {
-  async funnel(): Promise<QueryResult> {
+  async funnel(): Promise<QueryResult<FunnelStepRow>> {
     throw new Error(NOT_IMPLEMENTED);
   }
 
-  async retention(): Promise<QueryResult> {
+  async retention(): Promise<QueryResult<RetentionRow>> {
     throw new Error(NOT_IMPLEMENTED);
   }
 
-  async trend(): Promise<QueryResult> {
+  async trend(): Promise<QueryResult<TrendRow>> {
     throw new Error(NOT_IMPLEMENTED);
   }
 
-  async uniqueCount(): Promise<QueryResult> {
+  async uniqueCount(): Promise<QueryResult<UniqueCountRow>> {
     throw new Error(NOT_IMPLEMENTED);
   }
 

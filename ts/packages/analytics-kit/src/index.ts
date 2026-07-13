@@ -6,7 +6,14 @@ export type {
   NeutralTraits,
   EnrichmentProfile,
 } from './neutral-event';
-export type { QueryColumn, QueryResult } from './query-result';
+export type {
+  QueryColumn,
+  QueryResult,
+  TrendRow,
+  UniqueCountRow,
+  FunnelStepRow,
+  RetentionRow,
+} from './query-result';
 export type {
   AnalyticsAdapter,
   ConsentState,

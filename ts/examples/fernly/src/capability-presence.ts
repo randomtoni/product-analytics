@@ -19,8 +19,12 @@ import type {
   AnalyticsProvider,
   FeatureFlagPort,
   FlagSet,
+  FunnelStepRow,
   QueryResult,
+  RetentionRow,
   SessionReplayPort,
+  TrendRow,
+  UniqueCountRow,
 } from '@randomtoni/analytics-kit';
 import type { NodeAnalytics, AnalyticsQueryClient } from '@randomtoni/analytics-kit-node';
 
@@ -126,22 +130,22 @@ type Assertions = {
   // Layer 2 — every query method returns Promise<QueryResult> (the whole query contract).
   funnelResult: AnalyticsQueryClient<DefaultTaxonomyShape>['funnel'] extends (
     ...args: never[]
-  ) => Promise<QueryResult>
+  ) => Promise<QueryResult<FunnelStepRow>>
     ? true
     : false;
   retentionResult: AnalyticsQueryClient<DefaultTaxonomyShape>['retention'] extends (
     ...args: never[]
-  ) => Promise<QueryResult>
+  ) => Promise<QueryResult<RetentionRow>>
     ? true
     : false;
   trendResult: AnalyticsQueryClient<DefaultTaxonomyShape>['trend'] extends (
     ...args: never[]
-  ) => Promise<QueryResult>
+  ) => Promise<QueryResult<TrendRow>>
     ? true
     : false;
   uniqueCountResult: AnalyticsQueryClient<DefaultTaxonomyShape>['uniqueCount'] extends (
     ...args: never[]
-  ) => Promise<QueryResult>
+  ) => Promise<QueryResult<UniqueCountRow>>
     ? true
     : false;
   rawQueryResult: AnalyticsQueryClient<DefaultTaxonomyShape>['rawQuery'] extends (

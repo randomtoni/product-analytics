@@ -1,4 +1,12 @@
-import type { QueryColumn, QueryResult, TaxonomyShape } from '@randomtoni/analytics-kit';
+import type {
+  FunnelStepRow,
+  QueryColumn,
+  QueryResult,
+  RetentionRow,
+  TaxonomyShape,
+  TrendRow,
+  UniqueCountRow,
+} from '@randomtoni/analytics-kit';
 import type { FetchLike } from '../config';
 import type {
   AnalyticsQueryClient,
@@ -281,7 +289,8 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
     this.sleep = options.sleep ?? sleep;
   }
 
-  async funnel(spec: FunnelSpec<TX>): Promise<QueryResult> {
+  async funnel(spec: FunnelSpec<TX>): Promise<QueryResult<FunnelStepRow>> {
+    // S1: signature narrowed; the row-producing normalizer body is S2. Temporary cast.
     return this.run({
       kind: FUNNELS_QUERY_WIRE_KIND,
       series: spec.steps.map((step) => eventsNode(step)),
@@ -290,10 +299,11 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
         funnelWindowIntervalUnit: spec.within.unit,
       },
       breakdownFilter: eventBreakdown(spec.breakdown),
-    });
+    }) as unknown as Promise<QueryResult<FunnelStepRow>>;
   }
 
-  async retention(spec: RetentionSpec<TX>): Promise<QueryResult> {
+  async retention(spec: RetentionSpec<TX>): Promise<QueryResult<RetentionRow>> {
+    // S1: signature narrowed; the row-producing normalizer body is S2. Temporary cast.
     return this.run({
       kind: RETENTION_QUERY_WIRE_KIND,
       retentionFilter: {
@@ -303,27 +313,29 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
         totalIntervals: spec.periods,
       },
       breakdownFilter: eventBreakdown(spec.breakdown),
-    });
+    }) as unknown as Promise<QueryResult<RetentionRow>>;
   }
 
-  async trend(spec: TrendSpec<TX>): Promise<QueryResult> {
+  async trend(spec: TrendSpec<TX>): Promise<QueryResult<TrendRow>> {
+    // S1: signature narrowed; the row-producing normalizer body is S2. Temporary cast.
     return this.run({
       kind: TRENDS_QUERY_WIRE_KIND,
       series: [eventsNode(spec.event, MATH_FOR_AGGREGATION[spec.aggregation])],
       interval: INTERVAL_FOR_UNIT[spec.window.unit],
       dateRange: { date_from: relativeDateFrom(spec.window) },
       breakdownFilter: eventBreakdown(spec.breakdown),
-    });
+    }) as unknown as Promise<QueryResult<TrendRow>>;
   }
 
-  async uniqueCount(spec: UniqueCountSpec<TX>): Promise<QueryResult> {
+  async uniqueCount(spec: UniqueCountSpec<TX>): Promise<QueryResult<UniqueCountRow>> {
+    // S1: signature narrowed; the row-producing normalizer body is S2. Temporary cast.
     return this.run({
       kind: TRENDS_QUERY_WIRE_KIND,
       series: [eventsNode(spec.event, 'dau')],
       interval: INTERVAL_FOR_UNIT[spec.window.unit],
       dateRange: { date_from: relativeDateFrom(spec.window) },
       breakdownFilter: eventBreakdown(spec.breakdown),
-    });
+    }) as unknown as Promise<QueryResult<UniqueCountRow>>;
   }
 
   async rawQuery(expr: string): Promise<QueryResult> {

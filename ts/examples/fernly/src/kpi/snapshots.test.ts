@@ -88,7 +88,7 @@ function keyedConfig(fetch: FetchLike): FernlyQueryConfig {
   };
 }
 
-function expectWellFormed(result: QueryResult): void {
+function expectWellFormed(result: QueryResult<unknown>): void {
   expect(Array.isArray(result.rows)).toBe(true);
   expect(Array.isArray(result.columns)).toBe(true);
   expect(typeof result.generatedAt).toBe('string');
