@@ -33,7 +33,7 @@ idiomatic port target for Python and appear ONLY in this artifact — never in t
 | Concept | TS field | Python cases as | Meaning |
 |---|---|---|---|
 | bucket | `bucket` | `bucket` | Time-bucket label for a trend/unique-count data point. |
-| value | `value` | `value` | The numeric measure for a bucket (trend) or a cohort×period cell (retention). |
+| value | `value` | `value` | The numeric measure for a bucket (trend/uniqueCount) or a cohort×period cell (retention). |
 | breakdown | `breakdown` | `breakdown` | Optional; the breakdown-group label, stringified onto every row of that group. |
 | step | `step` | `step` | Zero-based funnel step index. |
 | event | `event` | `event` | The funnel step's resolved event/action identity. |
@@ -53,7 +53,7 @@ a row only when the query was broken down.
 |---|---|---|
 | bucket | `bucket: string` | `bucket: str` |
 | value | `value: number` | `value: float` |
-| breakdown (optional) | `breakdown?: string` | `breakdown: str | None` |
+| breakdown (optional) | `breakdown?: string` | `breakdown: str \| None` |
 
 TS row type: `TrendRow`. One row per bucket; one row-series per breakdown value when broken down.
 
@@ -75,7 +75,7 @@ primitive's identity. Same fields, distinct role.
 | event | `event: string` | `event: str` |
 | count | `count: number` | `count: int` |
 | conversionRate | `conversionRate: number` | `conversion_rate: float` |
-| breakdown (optional) | `breakdown?: string` | `breakdown: str | None` |
+| breakdown (optional) | `breakdown?: string` | `breakdown: str \| None` |
 
 TS row type: `FunnelStepRow`. `conversionRate` is **computed** (this step's count over the first
 step's count), not a wire field; per-group when broken down; guarded to `0` when the first step is
@@ -88,7 +88,7 @@ step's count), not a wire field; per-group when broken down; guarded to `0` when
 | cohort | `cohort: string` | `cohort: str` |
 | periodIndex | `periodIndex: number` | `period_index: int` |
 | value | `value: number` | `value: float` |
-| breakdown (optional) | `breakdown?: string` | `breakdown: str | None` |
+| breakdown (optional) | `breakdown?: string` | `breakdown: str \| None` |
 
 TS row type: `RetentionRow`. One row per (cohort, period) cell; `periodIndex` `0` is the cohort's own
 period.

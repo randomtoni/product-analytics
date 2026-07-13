@@ -335,7 +335,6 @@ test('bar A: the returned value carries ONLY neutral keys — no query_status / 
   for (const field of ENGINE_ROW_FIELD_NAMES) {
     expect(rowsSerialized).not.toContain(field);
   }
-  expect(rowsSerialized).not.toContain('aggregated_value');
   // The neutral breakdown DID surface — under `breakdown`, not `breakdown_value`.
   expect(result.rows[0]).toEqual({ bucket: '2026-07-01', value: 8, breakdown: 'pro' });
   expect(Object.keys(result).sort()).toEqual(['columns', 'generatedAt', 'rows']);

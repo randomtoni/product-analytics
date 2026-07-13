@@ -265,7 +265,6 @@ test('the raw vendor envelope shape (results/columns/types/hogql/is_cached/kind)
   for (const field of ENGINE_ROW_FIELD_NAMES) {
     expect(rowsSerialized).not.toContain(field);
   }
-  expect(rowsSerialized).not.toContain('aggregated_value');
   // The neutral breakdown value DID surface — under the neutral `breakdown` key, not `breakdown_value`.
   expect(result.rows[0]).toEqual({ bucket: '2026-07-01', value: 8, breakdown: 'pro' });
   // The neutral value carries `rows`/`columns`/`generatedAt`/`fromCache` only.

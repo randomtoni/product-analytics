@@ -198,5 +198,6 @@ export const ENGINE_ROW_FIELD_NAMES = [
   'breakdown_value',
   'average_conversion_time',
   'aggregation_value',
+  'aggregated_value',
   'converted_people_url',
 ] as const;

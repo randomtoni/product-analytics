@@ -97,3 +97,9 @@ port to (parity by shared contract, not shared code).
 - **Reviewer notes:** ship-ready, no critical, first review. **Docs-vs-shipped accuracy confirmed** — reviewer ground-truthed every claim against `query-result.ts` (types), `http-query-adapter.ts` (normalizers), and `query-contract.fixtures.ts` (S3 executable contract): funnel `conversionRate` computed per-group, retention `periodIndex 0 = cohort`, uniqueCount ≡ trend shape, rawQuery verbatim default — all backed by code. Exact S1 camelCase in both docs, zero drift; snake_case confined to the artifact's "Python cases as" column, never the README. Zero vendor tokens (grep clean; README neutrality 25/25). Fixture cross-reference path resolves. `UniqueCountRow`-own-concept port note called out as a genuinely good parity call. Two cosmetic suggestions captured (Markdown pipe-escaping + a `value`-description completeness word).
 - **Retry history:** none — shipped first attempt.
 - **Cross-story seams exposed:** none — this closes E15. `planning/QUERY-ROW-CONTRACT.md` is the standing parity artifact the Python query cycle ports to.
+
+## Follow-up
+
+> Improvement pass (2026-07-13, commit `E15 improvement pass`).
+- **Markdown pipe-escaping DONE.** Escaped the three `str | None` table cells in `planning/QUERY-ROW-CONTRACT.md` to `str \| None` (trend/funnel/retention per-primitive tables) so a strict Markdown renderer doesn't read the bare pipe as a cell delimiter. Rendering-only; no field renamed.
+- **`value` field-concept completeness DONE.** Extended the `value` description from "for a bucket (trend) or a cohort×period cell (retention)" to "(trend/uniqueCount)" so uniqueCount's measure is named. Both gates stayed green (README neutrality 25/25; the artifact is not scanned but was kept vendor-clean).
