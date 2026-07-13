@@ -205,35 +205,37 @@ function eventsNode(event: string, math?: Math): WireEventsNode {
     : { kind: EVENTS_NODE_WIRE_KIND, event, math };
 }
 
-// Normalize a result-bearing wire object into the neutral QueryResult. Takes the
-// result-bearing object (not the full envelope) so the async path (S4) reuses it on the
-// completed `query_status.results` payload unchanged. Branches on the shape of the value:
-// when `columns` is present the rows are cell-arrays to zip into keyed objects; when it is
-// absent the entries are already result objects and pass through as-is.
-export function normalizeResult(
+// A per-primitive row builder: maps the untrusted result-bearing wire object into the
+// primitive's neutral row array. The SHARED envelope handling (results-present guard,
+// columns/generatedAt/fromCache assembly, the neutral did-not-complete error) is factored
+// into `normalizeResult`; only the row-building step is per-primitive, threaded down
+// through `run`/`pollToCompletion`/`resultFrom` so sync and async yield identical rows.
+type RowBuilder<TRow> = (source: WireResultBearing) => ReadonlyArray<TRow>;
+
+// Normalize a result-bearing wire object into the neutral QueryResult, delegating the
+// row-shaping to a per-primitive `rowBuilder`. Takes the result-bearing object (not the
+// full envelope) so the async path reuses it on the completed `query_status.results`
+// payload unchanged. The envelope scaffolding (the untrusted-JSON guard, columns/
+// generatedAt/fromCache) stays here in ONE place across every primitive. The builder
+// defaults to `rawQuery`'s verbatim pass-through — the pre-per-primitive behavior.
+export function normalizeResult<TRow = Record<string, unknown>>(
   source: WireResultBearing,
-  fromCache: boolean | undefined
-): QueryResult {
+  fromCache: boolean | undefined,
+  rowBuilder: RowBuilder<TRow> = buildRawRows as RowBuilder<TRow>
+): QueryResult<TRow> {
   // `results` is required on the well-formed envelope, but the JSON is untrusted: a
   // completed/zero-row envelope missing it must surface neutrally, never as a raw TypeError.
   if (!Array.isArray(source.results)) {
     throw new Error('analytics: query did not complete');
   }
-  const results = source.results;
 
   const columns: QueryColumn[] = (source.columns ?? []).map((name, i) => {
     const type = source.types?.[i];
     return type === undefined ? { name } : { name, type };
   });
 
-  const rows = columns.length > 0
-    ? results.map((row) => zipRow(row, columns))
-    : results
-        .filter((entry): entry is Record<string, unknown> => isRecord(entry))
-        .map((entry) => entry);
-
-  const result: QueryResult = {
-    rows,
+  const result: QueryResult<TRow> = {
+    rows: rowBuilder(source),
     columns,
     generatedAt: new Date().toISOString(),
   };
@@ -243,11 +245,158 @@ export function normalizeResult(
   return result;
 }
 
-function zipRow(row: unknown, columns: QueryColumn[]): Record<string, unknown> {
+// `rawQuery`'s builder: the ONE primitive that is NOT per-primitive-flattened. Reproduces
+// today's shared logic exactly — when `columns` is present the rows are cell-arrays zipped
+// into column-keyed objects (the consumer's own SELECT projection, already neutral); when
+// absent, result objects pass through with the record filter. This is the sole surface a
+// dialect-keyed shape legitimately reaches, and it is verbatim column-keyed pass-through.
+function buildRawRows(source: WireResultBearing): ReadonlyArray<Record<string, unknown>> {
+  const results = source.results;
+  const columns = source.columns ?? [];
+  if (columns.length > 0) {
+    return results.map((row) => zipRow(row, columns));
+  }
+  return results.filter((entry): entry is Record<string, unknown> => isRecord(entry));
+}
+
+// De-branded from posthog's trends result: each `results` entry carries positionally-
+// parallel `days: string[]` (ISO bucket dates) and `data: number[]` (one value per
+// bucket), flattened to one neutral row per index. `uniqueCount` is byte-identical on the
+// wire (same shape, only server-side math differs) so it shares this builder. With a
+// breakdown the backend returns one top-level entry per breakdown value, each with its own
+// days/data + `breakdown_value`; each entry's rows carry that stringified breakdown.
+function buildTrendRows(source: WireResultBearing): ReadonlyArray<TrendRow> {
+  const rows: TrendRow[] = [];
+  for (const entry of source.results) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const days = entry.days;
+    const data = entry.data;
+    if (!Array.isArray(days) || !Array.isArray(data)) {
+      continue;
+    }
+    const breakdown = optionalBreakdown(entry.breakdown_value);
+    for (let i = 0; i < days.length; i += 1) {
+      const bucket = days[i];
+      const value = data[i];
+      if (typeof bucket !== 'string' || typeof value !== 'number') {
+        continue;
+      }
+      rows.push(breakdown === undefined ? { bucket, value } : { bucket, value, breakdown });
+    }
+  }
+  return rows;
+}
+
+// De-branded from posthog's funnel result: `results` is per-step objects (an array-of-
+// arrays when broken down — the outer layer is unwrapped per breakdown group). Each step
+// carries `order` (0-based index), `count`, and `custom_name`/`name`/`action_id` for the
+// event identity. `conversionRate` is NOT a wire field — it is COMPUTED as
+// `count[step] / count[0]` (overall conversion from the first step, guarded for count[0] 0).
+function buildFunnelRows(source: WireResultBearing): ReadonlyArray<FunnelStepRow> {
+  const rows: FunnelStepRow[] = [];
+  for (const group of source.results) {
+    // Broken-down funnels nest one step array per breakdown group; a plain funnel is a
+    // flat step array. Normalize both to "a step array with an optional group breakdown".
+    if (Array.isArray(group)) {
+      rows.push(...funnelGroupRows(group));
+    } else {
+      rows.push(...funnelGroupRows(source.results));
+      break;
+    }
+  }
+  return rows;
+}
+
+function funnelGroupRows(steps: unknown[]): FunnelStepRow[] {
+  const firstCount = firstStepCount(steps);
+  const out: FunnelStepRow[] = [];
+  for (const step of steps) {
+    if (!isRecord(step)) {
+      continue;
+    }
+    const order = step.order;
+    const count = step.count;
+    if (typeof order !== 'number' || typeof count !== 'number') {
+      continue;
+    }
+    const event = funnelEvent(step);
+    if (event === undefined) {
+      continue;
+    }
+    const conversionRate = firstCount === 0 ? 0 : count / firstCount;
+    const breakdown = optionalBreakdown(step.breakdown_value);
+    out.push(
+      breakdown === undefined
+        ? { step: order, event, count, conversionRate }
+        : { step: order, event, count, conversionRate, breakdown }
+    );
+  }
+  return out;
+}
+
+function firstStepCount(steps: unknown[]): number {
+  for (const step of steps) {
+    if (isRecord(step) && step.order === 0 && typeof step.count === 'number') {
+      return step.count;
+    }
+  }
+  const first = steps[0];
+  return isRecord(first) && typeof first.count === 'number' ? first.count : 0;
+}
+
+function funnelEvent(step: Record<string, unknown>): string | undefined {
+  for (const key of ['custom_name', 'name', 'action_id'] as const) {
+    const value = step[key];
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+// De-branded from posthog's retention result: `results` is cohort objects, each with
+// `date` (the cohort start, ISO) and `values: { count }[]` where the array index is the
+// period (0 = the cohort itself). Double loop: one neutral row per (cohort, period) cell.
+function buildRetentionRows(source: WireResultBearing): ReadonlyArray<RetentionRow> {
+  const rows: RetentionRow[] = [];
+  for (const cohort of source.results) {
+    if (!isRecord(cohort)) {
+      continue;
+    }
+    const date = cohort.date;
+    const values = cohort.values;
+    if (typeof date !== 'string' || !Array.isArray(values)) {
+      continue;
+    }
+    const breakdown = optionalBreakdown(cohort.breakdown_value);
+    for (let j = 0; j < values.length; j += 1) {
+      const cell = values[j];
+      if (!isRecord(cell) || typeof cell.count !== 'number') {
+        continue;
+      }
+      rows.push(
+        breakdown === undefined
+          ? { cohort: date, periodIndex: j, value: cell.count }
+          : { cohort: date, periodIndex: j, value: cell.count, breakdown }
+      );
+    }
+  }
+  return rows;
+}
+
+// The wire `breakdown_value` is engine-internal and untyped; surface it as the neutral
+// `breakdown` field only when present, stringified, and never as a raw key on the row.
+function optionalBreakdown(value: unknown): string | undefined {
+  return value === undefined || value === null ? undefined : String(value);
+}
+
+function zipRow(row: unknown, columns: string[]): Record<string, unknown> {
   const keyed: Record<string, unknown> = {};
   if (Array.isArray(row)) {
-    columns.forEach((column, i) => {
-      keyed[column.name] = row[i];
+    columns.forEach((name, i) => {
+      keyed[name] = row[i];
     });
     return keyed;
   }
@@ -290,59 +439,72 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
   }
 
   async funnel(spec: FunnelSpec<TX>): Promise<QueryResult<FunnelStepRow>> {
-    // S1: signature narrowed; the row-producing normalizer body is S2. Temporary cast.
-    return this.run({
-      kind: FUNNELS_QUERY_WIRE_KIND,
-      series: spec.steps.map((step) => eventsNode(step)),
-      funnelsFilter: {
-        funnelWindowInterval: spec.within.value,
-        funnelWindowIntervalUnit: spec.within.unit,
+    return this.run(
+      {
+        kind: FUNNELS_QUERY_WIRE_KIND,
+        series: spec.steps.map((step) => eventsNode(step)),
+        funnelsFilter: {
+          funnelWindowInterval: spec.within.value,
+          funnelWindowIntervalUnit: spec.within.unit,
+        },
+        breakdownFilter: eventBreakdown(spec.breakdown),
       },
-      breakdownFilter: eventBreakdown(spec.breakdown),
-    }) as unknown as Promise<QueryResult<FunnelStepRow>>;
+      buildFunnelRows
+    );
   }
 
   async retention(spec: RetentionSpec<TX>): Promise<QueryResult<RetentionRow>> {
-    // S1: signature narrowed; the row-producing normalizer body is S2. Temporary cast.
-    return this.run({
-      kind: RETENTION_QUERY_WIRE_KIND,
-      retentionFilter: {
-        targetEntity: retentionEntity(spec.cohortEvent),
-        returningEntity: retentionEntity(spec.returnEvent),
-        period: RETENTION_PERIOD_FOR_GRANULARITY[spec.granularity],
-        totalIntervals: spec.periods,
+    return this.run(
+      {
+        kind: RETENTION_QUERY_WIRE_KIND,
+        retentionFilter: {
+          targetEntity: retentionEntity(spec.cohortEvent),
+          returningEntity: retentionEntity(spec.returnEvent),
+          period: RETENTION_PERIOD_FOR_GRANULARITY[spec.granularity],
+          totalIntervals: spec.periods,
+        },
+        breakdownFilter: eventBreakdown(spec.breakdown),
       },
-      breakdownFilter: eventBreakdown(spec.breakdown),
-    }) as unknown as Promise<QueryResult<RetentionRow>>;
+      buildRetentionRows
+    );
   }
 
   async trend(spec: TrendSpec<TX>): Promise<QueryResult<TrendRow>> {
-    // S1: signature narrowed; the row-producing normalizer body is S2. Temporary cast.
-    return this.run({
-      kind: TRENDS_QUERY_WIRE_KIND,
-      series: [eventsNode(spec.event, MATH_FOR_AGGREGATION[spec.aggregation])],
-      interval: INTERVAL_FOR_UNIT[spec.window.unit],
-      dateRange: { date_from: relativeDateFrom(spec.window) },
-      breakdownFilter: eventBreakdown(spec.breakdown),
-    }) as unknown as Promise<QueryResult<TrendRow>>;
+    return this.run(
+      {
+        kind: TRENDS_QUERY_WIRE_KIND,
+        series: [eventsNode(spec.event, MATH_FOR_AGGREGATION[spec.aggregation])],
+        interval: INTERVAL_FOR_UNIT[spec.window.unit],
+        dateRange: { date_from: relativeDateFrom(spec.window) },
+        breakdownFilter: eventBreakdown(spec.breakdown),
+      },
+      buildTrendRows
+    );
   }
 
   async uniqueCount(spec: UniqueCountSpec<TX>): Promise<QueryResult<UniqueCountRow>> {
-    // S1: signature narrowed; the row-producing normalizer body is S2. Temporary cast.
-    return this.run({
-      kind: TRENDS_QUERY_WIRE_KIND,
-      series: [eventsNode(spec.event, 'dau')],
-      interval: INTERVAL_FOR_UNIT[spec.window.unit],
-      dateRange: { date_from: relativeDateFrom(spec.window) },
-      breakdownFilter: eventBreakdown(spec.breakdown),
-    }) as unknown as Promise<QueryResult<UniqueCountRow>>;
+    // uniqueCount is byte-identical to trend on the wire — same `days`/`data` shape, only
+    // the server-side math differs — so it reuses the SAME row builder, no branching.
+    return this.run(
+      {
+        kind: TRENDS_QUERY_WIRE_KIND,
+        series: [eventsNode(spec.event, 'dau')],
+        interval: INTERVAL_FOR_UNIT[spec.window.unit],
+        dateRange: { date_from: relativeDateFrom(spec.window) },
+        breakdownFilter: eventBreakdown(spec.breakdown),
+      },
+      buildTrendRows
+    );
   }
 
   async rawQuery(expr: string): Promise<QueryResult> {
-    return this.run({ kind: HOGQL_QUERY_WIRE_KIND, query: expr });
+    return this.run({ kind: HOGQL_QUERY_WIRE_KIND, query: expr }, buildRawRows);
   }
 
-  private async run(query: WireQueryNode): Promise<QueryResult> {
+  private async run<TRow>(
+    query: WireQueryNode,
+    rowBuilder: RowBuilder<TRow>
+  ): Promise<QueryResult<TRow>> {
     const response = await this.fetch(this.url, {
       method: 'POST',
       headers: this.headers(),
@@ -358,15 +520,18 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
     // `query_status` key, so detection keys on `complete === false`, never on presence.
     const status = body.query_status;
     if (response.status === STATUS_ACCEPTED || (status !== undefined && status.complete !== true)) {
-      return this.pollToCompletion(status);
+      return this.pollToCompletion(status, rowBuilder);
     }
-    return normalizeResult(body, body.is_cached);
+    return normalizeResult(body, body.is_cached, rowBuilder);
   }
 
-  private async pollToCompletion(initial: WireQueryStatus | undefined): Promise<QueryResult> {
+  private async pollToCompletion<TRow>(
+    initial: WireQueryStatus | undefined,
+    rowBuilder: RowBuilder<TRow>
+  ): Promise<QueryResult<TRow>> {
     let status = initial;
     if (status !== undefined && status.complete === true) {
-      return this.resultFrom(status);
+      return this.resultFrom(status, rowBuilder);
     }
     if (status === undefined) {
       // 202 with no inline status body: nothing to poll against — a give-up.
@@ -389,20 +554,23 @@ export class HttpQueryAdapter<TX extends TaxonomyShape>
         throw new Error('analytics: query did not complete');
       }
       if (status.complete === true) {
-        return this.resultFrom(status);
+        return this.resultFrom(status, rowBuilder);
       }
     }
     throw new Error('analytics: query did not complete');
   }
 
   // Turn a completed status envelope into the neutral result — or surface its failure
-  // neutrally. Reuses the SAME normalizer as the sync path on `query_status.results`,
-  // which has no sibling columns/types (its columns-absent pass-through branch applies).
-  private resultFrom(status: WireQueryStatus): QueryResult {
+  // neutrally. Applies the SAME per-primitive row builder as the sync path to the
+  // completed `query_status.results` payload, so sync and async yield identical rows.
+  private resultFrom<TRow>(
+    status: WireQueryStatus,
+    rowBuilder: RowBuilder<TRow>
+  ): QueryResult<TRow> {
     if (status.error === true) {
       throw new Error('analytics: query did not complete');
     }
-    return normalizeResult(status, status.is_cached);
+    return normalizeResult(status, status.is_cached, rowBuilder);
   }
 
   private headers(): Record<string, string> {

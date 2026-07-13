@@ -118,3 +118,28 @@ neutral row type — the fix that closes the leak.
   camelCase, no `conversion_rate`/`period_index`. If S1 and S2 land together, the normalizer return types
   are these S1 types directly (no temporary cast); if S1 landed first, replace any temporary cast S1 left in
   the adapter body with the real flatten. — story-refiner (2026-07-13)
+
+> Reviewer suggestion (2026-07-13): S2 ships the leak-closing normalizers with ZERO positive test
+> coverage — no fixture exercises a real `days`/`data`, `order`/`count`, or `date`/`values` insight
+> shape, so the pinned mappings are verified only by code reading. S3's fixtures MUST cover: trend
+> breakdown (multi-entry `breakdown_value`), funnel array-of-arrays breakdown with per-group
+> `conversionRate`, the `count[0]===0→0` guard, the `custom_name→name→action_id` precedence, and
+> retention `periodIndex` 0 = cohort-itself.
+> Reviewer suggestion (2026-07-13): S3's envelope-seal test could assert `columns: []` for the
+> structured primitives (real trend/funnel/retention responses have no `source.columns`; a spurious
+> columns array would flatten `.rows` correctly but still carry the spurious names on `result.columns`
+> — harmless since the structured contract doesn't key on `columns`, but worth pinning).
+
+## Shipped
+
+> Captured by `implement-epics` on 2026-07-13.
+
+- **Files changed:** `ts/packages/node/src/query/http-query-adapter.ts` (+234/-66) — split `normalizeResult`'s columns-absent branch into four per-primitive flattening builders (`buildTrendRows` shared by trend+uniqueCount, `buildFunnelRows`, `buildRetentionRows`, `buildRawRows` for rawQuery); threaded a `RowBuilder<TRow>` closure through the shared `run<TRow>` → `pollToCompletion<TRow>` → `resultFrom<TRow>` seam; removed S1's four temporary bridge casts.
+- **Files added:** none
+- **New public API:** none — behavior only; the seam types were S1. The four structured primitives now RETURN their neutral rows (contract now honored, not just typed).
+- **Tests added:** none — S3 owns test authoring. Builder verified all pinned mappings via a throwaway scratch spec (9 scenarios, all passed, then deleted).
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review. **Leak structurally closed** — sealed keys (`aggregation_value`, `average_conversion_time`, `converted_people_url`) referenced NOWHERE in the file (grep-verified); `breakdown_value`/`order`/`action_id` consumed inside builders, re-emitted only as neutral fields. All four pinned mappings verified field-by-field. `conversionRate` computed (`count/firstCount` guarded, per-breakdown-group), camelCase. rawQuery byte-for-byte unchanged (default `rowBuilder = buildRawRows`). Structured builders correctly ignore `columns` entirely (columns is HogQL/rawQuery-only; a fallback would reopen the leak). Sync≡async threading GENUINE (reviewer confirmed via the async-equality test — had `resultFrom` not carried the builder, async would have fallen back to zipped rows and broken equality). Defensive mapping disciplined (skip/coerce, never throw).
+- **THE key review call — 4 failing node tests independently verified as S3-owned stale-fixture inversions, NOT regressions.** Reviewer read each of `http-query-adapter.test.ts:188` (sync trend), `http-query-adapter-async.test.ts:86/135/212` (async trend/funnel) and confirmed each routes a columns-present cell-array fixture through a STRUCTURED primitive (a wire state that never occurs), fails ONLY on `.rows` content, and passes every poll/GET/error/bounded-termination assertion. Ran the skeptical counter-checks (rawQuery pass-through, sync≡async equality, bounded termination, error/guard paths) — all held. S3 owns inverting these + adding realistic per-primitive fixtures.
+- **Retry history:** none — shipped first attempt.
+- **Cross-story seams exposed:** node suite is 328/332 + 8 typecheck pins at S2 close — **S3 must clear ALL of it**: invert the 4 stale cell-array fixtures (`http-query-adapter.test.ts:188` + async `:86/135/212`) to realistic insight-shape fixtures, invert the pass-through-pinning test (`:260`), repoint the 8 `query-client.test.ts` type-pins, extend the envelope-seal to the row level, and add the positive per-primitive coverage the reviewer enumerated (see suggestions above). After S3 the full suite + typecheck must be green.
