@@ -36,11 +36,14 @@ normalizer (S2) fills. It mirrors TS E15-S1.
 - Make `QueryResult` **`Generic[TRow]`** while it STAYS a Pydantic `BaseModel` (it decodes untrusted
   wire — a genuine boundary): `class QueryResult(BaseModel, Generic[TRow])` with `rows: Sequence[TRow]`
   (replacing today's `rows: list[dict[str, object]]`). The generic default rides a **PEP-696 `TypeVar`**
-  — `TRow = TypeVar("TRow", bound="Mapping[str, object]", default="Mapping[str, object]")` — imported
-  from **`typing_extensions`** (the version gate is RESOLVED: `requires-python = ">=3.10"` < 3.13, so
-  NOT `typing`). Add `typing_extensions` as an EXPLICIT `pyproject.toml` dependency (do not rely on the
-  Pydantic transitive). `raw_query` keeps the default row type (`Mapping[str, object]`). See Technical
-  notes for the fallback if PEP-696 defaults misbehave.
+  — `TRow = TypeVar("TRow", default="Mapping[str, object]")` — imported from **`typing_extensions`**
+  (the version gate is RESOLVED: `requires-python = ">=3.10"` < 3.13, so NOT `typing`). Add
+  `typing_extensions` as an EXPLICIT `pyproject.toml` dependency (do not rely on the Pydantic
+  transitive). **The `TypeVar` is UNBOUNDED — do NOT add `bound="Mapping[str, object]"`** (that is a
+  DEFAULT, not a constraint; the four row types are frozen dataclasses, NOT `Mapping` subtypes, so a
+  `Mapping` bound makes `mypy --strict` reject `QueryResult[TrendRow]` — story-refiner verified this
+  against the repo toolchain, see Technical notes). `raw_query` keeps the default row type
+  (`Mapping[str, object]`). See Technical notes for the fallback if PEP-696 defaults misbehave.
 - Narrow `AnalyticsQueryClient`'s four structured method return types
   (`python/src/analytics_kit/query/client.py`, the Protocol ~L141): `funnel -> QueryResult[FunnelStepRow]`,
   `retention -> QueryResult[RetentionRow]`, `trend -> QueryResult[TrendRow]`,
@@ -48,11 +51,19 @@ normalizer (S2) fills. It mirrors TS E15-S1.
   port of TS `query-client.ts`.
 - Handle the generic-change RIPPLE (re-type only, NO logic change) so every `QueryResult` reference
   still typechecks under `mypy`. The sites are pinned:
-  - `python/src/analytics_kit/query/noop.py` — `_empty_result()` builds `rows=[]`; an empty list
-    satisfies any `Sequence[TRow]`, so narrow the five `QueryNoop` method return annotations to the
-    matching `QueryResult[…Row]` (and `_empty_result`'s return if the chosen shape requires it — an
-    empty `QueryResult` constructor is assignable to any narrowed generic). This is the Python analog of
-    E15-S1's generic `emptyResult<TRow>()`.
+  - `python/src/analytics_kit/query/noop.py` — narrow the five `QueryNoop` method return annotations to
+    the matching `QueryResult[…Row]`. **`_empty_result` MUST become generic** — `def _empty_result() ->
+    QueryResult[TRow]` (with a module-level `TRow = TypeVar("TRow")`), and each method just does
+    `return _empty_result()` under its narrowed `-> QueryResult[TrendRow]` annotation — mypy infers
+    `TRow=TrendRow` from the return context (do NOT try to subscript the call `_empty_result[TrendRow]()`
+    — that is invalid Python; the inference is contextual, story-refiner verified it mypy-strict-green). **A BARE `_empty_result() ->
+    QueryResult` does NOT typecheck into a narrowed return** — `mypy --strict` rejects
+    `QueryResult[Mapping[str, object]]` → `QueryResult[TrendRow]` (story-refiner verified against the
+    repo toolchain; the empty-list body is fine, but the RETURN ANNOTATION must be the generic
+    `QueryResult[TRow]`, not a bare `QueryResult`). This is the exact Python analog of E15-S1's generic
+    `emptyResult<TRow>()` no-cast fix. (`raw_query` narrows to the bare `QueryResult` default, so its
+    call can stay `_empty_result()` inferring the `Mapping` default — or reuse the generic helper; both
+    typecheck.)
   - `python/src/analytics_kit/query/warehouse_adapter.py` — the typed stub: narrow the five return
     annotations to match the Protocol; the bodies still `raise NotImplementedError` (a raise satisfies
     any narrowed return), keeping the second-adapter bar-A proof green.
@@ -90,8 +101,9 @@ normalizer (S2) fills. It mirrors TS E15-S1.
 - [ ] `UniqueCountRow` is its OWN declared `@dataclass` (same three fields as `TrendRow`), NOT an alias
       `UniqueCountRow = TrendRow`.
 - [ ] `QueryResult` is a `Generic[TRow]` Pydantic `BaseModel` with `rows: Sequence[TRow]`; the `TRow`
-      default rides a PEP-696 `TypeVar` imported from `typing_extensions`; `typing_extensions` is an
-      EXPLICIT `pyproject.toml` dependency. `raw_query` stays on the default row type.
+      default rides an UNBOUNDED PEP-696 `TypeVar` (`default="Mapping[str, object]"`, NO `bound=`)
+      imported from `typing_extensions`; `typing_extensions` is an EXPLICIT `pyproject.toml` dependency.
+      `raw_query` stays on the default row type.
 - [ ] The four structured primitives on `AnalyticsQueryClient` narrow their return
       (`funnel -> QueryResult[FunnelStepRow]`, etc.); `raw_query -> QueryResult` (default).
 - [ ] No vendor/engine-internal field name appears in any row type.
@@ -128,13 +140,27 @@ normalizer (S2) fills. It mirrors TS E15-S1.
     `rows: list[dict[str, object]]`). Pydantic v2 fully supports generic models AND stdlib-dataclass
     field types, and `model_dump_json()` recurses into the dataclass rows — the S3 seal test relies on
     this recursion.
-  - **Generic default via a PEP-696 `TypeVar`:** `TRow = TypeVar("TRow", bound="Mapping[str, object]",
-    default="Mapping[str, object]")`. **Version gate RESOLVED:** `python/pyproject.toml`
-    `requires-python = ">=3.10"` (below 3.13), so import `TypeVar` from **`typing_extensions`**, NOT
-    `typing`. `typing_extensions` is a Pydantic transitive dep, but add it as an EXPLICIT `pyproject.toml`
-    dependency (do NOT rely on the transitive). **Fallback** if PEP-696 defaults prove problematic under
-    the toolchain: drop the default and annotate `raw_query -> QueryResult[Mapping[str, object]]`
-    explicitly (one extra annotation, same result) — prefer the default.
+  - **Generic default via a PEP-696 `TypeVar` — UNBOUNDED, default-only:**
+    `TRow = TypeVar("TRow", default="Mapping[str, object]")`. **DO NOT add `bound="Mapping[str, object]"`.**
+    The epic's original RESOLVED open question pinned a `bound=`; that was a **porting error** — TS's
+    `QueryResult<TRow = Record<string, unknown>>` (`ts/packages/analytics-kit/src/query-result.ts:6`) puts
+    `Record<string, unknown>` after the `=` with NO `extends` clause: it is a DEFAULT type argument on an
+    UNBOUNDED parameter, not a constraint. Transcribing that default into Python's `bound=` slot is wrong:
+    the four row types are frozen dataclasses (NOT `Mapping` subtypes), so a `Mapping` bound makes
+    `mypy --strict` reject every structured narrowing with
+    `Type argument "TrendRow" of "QueryResult" must be a subtype of "Mapping[str, object]" [type-var]`.
+    **Story-refiner verified against the actual repo toolchain (pydantic 2.7.1, mypy --strict, python 3.10
+    target, no pydantic mypy plugin):** default-only (no bound) is mypy-strict-green AND runtime-correct
+    (construction + `model_dump_json()` recursion into the frozen dataclass rows all pass; `raw_query`'s
+    bare `QueryResult` resolves `TRow` to the `Mapping[str, object]` default). The row-level neutrality
+    proof is the frozen constructor + the S3 seal, NOT a type bound — the bound was doing no neutrality
+    work in TS and must not be re-added here (architect confirmed 2026-07-13). **Version gate RESOLVED:**
+    `python/pyproject.toml` `requires-python = ">=3.10"` (below 3.13), so import `TypeVar` from
+    **`typing_extensions`**, NOT `typing`. `typing_extensions` is a Pydantic transitive dep, but add it as
+    an EXPLICIT `pyproject.toml` dependency (do NOT rely on the transitive). **Fallback** if PEP-696
+    defaults prove problematic under the toolchain: drop the default and annotate
+    `raw_query -> QueryResult[Mapping[str, object]]` explicitly at the one call site (one extra
+    annotation, same result) — prefer the default.
   - **Protocol narrowing:** the four structured methods narrow returns —
     `funnel -> QueryResult[FunnelStepRow]`, `retention -> QueryResult[RetentionRow]`,
     `trend -> QueryResult[TrendRow]`, `unique_count -> QueryResult[UniqueCountRow]`;
@@ -145,6 +171,22 @@ normalizer (S2) fills. It mirrors TS E15-S1.
     Pydantic model and thus no per-row `extra="forbid"`; the frozen constructor + S3 seal are the
     neutrality proof. `QueryResult`/`QueryColumn` keep their existing envelope-level `extra="forbid"`.
   — architect (2026-07-13).
+- **Concrete import + construction shape in `client.py` (verified against the current file).** The file
+  today imports `from dataclasses import dataclass` and `from typing import Literal, Protocol,
+  runtime_checkable`. S1 adds: `from collections.abc import Mapping, Sequence`, `from typing import
+  Generic`, and `from typing_extensions import TypeVar` (the `typing.TypeVar` already-in-scope, if any,
+  must NOT shadow it — import the `typing_extensions` one under the name `TypeVar`). The rows use the CALL
+  form `@dataclass(frozen=True)` (the bare `@dataclass` already imported is the non-frozen form the specs
+  use — the rows need the `frozen=True` argument). `rows: Sequence[TRow]` replaces `rows:
+  list[dict[str, object]]`; the `columns` / `generated_at` / `from_cache` fields and the envelope-level
+  `model_config = ConfigDict(extra="forbid")` are UNCHANGED.
+- **Existing `QueryResult(...)` constructions stay valid — the default TypeVar covers them.** The noop's
+  `QueryResult(rows=[], columns=[], generated_at=…)` (`noop.py:28`) and the two bare constructions in
+  `tests/test_query_client.py` (`:89`, `:231`) construct a bare `QueryResult` (= `QueryResult[Mapping[str,
+  object]]` via the default) and still typecheck + run unchanged — story-refiner verified the default
+  resolves. Only the NARROWED return annotations (the four structured methods + the noop's generic
+  `_empty_result`) need the generic form. Any test asserting the OLD row SHAPE (dict-keyed rows out of a
+  structured primitive) is an S3-owned inversion, not an S1 break — see S3.
 - **The E15-S1 ripple precedent.** TS's "compiles unchanged" prediction for its example consumer was
   WRONG (interfaces carry no implicit index signature), forcing generic threading through
   `snapshots.ts`. Expect an analogous `quillstream` ripple in Python — check

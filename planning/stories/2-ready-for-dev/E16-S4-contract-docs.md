@@ -22,9 +22,10 @@ rewrite it. It mirrors TS E15-S4 (minus writing the artifact, which E15 already 
 ### In
 
 - Update the Python README query section (`python/README.md`) — the `### Query verbs → the query read
-  client` table (~L157) and the intro sentence above it (~L159): each of the four structured
-  primitives' cells currently ends "normalize … into `QueryResult`" — change them to state **what each
-  primitive's rows contain**, using the EXACT snake_case field names from
+  client` table (~L157) and the intro sentence above it (~L159-162, which today ends "resolves the
+  response synchronously … into one flat `QueryResult`"): the four structured primitives' cells today
+  end "decodes to `QueryResult`" / "same POST + decode" (verified against the file) — change them to
+  state **what each primitive's rows contain**, using the EXACT snake_case field names from
   `planning/QUERY-ROW-CONTRACT.md`:
   - `trend` / `unique_count` → rows of `{ bucket, value, breakdown? }`
   - `funnel` → rows of `{ step, event, count, conversion_rate, breakdown? }`
@@ -38,8 +39,11 @@ rewrite it. It mirrors TS E15-S4 (minus writing the artifact, which E15 already 
   structured primitives now return documented per-primitive neutral rows (the parity table that maps TS
   `uniqueCount` → Python `unique_count`, etc.) — keep it accurate to the shipped shape.
 - **Cross-reference** `planning/QUERY-ROW-CONTRACT.md` as the language-neutral source of truth this
-  Python surface satisfies, and cross-reference the S3 Python contract fixtures as the executable form
-  of the Python-side contract (the analog of TS's fixtures cross-reference).
+  Python surface satisfies, and cross-reference the S3 Python contract fixtures (S3 pins them at
+  `python/tests/query_contract_fixtures.py`, mirroring the TS `query-contract.fixtures.ts`; confirm the
+  final path against S3's Shipped notes before citing, since S3 permits a relocation) as the executable
+  form of the Python-side contract — the analog of TS's fixtures cross-reference. Since S4 sequences
+  AFTER S3, cite the real shipped path; do NOT invent one.
 - Confirm the Python README query section matches the TS README query section CONCEPTUALLY — same row
   concepts, same `raw_query` verbatim-pass-through framing, only the casing differs (snake_case).
 

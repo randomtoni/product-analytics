@@ -29,16 +29,24 @@ its neutral row type — the fix that closes the leak. It mirrors TS E15-S2.
   data cell**, producing exactly its S1 row type — including COMPUTING `funnel.conversion_rate` as
   `count[i]/count[0]` (not a wire field; see Technical notes).
 - **Thread the per-primitive normalizer through the shared `_run` / `_normalize_result` seam.** Today
-  all five primitives call `self._run(query)` (~L393); `_run` calls `_normalize_result(envelope, ...)`
-  on the inline path, and the async completion path `_result_from_status` (~L437, reached via
-  `_poll_to_completion` ~L410) reuses the SAME `_normalize_result` on the nested `query_status`
-  payload. `_run` does NOT know which primitive it serves. To route per-primitive WITHOUT duplicating
-  the poll plumbing, pass a per-primitive row-builder (a callable `(source: dict) -> list[Row]`, or a
+  all five primitives call `self._run(query)` (~L393); `_run` reaches `_normalize_result` via **THREE**
+  distinct completion sinks (verified against the code), and the row-builder must thread through ALL
+  three or sync≠async:
+  1. **immediate inline** — `_run` calls `_normalize_result(envelope, …)` directly (~L408) when the POST
+     response carries no `query_status`.
+  2. **already-complete-in-POST** — `_run` calls `_result_from_status(status)` DIRECTLY (~L404-405) when
+     the POST response's `query_status` is already `complete` (the async-detection foot-gun path;
+     `test_a_completed_status_in_the_post_response_does_not_poll` exercises it). This sink is easy to
+     miss — it is NOT reached through the poll loop.
+  3. **async-then-poll** — `_run` → `_poll_to_completion` (~L410) → `_result_from_status` (~L437) →
+     `_normalize_result` on the nested `query_status` payload, once a poll returns `complete`.
+  `_run` does NOT know which primitive it serves. To route per-primitive WITHOUT duplicating the poll
+  plumbing, pass a per-primitive row-builder (a callable `(source: dict) -> list[Row]`, or a
   discriminator the shared normalizer switches on) DOWN through `_run` → `_poll_to_completion` →
-  `_result_from_status`, so the SAME normalizer applies whether the result arrives inline (sync) or via
-  poll (async). Keep the shared envelope handling (the `raw_results` list guard, columns/generated_at/
-  from_cache, the neutral "did not complete" error) in ONE place; only the ROW-building step becomes
-  per-primitive. — ported from E15-S2 (architect, 2026-07-13).
+  `_result_from_status` AND into `_run`'s direct `_result_from_status`/`_normalize_result` calls, so the
+  SAME builder applies across all three sinks. Keep the shared envelope handling (the `raw_results` list
+  guard, columns/generated_at/from_cache, the neutral "did not complete" error) in ONE place; only the
+  ROW-building step becomes per-primitive. — ported from E15-S2 (architect, 2026-07-13).
 - Keep the **columns-PRESENT** branch (the `raw_query` `_zip_row` cell-array zip) exactly as-is — those
   columns are the consumer's own SELECT projection and are already neutral.
 - **`raw_query` keeps the CURRENT shared normalizer (both branches) unchanged** — it is the ONE
@@ -71,8 +79,13 @@ its neutral row type — the fix that closes the leak. It mirrors TS E15-S2.
       AND its columns-absent object pass-through are behaviorally unchanged.
 - [ ] Sync and async completion paths yield identical neutral rows for the same wire result (the
       per-primitive normalizer threads through both `_run` and `_result_from_status`).
-- [ ] The existing async-path tests still pass; `uv run pytest` · `uv run mypy` · `uv run ruff check`
-      green; neutrality-scan analog green.
+- [ ] The poll/async PLUMBING stays correct (POST-then-GET sequencing, bounded give-up, `complete`-not-
+      presence detection, error short-circuit) — those `test_http_query_adapter.py` poll tests keep their
+      transport/URL/attempt assertions green. NOTE: `test_async_status_is_polled_until_complete_then_normalized`
+      (`:289`) routes a columns-present cell-array through `trend`, so its RESULT-SHAPE assertion breaks
+      under S2 — that break is an EXPECTED S3-owned inversion, NOT an S2 regression (S3 repoints it while
+      keeping the poll assertions). `uv run mypy` · `uv run ruff check` green; neutrality-scan analog
+      green. (Full `uv run pytest` green is S3's bar once it repoints the stale fixtures.)
 
 ## Technical notes
 
@@ -117,6 +130,14 @@ its neutral row type — the fix that closes the leak. It mirrors TS E15-S2.
   dataclass instances through `QueryResult.model_validate({...})` — the rows are already trusted-by-
   construction (built here, not decoded from wire), so constructing the generic `QueryResult` directly is
   correct and avoids re-validating already-parsed data.
+- **Frozen dataclasses do NOT coerce — `value: float` accepts the wire int as-is.** The `*Row` types are
+  `@dataclass(frozen=True)`, not Pydantic, so their field annotations are NOT runtime-enforced: a wire
+  `data[i]` of `12` (int) passed to `TrendRow(value=…)` stores `12`, not `12.0`. This is fine — the
+  neutral contract's numeric fields are documented `float`/`int` and Python `12 == 12.0`, so equality
+  assertions and `model_dump_json()` both behave. Do NOT add a `float(...)` cast to "match" the
+  annotation (it would be lossy churn and diverge from the TS fixture values, which are bare numbers).
+  Keep the wire value's native type; only `conversion_rate` is a genuine computed `float` (a division
+  result).
 - **Defensive mapping.** PostHog types these result items as `Record[str, Any]` server-side; mirror the
   existing `isinstance` guard discipline in `_normalize_result` — coerce/skip a missing or wrong-typed
   cell rather than raising, so a malformed wire entry never crashes a snapshot job (the Python analog of
@@ -127,6 +148,13 @@ its neutral row type — the fix that closes the leak. It mirrors TS E15-S2.
   the normalizer return types are the S1 types directly (no cast).
 - The columns-absent branch is the ONLY leak; do NOT touch the columns-present `_zip_row`. — ported
   from E15-S2 (architect, 2026-07-13).
+- **The four structured builders IGNORE `columns` entirely (E15-S2 reviewer note, ported).** A real
+  trend/funnel/retention insight response carries NO `columns`/`types` on the wire, so the structured
+  row-builders read only `raw_results` (`days`/`data`, `order`/`count`, `date`/`values`) and never zip by
+  column. Do NOT let a structured builder fall back to `_zip_row` or key off `columns` — a fallback would
+  reopen the leak (a spurious wire `columns` array would flatten `.rows` correctly but re-surface the
+  engine column names on `result.columns`). Only `raw_query`'s builder consults `columns` (its unchanged
+  columns-present zip). The structured `QueryResult[...]` is constructed with `columns=[]`.
 
 ## Shipped
 
