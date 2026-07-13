@@ -14,10 +14,12 @@ JSON — the ONE genuine inbound-wire boundary in the query path — so they are
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from typing import Generic, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
+from typing_extensions import TypeVar
 
 from ..adapter import NeutralResponse
 
@@ -76,6 +78,70 @@ class UniqueCountSpec:
     breakdown: str | None = None
 
 
+@dataclass(frozen=True)
+class TrendRow:
+    """One trend data point — a time-bucket label and its numeric measure.
+
+    Frozen and library-built (from already-parsed wire), so an engine-internal key can never be
+    constructed onto it — the row-level neutrality proof. ``breakdown`` is present-as-null when
+    the query was not broken down.
+    """
+
+    bucket: str
+    value: float
+    breakdown: str | None = None
+
+
+@dataclass(frozen=True)
+class UniqueCountRow:
+    """One unique-count data point — same field set as :class:`TrendRow`, its own named concept.
+
+    A distinct declared type, NOT an alias of :class:`TrendRow`: unique-count keeps its own row
+    identity even though the fields coincide.
+    """
+
+    bucket: str
+    value: float
+    breakdown: str | None = None
+
+
+@dataclass(frozen=True)
+class FunnelStepRow:
+    """One funnel step — its zero-based index, resolved event identity, count, and conversion.
+
+    ``conversion_rate`` is this step's count over the first step's count (per breakdown group when
+    broken down), guarded so a zero first step yields ``0``.
+    """
+
+    step: int
+    event: str
+    count: int
+    conversion_rate: float
+    breakdown: str | None = None
+
+
+@dataclass(frozen=True)
+class RetentionRow:
+    """One retention cohort×period cell — cohort label, period offset, and retained measure.
+
+    ``period_index`` ``0`` is the cohort's own period.
+    """
+
+    cohort: str
+    period_index: int
+    value: float
+    breakdown: str | None = None
+
+
+TRow = TypeVar("TRow", default="Mapping[str, object]")
+"""The per-primitive row type carried by :class:`QueryResult`.
+
+Unbounded with a PEP-696 default of ``Mapping[str, object]`` — the four structured primitives
+narrow it to their row type; ``raw_query`` keeps the default. The default is a fallback type, NOT
+a constraint (the row types are frozen dataclasses, not ``Mapping`` subtypes), so no ``bound=``.
+"""
+
+
 class QueryColumn(BaseModel):
     """One result column — a name and an optional engine-reported type.
 
@@ -90,21 +156,22 @@ class QueryColumn(BaseModel):
     type: str | None = None
 
 
-class QueryResult(BaseModel):
-    """The single flat result all five primitives return — the inbound-wire boundary.
+class QueryResult(BaseModel, Generic[TRow]):
+    """The generic flat result all five primitives return — the inbound-wire boundary.
 
-    One flat shape serves funnel/retention/trend/unique-count AND ``raw_query`` (no bespoke
-    per-primitive result types): ``rows`` is a list of dicts whose cell values are untyped
-    (``object``) — the engine reports them and a downstream snapshot job casts. ``columns`` is
-    a DISTINCT ordered list, so an empty result still carries its schema. ``generated_at`` is
-    the result's stamp; ``from_cache`` is optional because the wire flag is present only on
-    cached responses (read defensively). A Pydantic model because the wire JSON is external and
-    untrusted — a malformed response fails HERE, at the boundary, not deep in a consumer.
+    One flat shape serves funnel/retention/trend/unique-count AND ``raw_query``; ``rows`` carries
+    the per-primitive row type (``TRow``) — a narrowed neutral row for the four structured
+    primitives, the ``Mapping[str, object]`` default for ``raw_query``'s column-keyed pass-through.
+    ``columns`` is a DISTINCT ordered list, so an empty result still carries its schema.
+    ``generated_at`` is the result's stamp; ``from_cache`` is optional because the wire flag is
+    present only on cached responses (read defensively). A Pydantic model because the wire JSON is
+    external and untrusted — a malformed response fails HERE, at the boundary, not deep in a
+    consumer.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    rows: list[dict[str, object]]
+    rows: Sequence[TRow]
     columns: list[QueryColumn]
     generated_at: str
     from_cache: bool | None = None
@@ -150,12 +217,12 @@ class AnalyticsQueryClient(Protocol):
     CONTRACT (it returns the same flat :class:`QueryResult`).
     """
 
-    def funnel(self, spec: FunnelSpec) -> QueryResult: ...
+    def funnel(self, spec: FunnelSpec) -> QueryResult[FunnelStepRow]: ...
 
-    def retention(self, spec: RetentionSpec) -> QueryResult: ...
+    def retention(self, spec: RetentionSpec) -> QueryResult[RetentionRow]: ...
 
-    def trend(self, spec: TrendSpec) -> QueryResult: ...
+    def trend(self, spec: TrendSpec) -> QueryResult[TrendRow]: ...
 
-    def unique_count(self, spec: UniqueCountSpec) -> QueryResult: ...
+    def unique_count(self, spec: UniqueCountSpec) -> QueryResult[UniqueCountRow]: ...
 
     def raw_query(self, expr: str) -> QueryResult: ...

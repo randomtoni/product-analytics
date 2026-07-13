@@ -15,16 +15,24 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from typing_extensions import TypeVar
+
 from .client import (
     FunnelSpec,
+    FunnelStepRow,
     QueryResult,
+    RetentionRow,
     RetentionSpec,
+    TrendRow,
     TrendSpec,
+    UniqueCountRow,
     UniqueCountSpec,
 )
 
+TRow = TypeVar("TRow")
 
-def _empty_result() -> QueryResult:
+
+def _empty_result() -> QueryResult[TRow]:
     return QueryResult(
         rows=[],
         columns=[],
@@ -35,19 +43,19 @@ def _empty_result() -> QueryResult:
 class QueryNoop:
     """A null-object query client: every primitive returns an empty result, nothing goes out."""
 
-    def funnel(self, spec: FunnelSpec) -> QueryResult:
+    def funnel(self, spec: FunnelSpec) -> QueryResult[FunnelStepRow]:
         """Query nothing — return an empty result."""
         return _empty_result()
 
-    def retention(self, spec: RetentionSpec) -> QueryResult:
+    def retention(self, spec: RetentionSpec) -> QueryResult[RetentionRow]:
         """Query nothing — return an empty result."""
         return _empty_result()
 
-    def trend(self, spec: TrendSpec) -> QueryResult:
+    def trend(self, spec: TrendSpec) -> QueryResult[TrendRow]:
         """Query nothing — return an empty result."""
         return _empty_result()
 
-    def unique_count(self, spec: UniqueCountSpec) -> QueryResult:
+    def unique_count(self, spec: UniqueCountSpec) -> QueryResult[UniqueCountRow]:
         """Query nothing — return an empty result."""
         return _empty_result()
 

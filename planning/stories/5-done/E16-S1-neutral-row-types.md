@@ -197,6 +197,23 @@ normalizer (S2) fills. It mirrors TS E15-S1.
   get `KeyError`/`None` after S2 lands. That is intended — the contract-establishing release. S1 only
   declares the types; the leak-closing is S2.
 
+> Reviewer suggestion (2026-07-13): quillstream's `_assert_well_formed(result: QueryResult[_TRow])`
+> introduces a free `_TRow` that never meaningfully binds (effectively `QueryResult[Any]` for the
+> param) — fine for S1 (the call sites keep their narrowed rows), but S3, when it repoints the three
+> stale `.rows == [{dict}]` assertions in that file, could tighten or drop the vestigial `_TRow`.
+> Reviewer suggestion (2026-07-13): the four `# S1→S2 bridge` cast comments in `http_adapter.py` are
+> load-bearing for the intermediate state but must be DELETED when S2 removes the casts — S2 should
+> explicitly own "remove the four bridge casts + their comments" so the temporary signal doesn't ossify.
+
 ## Shipped
 
-<!-- Empty at draft. Filled by /implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-13.
+
+- **Files changed:** `python/src/analytics_kit/query/client.py` (four `frozen=True @dataclass` rows + generic `QueryResult(BaseModel, Generic[TRow])` with `rows: Sequence[TRow]` + unbounded PEP-696 `TRow` from `typing_extensions` + narrowed the four Protocol returns), `query/noop.py` (narrowed returns + generic `_empty_result() -> QueryResult[TRow]` no-cast fix), `query/warehouse_adapter.py` (narrowed stub returns), `query/http_adapter.py` (narrowed the five signatures; four `# S1→S2 bridge` casts wrap `_run` — `_normalize_result` BODY untouched), `query/__init__.py` + `src/analytics_kit/__init__.py` (export the four row types), `pyproject.toml` (added explicit `typing_extensions>=4.7` dep), `examples/quillstream/tests/test_query_exercise.py` (threaded the generic through `_assert_well_formed` — the E15 `snapshots.ts` ripple analog), + both `uv.lock` files (`uv sync` picked up the new dep).
+- **Files added:** none
+- **New public API:** `TrendRow`, `UniqueCountRow`, `FunnelStepRow`, `RetentionRow` + generic `QueryResult[TRow]` — exported from both `analytics_kit` and `analytics_kit.query`.
+- **Tests added:** none — S1 is type-declaration + ripple; test authoring is S3. Full existing suite stays green (578 pass / 1 skip main; 41 pass quillstream).
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review, faithfully **parity with TS E15-S1** (Protocol narrowing 1:1 with `query-client.ts`; generic envelope mirrors `QueryResult<TRow = Record<string, unknown>>`). **Closedness is an executable neutrality proof** — reviewer confirmed at runtime that `TrendRow(..., aggregated_value=9)` raises `TypeError` and mutation raises `FrozenInstanceError`; no engine key anywhere in `client.py`. `UniqueCountRow` its own declared dataclass (`is TrendRow` → False) — *stronger* than the TS alias, per the contract's port note. TypeVar unbounded (grep-confirmed no `bound=`), `typing_extensions` explicit dep. Bridge cast signature-only (`_normalize_result` absent from diff). quillstream generic threading preserves the typed row (no laundering). `factory.py` needed zero edits (rides the Protocol structurally — a bar-B proof). Reviewer independently reproduced all gates.
+- **Retry history:** none — shipped first attempt.
+- **Cross-story seams exposed:** **S2 must remove the four `# S1→S2 bridge` casts + comments** in `http_adapter.py` by making `_normalize_result` construct the dataclass rows. **S3 owns 6 static-only mypy breaks** (all old dict-row-shape assertions): `tests/test_query_client.py:104` (the `_AltQueryClient` test-double returns bare `QueryResult`), `tests/test_http_query_adapter.py:248`/`:294`, quillstream `tests/test_query_exercise.py:135`/`:156`/`:171` — plus optionally tighten quillstream's vestigial `_TRow`. Every gate green except those 6; production `src/` fully mypy-green.

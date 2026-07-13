@@ -38,9 +38,13 @@ from __future__ import annotations
 from .client import (
     AnalyticsQueryClient,
     FunnelSpec,
+    FunnelStepRow,
     QueryResult,
+    RetentionRow,
     RetentionSpec,
+    TrendRow,
     TrendSpec,
+    UniqueCountRow,
     UniqueCountSpec,
 )
 
@@ -55,16 +59,16 @@ class WarehouseQueryAdapter:
     the body is the fill-in seat (see the module docstring's per-method SQL mapping).
     """
 
-    def funnel(self, spec: FunnelSpec) -> QueryResult:
+    def funnel(self, spec: FunnelSpec) -> QueryResult[FunnelStepRow]:
         raise NotImplementedError(_NOT_IMPLEMENTED)
 
-    def retention(self, spec: RetentionSpec) -> QueryResult:
+    def retention(self, spec: RetentionSpec) -> QueryResult[RetentionRow]:
         raise NotImplementedError(_NOT_IMPLEMENTED)
 
-    def trend(self, spec: TrendSpec) -> QueryResult:
+    def trend(self, spec: TrendSpec) -> QueryResult[TrendRow]:
         raise NotImplementedError(_NOT_IMPLEMENTED)
 
-    def unique_count(self, spec: UniqueCountSpec) -> QueryResult:
+    def unique_count(self, spec: UniqueCountSpec) -> QueryResult[UniqueCountRow]:
         raise NotImplementedError(_NOT_IMPLEMENTED)
 
     def raw_query(self, expr: str) -> QueryResult:

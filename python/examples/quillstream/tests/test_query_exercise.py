@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 
+from typing_extensions import TypeVar
+
 from analytics_kit import (
     AnalyticsQueryClient,
     Duration,
@@ -28,6 +30,8 @@ from analytics_kit import (
     UniqueCountSpec,
     create_query_client,
 )
+
+_TRow = TypeVar("_TRow")
 
 _WIRE_BY_KIND: dict[str, dict[str, object]] = {
     "FunnelsQuery": {
@@ -99,7 +103,7 @@ def _keyed_client(transport: FakeQueryTransport) -> AnalyticsQueryClient:
     return create_query_client(config)
 
 
-def _assert_well_formed(result: QueryResult) -> None:
+def _assert_well_formed(result: QueryResult[_TRow]) -> None:
     assert isinstance(result.rows, list)
     assert isinstance(result.columns, list)
     assert isinstance(result.generated_at, str)

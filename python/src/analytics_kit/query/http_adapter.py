@@ -24,19 +24,23 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, cast
 
 from ..adapter import DEFAULT_HTTP_TIMEOUT_SECONDS, NeutralResponse
 from .client import (
     Aggregation,
     Duration,
     FunnelSpec,
+    FunnelStepRow,
     Granularity,
     QueryColumn,
     QueryResult,
     QueryTransport,
+    RetentionRow,
     RetentionSpec,
+    TrendRow,
     TrendSpec,
+    UniqueCountRow,
     UniqueCountSpec,
 )
 from .config import QueryClientConfig
@@ -317,7 +321,7 @@ class HttpQueryAdapter:
         self._transport: QueryTransport = transport if transport is not None else _UrllibQueryTransport()
         self._wait: Wait = wait if wait is not None else time.sleep
 
-    def funnel(self, spec: FunnelSpec) -> QueryResult:
+    def funnel(self, spec: FunnelSpec) -> QueryResult[FunnelStepRow]:
         query: dict[str, object] = {
             _WIRE_KIND_KEY: _WIRE_FUNNELS_QUERY_KIND,
             _WIRE_SERIES_KEY: [_events_node(step) for step in spec.steps],
@@ -326,9 +330,10 @@ class HttpQueryAdapter:
                 _WIRE_FUNNEL_WINDOW_INTERVAL_UNIT_KEY: spec.within.unit,
             },
         }
-        return self._run(_with_breakdown(query, spec.breakdown))
+        # S1→S2 bridge: _run still yields the default dict rows; S2 makes it build FunnelStepRow.
+        return cast("QueryResult[FunnelStepRow]", self._run(_with_breakdown(query, spec.breakdown)))
 
-    def retention(self, spec: RetentionSpec) -> QueryResult:
+    def retention(self, spec: RetentionSpec) -> QueryResult[RetentionRow]:
         query: dict[str, object] = {
             _WIRE_KIND_KEY: _WIRE_RETENTION_QUERY_KIND,
             _WIRE_RETENTION_FILTER_KEY: {
@@ -338,25 +343,28 @@ class HttpQueryAdapter:
                 _WIRE_TOTAL_INTERVALS_KEY: spec.periods,
             },
         }
-        return self._run(_with_breakdown(query, spec.breakdown))
+        # S1→S2 bridge: _run still yields the default dict rows; S2 makes it build RetentionRow.
+        return cast("QueryResult[RetentionRow]", self._run(_with_breakdown(query, spec.breakdown)))
 
-    def trend(self, spec: TrendSpec) -> QueryResult:
+    def trend(self, spec: TrendSpec) -> QueryResult[TrendRow]:
         query: dict[str, object] = {
             _WIRE_KIND_KEY: _WIRE_TRENDS_QUERY_KIND,
             _WIRE_SERIES_KEY: [_events_node(spec.event, _MATH_FOR_AGGREGATION[spec.aggregation])],
             _WIRE_INTERVAL_KEY: _INTERVAL_FOR_UNIT[spec.window.unit],
             _WIRE_DATE_RANGE_KEY: {_WIRE_DATE_FROM_KEY: _relative_date_from(spec.window)},
         }
-        return self._run(_with_breakdown(query, spec.breakdown))
+        # S1→S2 bridge: _run still yields the default dict rows; S2 makes it build TrendRow.
+        return cast("QueryResult[TrendRow]", self._run(_with_breakdown(query, spec.breakdown)))
 
-    def unique_count(self, spec: UniqueCountSpec) -> QueryResult:
+    def unique_count(self, spec: UniqueCountSpec) -> QueryResult[UniqueCountRow]:
         query: dict[str, object] = {
             _WIRE_KIND_KEY: _WIRE_TRENDS_QUERY_KIND,
             _WIRE_SERIES_KEY: [_events_node(spec.event, _WIRE_MATH_DAU)],
             _WIRE_INTERVAL_KEY: _INTERVAL_FOR_UNIT[spec.window.unit],
             _WIRE_DATE_RANGE_KEY: {_WIRE_DATE_FROM_KEY: _relative_date_from(spec.window)},
         }
-        return self._run(_with_breakdown(query, spec.breakdown))
+        # S1→S2 bridge: _run still yields the default dict rows; S2 makes it build UniqueCountRow.
+        return cast("QueryResult[UniqueCountRow]", self._run(_with_breakdown(query, spec.breakdown)))
 
     def raw_query(self, expr: str) -> QueryResult:
         return self._run({_WIRE_KIND_KEY: _WIRE_RAW_QUERY_KIND, _WIRE_QUERY_KEY: expr})
