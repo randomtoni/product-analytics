@@ -1,6 +1,6 @@
 ---
 id: E15-QRY-response-row-contract
-status: active
+status: done
 area: query
 touches: [node, adapters]
 api_impact: breaking
@@ -49,10 +49,12 @@ neutral, documented per-primitive row contract.
 
 ## Stories
 
-- **[E15-S1](../stories/2-ready-for-dev/E15-S1-neutral-row-types.md)** *(breaking, no deps)* — define the four neutral row types + generic `QueryResult<TRow>` envelope in the seam; narrow the four `AnalyticsQueryClient` primitive return types; `rawQuery` keeps the default.
-- **[E15-S2](../stories/2-ready-for-dev/E15-S2-per-primitive-normalizers.md)** *(breaking, depends on E15-S1)* — split `normalizeResult`'s columns-absent branch into per-primitive normalizers in `http-query-adapter.ts`; each method flattens its wire insight shape into its neutral row type; the columns-present (`rawQuery`) branch is untouched.
-- **[E15-S3](../stories/2-ready-for-dev/E15-S3-contract-tests-fixtures.md)** *(breaking, depends on E15-S2)* — invert the pass-through-pinning test to assert normalization; extend the envelope-seal assertion down to the row level; add per-primitive wire→neutral-row fixtures (the fixtures double as the documented contract).
-- **[E15-S4](../stories/2-ready-for-dev/E15-S4-contract-docs-parity-artifact.md)** *(additive docs, depends on E15-S1)* — document the per-primitive row shapes in the TS README query table; write the language-neutral `planning/` contract artifact the Python query client ports to.
+- **[E15-S1](../stories/5-done/E15-S1-neutral-row-types.md)** *(done — `ba3880b`)* — define the four neutral row types + generic `QueryResult<TRow>` envelope in the seam; narrow the four `AnalyticsQueryClient` primitive return types; `rawQuery` keeps the default.
+- **[E15-S2](../stories/5-done/E15-S2-per-primitive-normalizers.md)** *(done — `5e8195b`)* — split `normalizeResult`'s columns-absent branch into per-primitive normalizers in `http-query-adapter.ts`; each method flattens its wire insight shape into its neutral row type; the columns-present (`rawQuery`) branch is untouched.
+- **[E15-S3](../stories/5-done/E15-S3-contract-tests-fixtures.md)** *(done — `e00e528`)* — invert the pass-through-pinning test to assert normalization; extend the envelope-seal assertion down to the row level; add per-primitive wire→neutral-row fixtures (the fixtures double as the documented contract).
+- **[E15-S4](../stories/5-done/E15-S4-contract-docs-parity-artifact.md)** *(done — `52b26ae`)* — document the per-primitive row shapes in the TS README query table; write the language-neutral `planning/` contract artifact the Python query client ports to.
+
+**Shipped:** all four stories green end-to-end (21/21 turbo + 30/30 neutrality). The columns-absent leak is structurally closed — the four structured primitives return documented neutral rows (`TrendRow`/`UniqueCountRow`/`FunnelStepRow`/`RetentionRow`), the row-level seal test proves no engine key survives, `rawQuery` keeps documented verbatim pass-through, and `planning/QUERY-ROW-CONTRACT.md` is the standing parity artifact for the Python query cycle. Breaking → anchors the pre-1.0 0.2.0 bump (decided at cycle close; Tutore cutover coordinated by the user).
 
 ## Out of scope
 

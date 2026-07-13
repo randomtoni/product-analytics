@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-13 — E15 (query row contract) went active; sections still awaiting `/roadmap promote` reconciliation
+Last updated: 2026-07-13 — E15 (query row contract) shipped + archived; NOW/LATER sections still awaiting `/roadmap promote` reconciliation
 
 ## Status
 
@@ -89,13 +89,12 @@ first, via `/roadmap add-later` → promote, once the NOW push is scoped._
 
 ## LATER
 
-- **[E15-QRY-response-row-contract](epics/E15-QRY-response-row-contract.md)** *(active)* *(query; **breaking** → pre-1.0 breaking minor)* —
+- **[E15-QRY-response-row-contract](epics/done/E15-QRY-response-row-contract.md)** *(done — `52b26ae`)* *(query; **breaking** → pre-1.0 0.2.0)* —
   neutral, documented per-primitive read-side row contract (`TrendRow`/`UniqueCountRow`/`FunnelStepRow`/
-  `RetentionRow`) + generic `QueryResult<TRow>`, closing an **acceptance-bar-1 leak**: the HTTP query
-  adapter currently passes engine-internal insight keys (`breakdown_value`, `average_conversion_time`, …)
-  through verbatim. Sourced from consumer feedback (Tutore hit two S5-criticals) + a conclusive architect
-  consult. Creates a contract the Python query client must mirror (parity). **Landed here via
-  `add-later`; awaiting `/roadmap promote` to NOW** — see recommendation in the drafting note.
+  `RetentionRow`) + generic `QueryResult<TRow>`, closing the **acceptance-bar-1 leak** where the HTTP query
+  adapter passed engine-internal insight keys through verbatim. Row-level seal + `planning/QUERY-ROW-CONTRACT.md`
+  parity artifact shipped. (Built out of LATER via `/implement-epics E15`; NOW/LATER section reconciliation
+  still awaits `/roadmap promote`.)
 
 ## Cycle history
 
