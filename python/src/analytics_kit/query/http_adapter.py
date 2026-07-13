@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Literal, cast
+from typing import Literal, TypeVar, cast
 
 from ..adapter import DEFAULT_HTTP_TIMEOUT_SECONDS, NeutralResponse
 from .client import (
@@ -141,6 +141,21 @@ _WIRE_STATUS_ID_KEY = "id"
 _WIRE_COMPLETE_KEY = "complete"
 _WIRE_ERROR_KEY = "error"
 
+# --- Wire per-primitive insight result keys ---------------------------------------------
+#
+# The engine-internal field names inside each structured primitive's ``results`` entries. Consumed
+# INSIDE the per-primitive builders and NEVER surfaced onto a neutral row — the row-level neutrality
+# seal. (``breakdown_value`` in particular is the engine key the columns-absent pass-through leaked.)
+_WIRE_DAYS_KEY = "days"
+_WIRE_DATA_KEY = "data"
+_WIRE_BREAKDOWN_VALUE_KEY = "breakdown_value"
+_WIRE_ORDER_KEY = "order"
+_WIRE_COUNT_KEY = "count"
+_WIRE_CUSTOM_NAME_KEY = "custom_name"
+_WIRE_ACTION_ID_KEY = "action_id"
+_WIRE_DATE_KEY = "date"
+_WIRE_VALUES_KEY = "values"
+
 # --- Wire auth --------------------------------------------------------------------------
 _WIRE_AUTHORIZATION_HEADER = "Authorization"
 _WIRE_BEARER_SCHEME = "Bearer"
@@ -247,20 +262,85 @@ def _is_ok(status: int) -> bool:
     return _STATUS_OK_FLOOR <= status < _STATUS_OK_CEIL
 
 
-def _normalize_result(source: dict[str, object], from_cache: bool | None) -> QueryResult:
+_TRow = TypeVar("_TRow")
+RowBuilder = Callable[[list[object]], "list[_TRow]"]
+"""A per-primitive row builder: maps the untrusted ``results`` list into the primitive's rows.
+
+The SHARED envelope handling (the ``results`` list guard, the ``columns``/``generated_at``/
+``from_cache`` assembly, the neutral did-not-complete error) stays in :func:`_normalize_result`;
+only the row-building step is per-primitive, threaded down through ``_run``/``_poll_to_completion``/
+``_result_from_status`` so sync and async completion sinks yield identical rows. A ``None`` builder
+is ``raw_query``'s pre-per-primitive verbatim pass-through (columns-present zip / columns-absent
+object pass-through); the four structured primitives pass their flattening builder and IGNORE columns.
+"""
+
+
+def _normalize_result(
+    source: dict[str, object],
+    from_cache: bool | None,
+    row_builder: RowBuilder[_TRow] | None,
+) -> QueryResult[_TRow]:
     """Normalize a result-bearing wire object into the neutral :class:`QueryResult`.
 
     Takes the result-bearing object (NOT the full envelope), so the completed-poll path reuses it
-    on the nested ``query_status`` payload unchanged. Branches on shape: when the column list is
-    present the rows are cell-arrays zipped into keyed objects; when it is absent the entries are
-    already result objects and pass through as records. ``results`` is required on a well-formed
-    envelope, but the JSON is untrusted — a completed/zero-row envelope missing it surfaces as a
-    neutral error, never a raw ``KeyError``/``TypeError``.
+    on the nested ``query_status`` payload unchanged. The shared envelope scaffolding lives here in
+    ONE place across every primitive — the ``results`` list guard, the ``generated_at``/
+    ``from_cache`` assembly. The ROW-building step is per-primitive:
+
+    * ``row_builder is None`` — ``raw_query``'s verbatim pass-through: when the column list is
+      present the rows are cell-arrays zipped into keyed objects (the consumer's own SELECT
+      projection, already neutral); when absent the entries are result objects and pass through as
+      records. This is the ONE primitive that consults ``columns`` — the sole dialect-keyed surface.
+    * ``row_builder`` supplied — one of the four structured flatteners, which read only ``results``
+      and IGNORE ``columns`` entirely (a real insight response carries none; the result is built
+      with ``columns=[]`` so a spurious wire ``columns`` array can never re-surface engine column
+      names — that would reopen the leak).
+
+    ``results`` is required on a well-formed envelope, but the JSON is untrusted — a completed/
+    zero-row envelope missing it surfaces as a neutral error, never a raw ``KeyError``/``TypeError``.
     """
     raw_results = source.get(_WIRE_RESULTS_KEY)
     if not isinstance(raw_results, list):
         raise _QueryError("analytics-kit: query did not complete")
 
+    if row_builder is None:
+        columns = _columns_of(source)
+        # ``raw_query``'s rows are raw wire records — decoded through ``model_validate`` (the
+        # untrusted-wire boundary), unchanged from the pre-per-primitive behavior.
+        raw_rows: list[object] = (
+            [_zip_row(row, columns) for row in raw_results]
+            if columns
+            else [entry for entry in raw_results if isinstance(entry, dict)]
+        )
+        payload: dict[str, object] = {
+            "rows": raw_rows,
+            "columns": columns,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if from_cache is not None:
+            payload["from_cache"] = from_cache
+        return cast("QueryResult[_TRow]", QueryResult.model_validate(payload))
+
+    # The four structured primitives build already-trusted frozen-dataclass rows here (not decoded
+    # from wire), so the generic ``QueryResult`` is CONSTRUCTED DIRECTLY — no re-validation round-trip
+    # — with ``columns=[]`` (a structured insight response carries no ``columns``).
+    rows = row_builder(raw_results)
+    return QueryResult[_TRow](
+        rows=rows,
+        columns=[],
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        from_cache=from_cache,
+    )
+
+
+def _columns_of(source: dict[str, object]) -> list[QueryColumn]:
+    """The parallel ``columns``/``types`` schema — read by ``raw_query`` only.
+
+    The four structured builders IGNORE this and their result is built with ``columns=[]``: a real
+    trend/funnel/retention insight response carries no ``columns``/``types``, so letting a structured
+    row-builder key off them would reopen the leak (a spurious wire ``columns`` array re-surfacing
+    the engine column names on ``result.columns``).
+    """
     raw_columns = source.get(_WIRE_COLUMNS_KEY)
     raw_types = source.get(_WIRE_TYPES_KEY)
     column_names = raw_columns if isinstance(raw_columns, list) else []
@@ -270,20 +350,7 @@ def _normalize_result(source: dict[str, object], from_cache: bool | None) -> Que
     for i, name in enumerate(column_names):
         col_type = type_names[i] if i < len(type_names) else None
         columns.append(QueryColumn(name=str(name), type=str(col_type) if col_type is not None else None))
-
-    if columns:
-        rows = [_zip_row(row, columns) for row in raw_results]
-    else:
-        rows = [entry for entry in raw_results if isinstance(entry, dict)]
-
-    payload: dict[str, object] = {
-        "rows": rows,
-        "columns": columns,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    if from_cache is not None:
-        payload["from_cache"] = from_cache
-    return QueryResult.model_validate(payload)
+    return columns
 
 
 def _zip_row(row: object, columns: list[QueryColumn]) -> dict[str, object]:
@@ -292,6 +359,139 @@ def _zip_row(row: object, columns: list[QueryColumn]) -> dict[str, object]:
     if isinstance(row, dict):
         return row
     return {}
+
+
+def _optional_breakdown(value: object) -> str | None:
+    """The wire ``breakdown_value`` is engine-internal — surface as neutral ``breakdown`` only when
+    present, stringified, and never as a raw key on the row."""
+    return None if value is None else str(value)
+
+
+def _build_trend_rows(raw_results: list[object]) -> list[TrendRow]:
+    """De-branded from posthog's trends result: each ``results`` entry carries positionally-parallel
+    ``days: str[]`` (ISO bucket dates) and ``data: number[]`` (one value per bucket), flattened to
+    one neutral row per index. ``unique_count`` is byte-identical on the wire (same shape, only
+    server-side math differs) — it uses :func:`_build_unique_count_rows`, a thin wrapper over the
+    same walk. With a breakdown the backend returns one top-level entry per breakdown value, each
+    with its own ``days``/``data`` + ``breakdown_value`` (stringified onto ``breakdown``).
+    """
+    rows: list[TrendRow] = []
+    for entry in raw_results:
+        if not isinstance(entry, dict):
+            continue
+        days = entry.get(_WIRE_DAYS_KEY)
+        data = entry.get(_WIRE_DATA_KEY)
+        if not isinstance(days, list) or not isinstance(data, list):
+            continue
+        breakdown = _optional_breakdown(entry.get(_WIRE_BREAKDOWN_VALUE_KEY))
+        for i, bucket in enumerate(days):
+            value = data[i] if i < len(data) else None
+            if not isinstance(bucket, str) or not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            rows.append(TrendRow(bucket=bucket, value=value, breakdown=breakdown))
+    return rows
+
+
+def _build_unique_count_rows(raw_results: list[object]) -> list[UniqueCountRow]:
+    """Same wire walk as :func:`_build_trend_rows`, constructing the OWN-named :class:`UniqueCountRow`
+    (unique-count keeps its own row identity even though the fields coincide)."""
+    return [
+        UniqueCountRow(bucket=row.bucket, value=row.value, breakdown=row.breakdown)
+        for row in _build_trend_rows(raw_results)
+    ]
+
+
+def _funnel_event(step: dict[str, object]) -> str | None:
+    for key in (_WIRE_CUSTOM_NAME_KEY, _WIRE_ENTITY_NAME_KEY, _WIRE_ACTION_ID_KEY):
+        value = step.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _first_step_count(steps: list[object]) -> float:
+    for step in steps:
+        if isinstance(step, dict) and step.get(_WIRE_ORDER_KEY) == 0:
+            count = step.get(_WIRE_COUNT_KEY)
+            if isinstance(count, (int, float)) and not isinstance(count, bool):
+                return count
+    first = steps[0] if steps else None
+    if isinstance(first, dict):
+        count = first.get(_WIRE_COUNT_KEY)
+        if isinstance(count, (int, float)) and not isinstance(count, bool):
+            return count
+    return 0
+
+
+def _funnel_group_rows(steps: list[object]) -> list[FunnelStepRow]:
+    first_count = _first_step_count(steps)
+    out: list[FunnelStepRow] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        order = step.get(_WIRE_ORDER_KEY)
+        count = step.get(_WIRE_COUNT_KEY)
+        if not isinstance(order, int) or isinstance(order, bool):
+            continue
+        if not isinstance(count, int) or isinstance(count, bool):
+            continue
+        event = _funnel_event(step)
+        if event is None:
+            continue
+        conversion_rate = 0.0 if first_count == 0 else count / first_count
+        breakdown = _optional_breakdown(step.get(_WIRE_BREAKDOWN_VALUE_KEY))
+        out.append(
+            FunnelStepRow(
+                step=order,
+                event=event,
+                count=count,
+                conversion_rate=conversion_rate,
+                breakdown=breakdown,
+            )
+        )
+    return out
+
+
+def _build_funnel_rows(raw_results: list[object]) -> list[FunnelStepRow]:
+    """De-branded from posthog's funnel result: ``results`` is per-step objects (an array-of-arrays
+    when broken down — the outer layer is unwrapped per breakdown group). Each step carries ``order``
+    (0-based index), ``count``, and ``custom_name``/``name``/``action_id`` for the event identity.
+    ``conversion_rate`` is NOT a wire field — COMPUTED as ``count[step] / count[0]`` (overall
+    conversion from the first step, guarded ``count[0] == 0 -> 0.0`` to avoid a ``ZeroDivisionError``).
+    """
+    rows: list[FunnelStepRow] = []
+    for group in raw_results:
+        if isinstance(group, list):
+            rows.extend(_funnel_group_rows(group))
+        else:
+            rows.extend(_funnel_group_rows(raw_results))
+            break
+    return rows
+
+
+def _build_retention_rows(raw_results: list[object]) -> list[RetentionRow]:
+    """De-branded from posthog's retention result: ``results`` is cohort objects, each with ``date``
+    (the cohort start, ISO) and ``values: [{ count }]`` where the array index is the period (0 = the
+    cohort itself). Double loop: one neutral row per (cohort, period) cell; ``breakdown`` from the
+    cohort's ``breakdown_value`` when present.
+    """
+    rows: list[RetentionRow] = []
+    for cohort in raw_results:
+        if not isinstance(cohort, dict):
+            continue
+        date = cohort.get(_WIRE_DATE_KEY)
+        values = cohort.get(_WIRE_VALUES_KEY)
+        if not isinstance(date, str) or not isinstance(values, list):
+            continue
+        breakdown = _optional_breakdown(cohort.get(_WIRE_BREAKDOWN_VALUE_KEY))
+        for j, cell in enumerate(values):
+            if not isinstance(cell, dict):
+                continue
+            count = cell.get(_WIRE_COUNT_KEY)
+            if not isinstance(count, (int, float)) or isinstance(count, bool):
+                continue
+            rows.append(RetentionRow(cohort=date, period_index=j, value=count, breakdown=breakdown))
+    return rows
 
 
 class HttpQueryAdapter:
@@ -330,8 +530,7 @@ class HttpQueryAdapter:
                 _WIRE_FUNNEL_WINDOW_INTERVAL_UNIT_KEY: spec.within.unit,
             },
         }
-        # S1→S2 bridge: _run still yields the default dict rows; S2 makes it build FunnelStepRow.
-        return cast("QueryResult[FunnelStepRow]", self._run(_with_breakdown(query, spec.breakdown)))
+        return self._run(_with_breakdown(query, spec.breakdown), _build_funnel_rows)
 
     def retention(self, spec: RetentionSpec) -> QueryResult[RetentionRow]:
         query: dict[str, object] = {
@@ -343,8 +542,7 @@ class HttpQueryAdapter:
                 _WIRE_TOTAL_INTERVALS_KEY: spec.periods,
             },
         }
-        # S1→S2 bridge: _run still yields the default dict rows; S2 makes it build RetentionRow.
-        return cast("QueryResult[RetentionRow]", self._run(_with_breakdown(query, spec.breakdown)))
+        return self._run(_with_breakdown(query, spec.breakdown), _build_retention_rows)
 
     def trend(self, spec: TrendSpec) -> QueryResult[TrendRow]:
         query: dict[str, object] = {
@@ -353,8 +551,7 @@ class HttpQueryAdapter:
             _WIRE_INTERVAL_KEY: _INTERVAL_FOR_UNIT[spec.window.unit],
             _WIRE_DATE_RANGE_KEY: {_WIRE_DATE_FROM_KEY: _relative_date_from(spec.window)},
         }
-        # S1→S2 bridge: _run still yields the default dict rows; S2 makes it build TrendRow.
-        return cast("QueryResult[TrendRow]", self._run(_with_breakdown(query, spec.breakdown)))
+        return self._run(_with_breakdown(query, spec.breakdown), _build_trend_rows)
 
     def unique_count(self, spec: UniqueCountSpec) -> QueryResult[UniqueCountRow]:
         query: dict[str, object] = {
@@ -363,11 +560,10 @@ class HttpQueryAdapter:
             _WIRE_INTERVAL_KEY: _INTERVAL_FOR_UNIT[spec.window.unit],
             _WIRE_DATE_RANGE_KEY: {_WIRE_DATE_FROM_KEY: _relative_date_from(spec.window)},
         }
-        # S1→S2 bridge: _run still yields the default dict rows; S2 makes it build UniqueCountRow.
-        return cast("QueryResult[UniqueCountRow]", self._run(_with_breakdown(query, spec.breakdown)))
+        return self._run(_with_breakdown(query, spec.breakdown), _build_unique_count_rows)
 
     def raw_query(self, expr: str) -> QueryResult:
-        return self._run({_WIRE_KIND_KEY: _WIRE_RAW_QUERY_KIND, _WIRE_QUERY_KEY: expr})
+        return self._run({_WIRE_KIND_KEY: _WIRE_RAW_QUERY_KIND, _WIRE_QUERY_KEY: expr}, None)
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -398,7 +594,7 @@ class HttpQueryAdapter:
             raise _QueryError("analytics-kit: query request failed")
         return decoded
 
-    def _run(self, query: dict[str, object]) -> QueryResult:
+    def _run(self, query: dict[str, object], row_builder: RowBuilder[_TRow] | None) -> QueryResult[_TRow]:
         body = json.dumps({_WIRE_QUERY_KEY: query, _WIRE_REFRESH_KEY: _WIRE_REFRESH_ASYNC})
         envelope = self._post(self._url, _WIRE_METHOD_POST, body)
 
@@ -406,16 +602,19 @@ class HttpQueryAdapter:
         # Async when the backend accepted the query off-thread: a status envelope that is NOT yet
         # complete. Detection keys on ``complete != True``, NEVER on mere presence of the status
         # key — the COMPLETED poll response still carries that key, so presence-detection would
-        # loop forever on a done query.
+        # loop forever on a done query. The per-primitive ``row_builder`` threads through every
+        # completion sink so an inline result and a polled one yield identical neutral rows.
         if isinstance(status, dict) and status.get(_WIRE_COMPLETE_KEY) is not True:
-            return self._poll_to_completion(status)
+            return self._poll_to_completion(status, row_builder)
         if isinstance(status, dict):
-            return self._result_from_status(status)
+            return self._result_from_status(status, row_builder)
 
         from_cache = envelope.get(_WIRE_IS_CACHED_KEY)
-        return _normalize_result(envelope, from_cache if isinstance(from_cache, bool) else None)
+        return _normalize_result(envelope, from_cache if isinstance(from_cache, bool) else None, row_builder)
 
-    def _poll_to_completion(self, initial: dict[str, object]) -> QueryResult:
+    def _poll_to_completion(
+        self, initial: dict[str, object], row_builder: RowBuilder[_TRow] | None
+    ) -> QueryResult[_TRow]:
         """Block on an incomplete async status until it completes — a BOUNDED loop, never infinite.
 
         Terminal on ``complete == True`` (normalize the nested status payload), a wire ``error``
@@ -439,19 +638,22 @@ class HttpQueryAdapter:
             if status.get(_WIRE_ERROR_KEY) is True:
                 raise _QueryError("analytics-kit: query did not complete")
             if status.get(_WIRE_COMPLETE_KEY) is True:
-                return self._result_from_status(status)
+                return self._result_from_status(status, row_builder)
         raise _QueryError("analytics-kit: query did not complete")
 
-    def _result_from_status(self, status: dict[str, object]) -> QueryResult:
+    def _result_from_status(
+        self, status: dict[str, object], row_builder: RowBuilder[_TRow] | None
+    ) -> QueryResult[_TRow]:
         """Turn a completed status envelope into the neutral result, or surface its failure.
 
-        Reuses the SAME normalizer as the immediate path on the nested ``query_status`` payload,
-        which carries no sibling columns/types (its columns-absent pass-through branch applies).
+        Reuses the SAME normalizer AND the SAME per-primitive ``row_builder`` as the immediate path
+        on the nested ``query_status`` payload, so a result that arrives via poll flattens to the
+        identical neutral rows as one that arrives inline.
         """
         if status.get(_WIRE_ERROR_KEY) is True:
             raise _QueryError("analytics-kit: query did not complete")
         from_cache = status.get(_WIRE_IS_CACHED_KEY)
-        return _normalize_result(status, from_cache if isinstance(from_cache, bool) else None)
+        return _normalize_result(status, from_cache if isinstance(from_cache, bool) else None, row_builder)
 
 
 def create_http_query_adapter(config: QueryClientConfig, *, wait: Wait | None = None) -> HttpQueryAdapter:

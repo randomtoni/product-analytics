@@ -156,6 +156,24 @@ its neutral row type — the fix that closes the leak. It mirrors TS E15-S2.
   engine column names on `result.columns`). Only `raw_query`'s builder consults `columns` (its unchanged
   columns-present zip). The structured `QueryResult[...]` is constructed with `columns=[]`.
 
+> Reviewer suggestion (2026-07-13): `_first_step_count` is annotated `-> float` but its fallback
+> returns the int literal `0` — harmless (`0 == 0.0`, feeds a division), cosmetic only; return `0.0`
+> for symmetry with the `conversion_rate = 0.0` literal if touched.
+> Reviewer suggestion (2026-07-13): funnel guards `count` as `int`-only while trend/retention allow
+> `(int, float)` — deliberate and correct (`FunnelStepRow.count: int` per S1), but a silent divergence
+> from TS's uniform `number`. S3's fixture stage could add a one-line note so a future reader doesn't
+> "fix" it to accept float funnel counts.
+
 ## Shipped
 
-<!-- Empty at draft. Filled by /implement-epics on close. -->
+> Captured by `implement-epics` on 2026-07-13.
+
+- **Files changed:** `python/src/analytics_kit/query/http_adapter.py` (+243/-41) — split `_normalize_result`'s columns-absent branch into four flattening builders (`_build_trend_rows`/`_build_unique_count_rows`/`_build_funnel_rows`/`_build_retention_rows`); threaded a `RowBuilder[_TRow] | None` through all three completion sinks (`_run` inline, the direct already-complete-in-POST `_result_from_status`, and `_poll_to_completion` → `_result_from_status`); removed S1's four `# S1→S2 bridge` casts + comments; sealed the new insight wire keys into the `_WIRE_*` confinement.
+- **Files added:** none
+- **New public API:** none — behavior only (the seam types were S1). The four structured primitives now RETURN their neutral dataclass rows.
+- **Tests added:** none — S3 owns test authoring. Builder positive-proved every mapping via a scratch run (deleted).
+- **Commit:** `main` (message = story title)
+- **Reviewer notes:** ship-ready, no critical, first review, faithful **parity with TS E15-S2**. Reviewer ran all six TS `query-contract.fixtures.ts` payloads through the Python builders → **byte-for-byte match** with the TS `expectedRows` (conversion_rate 1.0/0.62/0.41, per-group breakdown 1.0/0.5/1.0/0.25, retention period_index 0=cohort, event precedence `custom_name→name→action_id`). **Three-sink threading is GENUINE** — reviewer drove a real trend payload through each sink independently (poll POST→GET→`q-1/`, the direct already-complete-in-POST non-poll sink, immediate inline) → identical `TrendRow` output; the easy-to-miss direct `_result_from_status` carries the builder. `ZeroDivisionError` guard explicit (`0.0 if first==0`). raw_query byte-unchanged (`None`-builder path, both branches). Structured builders ignore `columns`, construct `columns=[]`. Direct dataclass constructor for structured rows; `model_validate` only for raw_query's wire boundary. `bool`-exclusion numeric guards are a Python-specific correctness improvement over TS. neutrality 0 violations; serialization seal confirms no engine key on any row. `http_adapter.py` mypy-clean.
+- **THE key review call — 7 failing tests verified S3-owned inversions, NOT regressions.** Reviewer reproduced the builder's `git stash` counter-check (restoring S1's `http_adapter.py` makes all failing tests pass → they pin the OLD leak), and confirmed each feeds a columns-present cell-array through a structured primitive (impossible wire state → correct `[]`), failing ONLY on `.rows`/`.columns` while poll/transport/URL/error/neutrality assertions pass.
+- **Retry history:** none — shipped first attempt.
+- **Cross-story seams exposed:** Python pytest is 575/3-fail + quillstream 37/4-fail + 3+3 test-side mypy at S2 close — **S3 must clear ALL of it**: repoint the stale cell-array fixtures (`test_http_query_adapter.py:248`/`:289`, `test_real_stack_query_probe.py:129`, quillstream `test_query_exercise.py:135`/`:156`/`:171` + the 4 stale-fixture asserts) to realistic insight shapes; fix the `test_query_client.py:104` `_AltQueryClient` test-double Protocol pin; add/extend the row-level engine-key seal (`model_dump_json()`); add the per-primitive contract fixtures mirroring the TS values. After S3 the full Python + quillstream suites + mypy must be green.
