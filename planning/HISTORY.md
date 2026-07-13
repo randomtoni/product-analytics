@@ -3,6 +3,60 @@
 Cycle narrative, newest-first. The [ROADMAP](ROADMAP.md) holds the forward plan; this file holds
 what closed cycles established and why.
 
+## `query row contract` cross-tree work — closed 2026-07-13 (E15, E16)
+
+Closed an **acceptance-bar-1 neutrality leak** on the read side: the HTTP query adapter forwarded the
+query engine's internal insight keys through verbatim, so a provider-specific response shape reached the
+consumer — a swap-breaks-consumers leak in the exact spot bar A forbids. The four structured query
+primitives now return **documented, neutral, per-primitive rows**, sealed at the row level, with
+[`planning/QUERY-ROW-CONTRACT.md`](QUERY-ROW-CONTRACT.md) as the shared cross-language contract both trees
+port to cell-for-cell. Built out of LATER via `/implement-epics`, driven by Tutore's two S5-criticals plus
+an architect consult. **Breaking**, shipped within the pre-1.0 `0.1.0` line.
+
+- **TS row contract (E15).** Neutral per-primitive row types (`TrendRow` / `UniqueCountRow` /
+  `FunnelStepRow` / `RetentionRow`) + a generic `QueryResult<TRow>`; the HTTP query adapter's four
+  structured primitives normalize the engine response into camelCase neutral rows instead of passing
+  engine-internal keys through. Row-level seal + fixtures pin the exact neutral shape.
+
+- **Python parity port (E16).** The identical columns-absent leak closed in the Python `http_adapter.py`:
+  the same four primitives return documented snake_case rows (`{ bucket, value, breakdown? }` ·
+  `{ step, event, count, conversion_rate, breakdown? }` · `{ cohort, period_index, value, breakdown? }`),
+  row-level seal, fixtures mirroring the TS values cell-for-cell against `planning/QUERY-ROW-CONTRACT.md`.
+  Both trees now satisfy the shared read-side row contract (TS camelCase + Python snake_case).
+
+Epics archived to [`epics/done/`](epics/done/): E15-QRY-response-row-contract, E16-QRY-python-row-contract.
+
+## `capability completion` cycle — closed 2026-07-10 (E12, E13, E14)
+
+Filled the two capability slots the seam had declared-but-left-unimplemented since the `core` cycle
+(`FeatureFlagPort` and `SessionReplayPort`, both optional `None`-default), completing them **additively
+across both language trees** rather than widening the charter. The neutral interface for each is defined
+once on the seam and satisfied by each target's adapter, so both acceptance bars were re-proven — swap =
+one adapter, adopt = config only — now for flags (both trees) and replay (TS).
+
+- **Feature flags (E12 remote eval · E13 local eval).** The neutral `FeatureFlagPort` — async-first
+  snapshot model with a neutral `degraded`/`reason` signal so an eval failure is distinguishable from a
+  real "off" — plus `FlagContext`, the taxonomy `flags` slot, config-supplied bootstrap, and
+  remote-evaluation adapters across both trees (browser fetch, node round-trip, Python server) + the React
+  flag hook. E13 added **local (in-process) evaluation** — the server-shaped specialization (definition
+  polling + cohort/rollout match + fallback), TS-node + Python, at cross-tree hash parity behind the
+  unchanged `evaluate`, with **zero seam change** — the regression check that E12's port shape holds.
+
+- **Session replay (E14).** The neutral `SessionReplayPort` (`start` / `stop` / `isActive` /
+  `getReplayId`) + config-only adoption (sampling + privacy masking) + an rrweb-behind-the-adapter recorder
+  on a separate entrypoint + capture-side session/event linkage (re-key on rotation) + its own snapshot
+  delivery path (size-triggered flush, flush-on-teardown, sampling flush-guard). **Python:
+  N-A-BY-PLATFORM** — the slot stays permanently `None`, a final documented boundary (no server analog),
+  not a pending gap.
+
+Real-stack proof note carried forward: the end-to-end validation of E13 local eval (against a privileged
+definition-reading key) and E14 replay ingest (against a `$snapshot`-accepting key) still depends on
+external keys Claude Code cannot provision; the unit-level rule-matching / recorder / masking / linkage
+work is complete and gated.
+
+Epics archived to [`epics/done/`](epics/done/): E12-FF-flag-substrate-remote-eval, E13-FF-local-eval,
+E14-SR-session-replay.
+
 ## `Python parity` cycle — closed 2026-07-10 (PY1–PY8)
 
 The library became polyglot: a full Python implementation under `python/` at capability parity with

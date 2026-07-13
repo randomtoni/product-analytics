@@ -1,17 +1,16 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-13 — E15 (TS query row contract) + E16 (its Python parity port) both shipped + archived; the shared read-side row contract is now satisfied in both trees. NOW/LATER section reconciliation still awaits `/roadmap promote`
+Last updated: 2026-07-13 — capability-completion + query-row-contract cycles retired to history; NOW/UPCOMING/LATER cleared, awaiting next focus area
 
 ## Status
 
-Pre-1.0. Three cycles complete and archived: the vendor-neutral **`core`** seam and the **R1 targets**
-cycle in TypeScript, then **Python parity** — a full, server-shaped Python implementation at capability
-parity with the shipped TS surface. Both languages now live under a polyglot [`ts/`](../ts/) +
-[`python/`](../python/) layout; both acceptance bars and vendor-neutrality are gated as standing checks
-in each tree. The focus now shifts from breadth (a second language) to **depth** — the two
-declared-but-unimplemented capability ports, built across both trees. Closed cycles archive their epics
-to [`epics/done/`](epics/done/); the narrative of what each established lives in
-[`planning/HISTORY.md`](HISTORY.md).
+Pre-1.0. **Five cycles complete and archived**: the vendor-neutral **`core`** seam, the **R1 targets**
+cycle, **Python parity**, **capability completion** (feature-flags + session-replay), and the
+**query row contract** cross-tree work. Both language trees live under a polyglot [`ts/`](../ts/) +
+[`python/`](../python/) layout and are at capability + read-contract parity; both acceptance bars and
+vendor-neutrality are gated as standing checks in each tree. **No cycle is currently in flight** — the
+next focus area is user-driven. Closed cycles archive their epics to [`epics/done/`](epics/done/); the
+narrative of what each established lives in [`planning/HISTORY.md`](HISTORY.md).
 
 ## Sequencing
 
@@ -22,86 +21,17 @@ bar, not consumer pull.
 
 ## NOW
 
-**Cross-tree capability completion** — build out the two declared-but-unimplemented capability ports
-across **both** language trees. Each is already declared on the shipped seam (`FeatureFlagPort` and
-`SessionReplayPort` as optional, `None`-default capability slots), so this **finishes stubbed contracts
-additively** rather than widening the charter. The neutral interface is defined once and satisfied by
-each target's adapter, keeping provider-swap and config-only adoption intact. Prioritized against the
-SOTA / `posthog-js`-capability bar.
-
-- **feature-flags** — implement `FeatureFlagPort`: evaluation, bootstrap, local + server-side eval, flag
-  payloads. Core cross-platform surface for every mature analytics SDK — in the `posthog-js` reference it
-  lives in `core` + `browser` + `node`, so it is inherently server- **and** browser-shaped and advances
-  the TS *and* Python surfaces together. **Sequences first** — the broadest surface.
-- **session-replay** — implement `SessionReplayPort`: DOM capture. **Browser-shaped, TS-only in practice**
-  (no server analog), so it advances a narrower slice and **sequences after** feature-flags.
-
-### Epics
-
-**feature-flags** (sequences first — broadest surface, both trees):
-
-- **[E12-FF-flag-substrate-remote-eval](epics/done/E12-FF-flag-substrate-remote-eval.md)** *(done)* — the neutral
-  `FeatureFlagPort` (async-first snapshot model, with a neutral `degraded`/`reason` signal so eval
-  failure is distinguishable from a real "off") + `FlagContext` + taxonomy `flags` slot +
-  config-supplied bootstrap + **remote-evaluation** adapters (browser fetch, node round-trip, Python
-  server) across both trees + the React flag hook. `blocked_by: []`.
-- **[E13-FF-local-eval](epics/done/E13-FF-local-eval.md)** *(done)* — **local (in-process) evaluation**, the
-  server-shaped specialization (definition polling + `matchProperty` cohort/rollout eval + fallback),
-  TS-node + Python, **zero seam change** — the regression check that E12's port shape holds. Shipped at
-  cross-tree hash parity behind the unchanged `evaluate`.
-
-**session-replay** (sequences after — narrower, browser-only, TS):
-
-- **[E14-SR-session-replay](epics/done/E14-SR-session-replay.md)** *(done)* — the neutral `SessionReplayPort`
-  (`start`/`stop`/`isActive`/`getReplayId`) + config-only adoption (sampling + privacy masking) +
-  rrweb-behind-the-adapter recorder (separate entrypoint) + capture-side session/event linkage
-  (re-key on rotation) + own snapshot delivery path (size-triggered flush, flush-on-teardown, a
-  sampling flush-guard). **Python: N-A-BY-PLATFORM** (slot permanently `None` — a final documented
-  boundary). `blocked_by: []`.
-
-**Dependency graph:** `E12 → E13` (E13 needs E12's shipped port); `E14` is independent. A valid build
-order: **E12 → E13 → E14** (sequence flags before replay per the NOW framing; E14 could run in parallel
-with E13 but is scheduled after for a clean per-area push).
-
-**Exit criteria (cycle closes when all hold):** both ports finished additively on the seam with zero
-frozen-`AnalyticsProvider`-pin disturbance; **bar A** (provider-swap = one adapter, zero consumer
-change) and **bar B** (new-app = config only, zero library change) re-proven for flags (both trees) and
-replay (TS); parity matrix updated — feature-flags present in both trees (local eval server-shaped,
-browser-absent-by-platform), session-replay N-A-BY-PLATFORM on Python (final, not pending); the standing
-neutrality + gate suite green in both trees.
-
-## Development prerequisites
-
-External setup Claude Code cannot reach — gates the integration/real-stack proof of the epic noted,
-not its unit work.
-
-- **E13 (local eval)** — a live analytics project + a **privileged (definition-reading) API key** to
-  ground-truth local-eval results against a real remote eval (the PY8 lesson: the real path, not a
-  self-consistent mock). Unit-level rule-matching tests need no key.
-- **E14 (session replay)** — a live analytics project + an **ingest key that accepts session-recording
-  (`$snapshot`) payloads** to prove replay snapshots deliver end-to-end. Unit-level recorder/masking/
-  linkage tests need no key.
+_No cycle in flight._ The last cycle (`query row contract`) is closed and archived; nothing is queued to
+become the next focus. The **next focus area is user-driven** — name the next NOW area directly, or
+`/roadmap add-later <area>` → promote. Do not assume a next area; nothing is committed.
 
 ## UPCOMING
 
-_Empty — all committed forward work is in **NOW** (feature-flags + session-replay). New areas land here
-first, via `/roadmap add-later` → promote, once the NOW push is scoped._
+_Empty._
 
 ## LATER
 
-- **[E15-QRY-response-row-contract](epics/done/E15-QRY-response-row-contract.md)** *(done — `52b26ae`)* *(query; **breaking** → pre-1.0 0.2.0)* —
-  neutral, documented per-primitive read-side row contract (`TrendRow`/`UniqueCountRow`/`FunnelStepRow`/
-  `RetentionRow`) + generic `QueryResult<TRow>`, closing the **acceptance-bar-1 leak** where the HTTP query
-  adapter passed engine-internal insight keys through verbatim. Row-level seal + `planning/QUERY-ROW-CONTRACT.md`
-  parity artifact shipped. (Built out of LATER via `/implement-epics E15`; NOW/LATER section reconciliation
-  still awaits `/roadmap promote`.)
-- **[E16-QRY-python-row-contract](epics/done/E16-QRY-python-row-contract.md)** *(done — `7503b17`)* *(query, touches node/adapters; **breaking**)* —
-  the **Python parity port** of E15's read-side row contract, shipped. Closed the identical columns-absent
-  leak in the Python `http_adapter.py`: the four structured primitives now return documented neutral
-  snake_case rows (`{ bucket, value, breakdown? }` · `{ step, event, count, conversion_rate, breakdown? }` ·
-  `{ cohort, period_index, value, breakdown? }`), with a row-level seal and fixtures mirroring the TS values
-  cell-for-cell against `planning/QUERY-ROW-CONTRACT.md`. Both trees now satisfy the shared read-side row
-  contract. (Built out of LATER via `/implement-epics E16`; NOW/LATER reconciliation still awaits `/roadmap promote`.)
+_Empty._
 
 ## Cycle history
 
@@ -110,6 +40,8 @@ first, via `/roadmap add-later` → promote, once the NOW push is scoped._
 | `core` seam | 2026-07-08 | E1, E2, E3 → [`epics/done/`](epics/done/) |
 | `R1 targets` + audit | 2026-07-09 | E4, E5, E6, E7, E8, E9, E10, E11 → [`epics/done/`](epics/done/) |
 | `Python parity` | 2026-07-10 | PY1, PY2, PY3, PY4, PY5, PY6, PY7, PY8 → [`epics/done/`](epics/done/) |
+| `capability completion` | 2026-07-10 | E12, E13, E14 → [`epics/done/`](epics/done/) |
+| `query row contract` | 2026-07-13 | E15, E16 → [`epics/done/`](epics/done/) |
 
 ## How to read this file
 
