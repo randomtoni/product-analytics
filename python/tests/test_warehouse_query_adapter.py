@@ -18,6 +18,7 @@ from db_execute_fakes import FakeDbExecute
 from analytics_kit import (
     Duration,
     FunnelSpec,
+    RetentionRow,
     RetentionSpec,
     TrendRow,
     TrendSpec,
@@ -67,12 +68,9 @@ def test_both_query_adapters_satisfy_one_protocol_unchanged() -> None:
 
 
 def test_the_still_unimplemented_primitives_raise_a_neutral_not_implemented_error() -> None:
-    # S1 fills trend/unique_count; S2 fills funnel; retention/raw_query remain S3–S4 fill-in seats.
+    # S1 fills trend/unique_count; S2 fills funnel; S3 fills retention; raw_query remains the S4
+    # fill-in seat.
     adapter = WarehouseQueryAdapter(db_execute=_FAKE_EXEC)
-    with pytest.raises(NotImplementedError, match="warehouse query adapter is not yet implemented"):
-        adapter.retention(
-            RetentionSpec(cohort_event="a", return_event="b", periods=3, granularity="day")
-        )
     with pytest.raises(NotImplementedError, match="warehouse query adapter is not yet implemented"):
         adapter.raw_query("select 1")
 
@@ -703,3 +701,349 @@ def test_the_generated_funnel_sql_matches_the_canonical_cross_tree_string() -> N
 
     query = build_funnel_sql(_TWO_STEP_FUNNEL_SPEC)
     assert query.sql == _CANONICAL_FUNNEL_SQL
+
+
+# --- S3: retention COMPUTES through the injected DbExecute seam ------------------------------
+
+# The retention SQL returns one row per DENSE (cohort, period_index) cell:
+# (cohort, period_index, value[, breakdown]). Each adversarial scenario is driven by handing the
+# fake the grid rows THAT scenario's SQL would return — the SQL's cohort self-join / bounded-grid /
+# per-cohort-distinct-count logic is what produces those cells; the adapter + flat-row builder are
+# what this suite exercises directly (SQL shape is asserted separately). The running example is a
+# signed_up -> order_placed retention over 3 weekly periods. period_index=0 is the cohort's OWN
+# period throughout (the base cohort size measured via the RETURN event in the cohort's own bucket).
+
+_RETENTION_SPEC = RetentionSpec(
+    cohort_event="signed_up", return_event="order_placed", periods=3, granularity="week"
+)
+
+# A canned grid: two cohort buckets x 3 periods. period 0 is each cohort's own base (500, 420),
+# decaying across subsequent periods — matching the retention_cohorts contract fixture exactly.
+_RETENTION_GRID_RESULT = DbExecuteResult(
+    columns=[
+        DbColumn(name="cohort", type="text"),
+        DbColumn(name="period_index", type="int4"),
+        DbColumn(name="value", type="int8"),
+    ],
+    rows=[
+        ("2026-07-01", 0, 500),
+        ("2026-07-01", 1, 310),
+        ("2026-07-01", 2, 190),
+        ("2026-07-08", 0, 420),
+        ("2026-07-08", 1, 250),
+        ("2026-07-08", 2, 150),
+    ],
+)
+
+
+def test_retention_computes_routes_sql_through_seam_returns_flat_rows_one_per_cell() -> None:
+    fake = FakeDbExecute(_RETENTION_GRID_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.retention(_RETENTION_SPEC)
+
+    assert result.rows == [
+        RetentionRow(cohort="2026-07-01", period_index=0, value=500),
+        RetentionRow(cohort="2026-07-01", period_index=1, value=310),
+        RetentionRow(cohort="2026-07-01", period_index=2, value=190),
+        RetentionRow(cohort="2026-07-08", period_index=0, value=420),
+        RetentionRow(cohort="2026-07-08", period_index=1, value=250),
+        RetentionRow(cohort="2026-07-08", period_index=2, value=150),
+    ]
+    # cohort_event + return_event are the two positional params, in that order.
+    assert len(fake.calls) == 1
+    assert fake.calls[0].params == ["signed_up", "order_placed"]
+
+
+def test_retention_makes_one_db_execute_call_with_a_single_statement() -> None:
+    fake = FakeDbExecute(_RETENTION_GRID_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    adapter.retention(_RETENTION_SPEC)
+
+    assert len(fake.calls) == 1
+    # A single statement — no semicolon-joined batch of per-cohort or per-period queries.
+    assert len([s for s in fake.calls[0].sql.split(";") if s.strip()]) == 1
+
+
+def test_retention_sql_self_join_granularity_bucketing_dense_grid_per_cohort_distinct() -> None:
+    fake = FakeDbExecute(_RETENTION_GRID_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    adapter.retention(_RETENTION_SPEC)
+
+    sql = fake.calls[0].sql
+    # Cohort = actors who did the cohort event ($1), bucketed by granularity.
+    assert "date_trunc('week', timestamp) AS cohort_bucket" in sql
+    assert "WHERE event = $1" in sql
+    # Return rows = the return event ($2), same granularity bucketing.
+    assert "date_trunc('week', timestamp) AS return_bucket" in sql
+    assert "WHERE event = $2" in sql
+    # DENSE grid: generate_series over 0..periods-1 CROSS JOINed against distinct cohort buckets.
+    assert "generate_series(0, 2)" in sql
+    assert "CROSS JOIN generate_series(0, 2) AS p(period_index)" in sql
+    assert "SELECT DISTINCT cohort_bucket FROM cohort" in sql
+    # period_index=0 is the cohort's OWN bucket: return bucket is cohort_bucket + offset*interval,
+    # so offset 0 targets the cohort's own bucket (not the first subsequent bucket).
+    assert "g.cohort_bucket + (g.period_index * interval '1 week')" in sql
+    # Per-cohort distinct-actor count (assert positively — retention legitimately uses distinct).
+    assert "count(DISTINCT c.distinct_id) AS value" in sql
+    # Dense LEFT JOIN so an empty cell surfaces as 0, never a gap.
+    assert "LEFT JOIN cells" in sql
+    assert "coalesce(cells.value, 0) AS value" in sql
+    # day/week/month -> bare ISO date cohort label.
+    assert "to_char(g.cohort_bucket, 'YYYY-MM-DD') AS cohort" in sql
+    # Over the typed view, never the base events table.
+    assert "FROM events_typed" in sql
+    assert "FROM events\n" not in sql
+
+
+def test_retention_adversarial_period_zero_is_the_cohort_base_not_first_return_period() -> None:
+    # period_index=0 is the cohort's OWN period (the common off-by-one). The p0 cell is the cohort
+    # base measured via the return event in the cohort's own bucket, NOT the first SUBSEQUENT period.
+    fake = FakeDbExecute(_RETENTION_GRID_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.retention(_RETENTION_SPEC)
+
+    cohort1 = [r for r in result.rows if r.cohort == "2026-07-01"]
+    # p0 is the cohort's own-bucket base (500) — the largest cell; p1/p2 decay.
+    assert cohort1[0] == RetentionRow(cohort="2026-07-01", period_index=0, value=500)
+    assert cohort1[0].value > cohort1[1].value
+    assert cohort1[1].value > cohort1[2].value
+    # The offset arithmetic makes p0 target the cohort's OWN bucket (offset 0), not the next bucket.
+    assert "g.cohort_bucket + (g.period_index * interval '1 week')" in fake.calls[0].sql
+
+
+def test_retention_adversarial_actor_in_multiple_cohorts_counted_per_cohort_not_globally() -> None:
+    # An actor doing the cohort event in two buckets is a member of BOTH cohorts; the per-cell
+    # distinct-count is per-cohort, not global. Both cohorts' bases stand independently — a global
+    # distinct-count would have deduped a recurring actor across cohorts.
+    multi_cohort = DbExecuteResult(
+        columns=[DbColumn(name="cohort"), DbColumn(name="period_index"), DbColumn(name="value")],
+        rows=[
+            ("2026-07-01", 0, 500),
+            ("2026-07-01", 1, 310),
+            ("2026-07-01", 2, 190),
+            ("2026-07-08", 0, 420),
+            ("2026-07-08", 1, 250),
+            ("2026-07-08", 2, 150),
+        ],
+    )
+    fake = FakeDbExecute(multi_cohort)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.retention(_RETENTION_SPEC)
+
+    c1p0 = next(r for r in result.rows if r.cohort == "2026-07-01" and r.period_index == 0)
+    c2p0 = next(r for r in result.rows if r.cohort == "2026-07-08" and r.period_index == 0)
+    assert c1p0 == RetentionRow(cohort="2026-07-01", period_index=0, value=500)
+    assert c2p0 == RetentionRow(cohort="2026-07-08", period_index=0, value=420)
+    # The distinct-count is GROUPED per cohort_bucket (per-cohort), never a single global count.
+    assert "GROUP BY g.cohort_bucket, g.period_index" in fake.calls[0].sql
+    assert "count(DISTINCT c.distinct_id)" in fake.calls[0].sql
+
+
+def test_retention_adversarial_return_outside_window_contributes_to_no_cell() -> None:
+    # A return event past `periods` buckets lands on no grid cell (the grid is bounded to
+    # 0..periods-1) and contributes to nothing. The returned grid has exactly periods cells, with the
+    # out-of-window activity NOT inflating any cell.
+    bounded = DbExecuteResult(
+        columns=[DbColumn(name="cohort"), DbColumn(name="period_index"), DbColumn(name="value")],
+        rows=[("2026-07-01", 0, 100), ("2026-07-01", 1, 40), ("2026-07-01", 2, 12)],
+    )
+    fake = FakeDbExecute(bounded)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.retention(_RETENTION_SPEC)
+
+    # Exactly `periods` cells for the single cohort — no period_index >= 3 leaks in.
+    assert len(result.rows) == 3
+    assert all(r.period_index < 3 for r in result.rows)
+    # The grid is bounded by generate_series(0, periods-1); nothing past it is generated.
+    assert "generate_series(0, 2)" in fake.calls[0].sql
+
+
+def test_retention_adversarial_no_return_actor_counted_in_period_zero_decays_after() -> None:
+    # A cohort member who never returns is counted in period 0 (the base, via the return event in
+    # the cohort's own bucket) but decays to 0 in later periods; the dense LEFT JOIN emits those
+    # later cells as value 0 rather than dropping them.
+    no_return = DbExecuteResult(
+        columns=[DbColumn(name="cohort"), DbColumn(name="period_index"), DbColumn(name="value")],
+        rows=[("2026-07-01", 0, 80), ("2026-07-01", 1, 0), ("2026-07-01", 2, 0)],
+    )
+    fake = FakeDbExecute(no_return)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.retention(_RETENTION_SPEC)
+
+    assert result.rows == [
+        RetentionRow(cohort="2026-07-01", period_index=0, value=80),
+        RetentionRow(cohort="2026-07-01", period_index=1, value=0),
+        RetentionRow(cohort="2026-07-01", period_index=2, value=0),
+    ]
+    # The decayed cells are PRESENT rows with value 0 (dense), not omitted — coalesce fills them.
+    assert "coalesce(cells.value, 0)" in fake.calls[0].sql
+
+
+def test_retention_adversarial_sparse_cohort_zero_cell_still_emits_a_row() -> None:
+    # A sparse cohort with a base (p0) and a p2 blip but a completely empty p1. The dense grid fills
+    # p1 with 0 rather than skipping it — the row count stays cohorts x periods, no gaps.
+    sparse = DbExecuteResult(
+        columns=[DbColumn(name="cohort"), DbColumn(name="period_index"), DbColumn(name="value")],
+        rows=[("2026-07-01", 0, 60), ("2026-07-01", 1, 0), ("2026-07-01", 2, 5)],
+    )
+    fake = FakeDbExecute(sparse)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.retention(_RETENTION_SPEC)
+
+    assert len(result.rows) == 3
+    assert [r.period_index for r in result.rows] == [0, 1, 2]
+    assert next(r for r in result.rows if r.period_index == 1) == RetentionRow(
+        cohort="2026-07-01", period_index=1, value=0
+    )
+
+
+def test_retention_with_a_breakdown_one_grid_per_value_stringified_on_every_row_jsonb_group_by() -> None:
+    breakdown_result = DbExecuteResult(
+        columns=[
+            DbColumn(name="cohort"),
+            DbColumn(name="period_index"),
+            DbColumn(name="value"),
+            DbColumn(name="breakdown"),
+        ],
+        rows=[
+            ("2026-07-01", 0, 300, "pro"),
+            ("2026-07-01", 1, 180, "pro"),
+            ("2026-07-01", 0, 200, "free"),
+            ("2026-07-01", 1, 60, "free"),
+        ],
+    )
+    fake = FakeDbExecute(breakdown_result)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.retention(
+        RetentionSpec(
+            cohort_event="signed_up",
+            return_event="order_placed",
+            periods=2,
+            granularity="week",
+            breakdown="plan",
+        )
+    )
+
+    assert result.rows == [
+        RetentionRow(cohort="2026-07-01", period_index=0, value=300, breakdown="pro"),
+        RetentionRow(cohort="2026-07-01", period_index=1, value=180, breakdown="pro"),
+        RetentionRow(cohort="2026-07-01", period_index=0, value=200, breakdown="free"),
+        RetentionRow(cohort="2026-07-01", period_index=1, value=60, breakdown="free"),
+    ]
+    sql = fake.calls[0].sql
+    assert "properties ->> 'plan' AS bd" in sql
+    assert "GROUP BY g.cohort_bucket, g.bd, g.period_index" in sql
+    # One grid per breakdown value: buckets carry the breakdown, the grid cross-joins it.
+    assert "SELECT DISTINCT cohort_bucket, bd FROM cohort" in sql
+
+
+def test_retention_without_a_breakdown_emits_no_breakdown_path_and_rows_omit_breakdown() -> None:
+    fake = FakeDbExecute(_RETENTION_GRID_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.retention(_RETENTION_SPEC)
+
+    assert "properties ->>" not in fake.calls[0].sql
+    for row in result.rows:
+        assert row.breakdown is None
+
+
+def test_retention_rows_match_the_row_type_no_engine_wire_field_leaks() -> None:
+    fake = FakeDbExecute(_RETENTION_GRID_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.retention(_RETENTION_SPEC)
+
+    # The frozen RetentionRow dataclass admits only cohort/period_index/value/breakdown — no engine
+    # wire field can attach.
+    for row in result.rows:
+        assert set(vars(row).keys()) == {"cohort", "period_index", "value", "breakdown"}
+        assert not hasattr(row, "breakdown_value")
+
+
+def test_retention_breakdown_key_with_an_embedded_single_quote_is_sql_escaped() -> None:
+    fake = FakeDbExecute(_RETENTION_GRID_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    adapter.retention(
+        RetentionSpec(
+            cohort_event="signed_up",
+            return_event="order_placed",
+            periods=3,
+            granularity="week",
+            breakdown="o'brien",
+        )
+    )
+
+    assert "properties ->> 'o''brien'" in fake.calls[0].sql
+
+
+def test_retention_day_and_month_granularity_swaps_truncation_and_offset_interval_unit() -> None:
+    fake = FakeDbExecute(_RETENTION_GRID_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    adapter.retention(
+        RetentionSpec(cohort_event="signed_up", return_event="order_placed", periods=3, granularity="day")
+    )
+    adapter.retention(
+        RetentionSpec(cohort_event="signed_up", return_event="order_placed", periods=3, granularity="month")
+    )
+
+    day_sql = fake.calls[0].sql
+    month_sql = fake.calls[1].sql
+    assert "date_trunc('day', timestamp) AS cohort_bucket" in day_sql
+    assert "g.cohort_bucket + (g.period_index * interval '1 day')" in day_sql
+    assert "date_trunc('month', timestamp) AS cohort_bucket" in month_sql
+    assert "g.cohort_bucket + (g.period_index * interval '1 month')" in month_sql
+
+
+# The exact canonical retention SQL string for the plain 3-period weekly case. MIRRORED
+# byte-for-byte in the TS warehouse adapter test — the two assertions together pin cross-tree
+# retention SQL parity (the Postgres string is language-agnostic).
+_CANONICAL_RETENTION_SQL = (
+    "WITH cohort AS (\n"
+    "  SELECT distinct_id, date_trunc('week', timestamp) AS cohort_bucket\n"
+    "  FROM events_typed\n"
+    "  WHERE event = $1\n"
+    "  GROUP BY distinct_id, date_trunc('week', timestamp)\n"
+    "),\n"
+    "returns AS (\n"
+    "  SELECT distinct_id, date_trunc('week', timestamp) AS return_bucket\n"
+    "  FROM events_typed\n"
+    "  WHERE event = $2\n"
+    "  GROUP BY distinct_id, date_trunc('week', timestamp)\n"
+    "),\n"
+    "buckets AS (SELECT DISTINCT cohort_bucket FROM cohort),\n"
+    "grid AS (\n"
+    "  SELECT b.cohort_bucket, p.period_index\n"
+    "  FROM buckets b\n"
+    "  CROSS JOIN generate_series(0, 2) AS p(period_index)\n"
+    "),\n"
+    "cells AS (\n"
+    "  SELECT g.cohort_bucket, g.period_index, count(DISTINCT c.distinct_id) AS value\n"
+    "  FROM grid g\n"
+    "  JOIN cohort c ON c.cohort_bucket = g.cohort_bucket\n"
+    "  JOIN returns r ON r.distinct_id = c.distinct_id AND r.return_bucket = g.cohort_bucket + (g.period_index * interval '1 week')\n"
+    "  GROUP BY g.cohort_bucket, g.period_index\n"
+    ")\n"
+    "SELECT to_char(g.cohort_bucket, 'YYYY-MM-DD') AS cohort, g.period_index AS period_index, coalesce(cells.value, 0) AS value\n"
+    "FROM grid g\n"
+    "  LEFT JOIN cells ON cells.cohort_bucket = g.cohort_bucket AND cells.period_index = g.period_index\n"
+    "ORDER BY g.cohort_bucket, g.period_index"
+)
+
+
+def test_the_generated_retention_sql_matches_the_canonical_cross_tree_string() -> None:
+    from analytics_kit.query.warehouse_sql import build_retention_sql
+
+    query = build_retention_sql(_RETENTION_SPEC)
+    assert query.sql == _CANONICAL_RETENTION_SQL

@@ -54,6 +54,8 @@ from .warehouse_sql import (
     assemble_result,
     build_funnel_rows,
     build_funnel_sql,
+    build_retention_rows,
+    build_retention_sql,
     build_trend_rows,
     build_trend_sql,
     build_unique_count_sql,
@@ -87,7 +89,9 @@ class WarehouseQueryAdapter:
         return assemble_result(result, build_funnel_rows(spec.steps))
 
     def retention(self, spec: RetentionSpec) -> QueryResult[RetentionRow]:
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        query = build_retention_sql(spec)
+        result = self._db_execute.execute(query.sql, query.params)
+        return assemble_result(result, build_retention_rows)
 
     def trend(self, spec: TrendSpec) -> QueryResult[TrendRow]:
         query = build_trend_sql(spec)

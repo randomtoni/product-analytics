@@ -3,7 +3,7 @@ import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { expect, expectTypeOf, test } from 'vitest';
 import type { DbExecuteResult } from './db-execute';
 import { createFakeDbExecute } from './db-execute.fixtures';
-import type { AnalyticsQueryClient, FunnelSpec } from './query-client';
+import type { AnalyticsQueryClient, FunnelSpec, RetentionSpec } from './query-client';
 import {
   WarehouseQueryAdapter,
   createWarehouseQueryAdapter,
@@ -86,29 +86,18 @@ test('the adapter never sees a DSN — its only injected field is the opaque DbE
 
 // Called through the AnalyticsQueryClient<TX> interface — the bar-A surface a consumer sees.
 
-// S1 fills `trend`/`uniqueCount`; S2 fills `funnel`; `retention`/`rawQuery` remain S3–S4 fill-in
-// seats and still throw the neutral not-implemented error.
+// S1 fills `trend`/`uniqueCount`; S2 fills `funnel`; S3 fills `retention`; `rawQuery` remains the
+// S4 fill-in seat and still throws the neutral not-implemented error.
 
-test('the still-unimplemented methods reject with the neutral not-implemented error (no vendor leak)', async () => {
+test('the still-unimplemented method rejects with the neutral not-implemented error (no vendor leak)', async () => {
   const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fakeExec() });
 
-  await expect(
-    client.retention({
-      cohortEvent: 'signed_up',
-      returnEvent: 'order_placed',
-      periods: 4,
-      granularity: 'week',
-    })
-  ).rejects.toThrow(NOT_IMPLEMENTED);
   await expect(client.rawQuery('SELECT 1')).rejects.toThrow(NOT_IMPLEMENTED);
 });
 
 test('the not-implemented error message names no vendor', async () => {
   const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fakeExec() });
-  for (const run of [
-    () => client.retention({ cohortEvent: 'signed_up', returnEvent: 'order_placed', periods: 1, granularity: 'day' }),
-    () => client.rawQuery('SELECT 1'),
-  ]) {
+  for (const run of [() => client.rawQuery('SELECT 1')]) {
     await expect(run()).rejects.toThrow(/^analytics: /);
     await expect(run()).rejects.not.toThrow(/posthog/i);
   }
@@ -691,4 +680,361 @@ test('the generated funnel SQL matches the canonical cross-tree string (byte-ide
   await client.funnel(twoStepFunnelSpec);
 
   expect(fake.calls[0].sql).toBe(CANONICAL_FUNNEL_SQL);
+});
+
+// --- S3: retention COMPUTES through the injected DbExecute seam ------------------------------
+
+// The retention SQL returns one row per DENSE (cohort, period_index) cell:
+// `(cohort, period_index, value[, breakdown])`. Each adversarial scenario is driven by handing the
+// fake the grid rows THAT scenario's SQL would return — the SQL's cohort self-join / bounded-grid /
+// per-cohort-distinct-count logic is what produces those cells; the adapter + flat-row builder are
+// what this suite exercises directly (SQL shape is asserted separately). The running example is a
+// signed_up → order_placed retention over 3 weekly periods. `period_index=0` is the cohort's OWN
+// period throughout (the base cohort size measured via the RETURN event in the cohort's own bucket).
+
+const retentionSpec: RetentionSpec<TX> = {
+  cohortEvent: 'signed_up',
+  returnEvent: 'order_placed',
+  periods: 3,
+  granularity: 'week',
+};
+
+// A canned grid: two cohort buckets × 3 periods. period 0 is each cohort's own base (500, 420),
+// decaying across subsequent periods — matching the retentionCohorts contract fixture exactly.
+const retentionGridResult: DbExecuteResult = {
+  columns: [
+    { name: 'cohort', type: 'text' },
+    { name: 'period_index', type: 'int4' },
+    { name: 'value', type: 'int8' },
+  ],
+  rows: [
+    ['2026-07-01', 0, 500],
+    ['2026-07-01', 1, 310],
+    ['2026-07-01', 2, 190],
+    ['2026-07-08', 0, 420],
+    ['2026-07-08', 1, 250],
+    ['2026-07-08', 2, 150],
+  ],
+};
+
+test('retention COMPUTES: routes SQL through the seam, returns flat RetentionRows (one per cell)', async () => {
+  const fake = createFakeDbExecute(retentionGridResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.retention(retentionSpec);
+
+  expect(result.rows).toEqual([
+    { cohort: '2026-07-01', periodIndex: 0, value: 500 },
+    { cohort: '2026-07-01', periodIndex: 1, value: 310 },
+    { cohort: '2026-07-01', periodIndex: 2, value: 190 },
+    { cohort: '2026-07-08', periodIndex: 0, value: 420 },
+    { cohort: '2026-07-08', periodIndex: 1, value: 250 },
+    { cohort: '2026-07-08', periodIndex: 2, value: 150 },
+  ]);
+  // cohortEvent + returnEvent are the two positional params, in that order.
+  expect(fake.calls).toHaveLength(1);
+  expect(fake.calls[0].params).toEqual(['signed_up', 'order_placed']);
+});
+
+test('retention makes ONE DbExecute call with a SINGLE statement (dense grid, not query-per-cohort/period)', async () => {
+  const fake = createFakeDbExecute(retentionGridResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  await client.retention(retentionSpec);
+
+  expect(fake.calls).toHaveLength(1);
+  // A single statement — no semicolon-joined batch of per-cohort or per-period queries.
+  expect(fake.calls[0].sql.split(';').filter((s) => s.trim().length > 0)).toHaveLength(1);
+});
+
+test('retention SQL: cohort self-join, granularity bucketing, dense generate_series grid, per-cohort distinct count', async () => {
+  const fake = createFakeDbExecute(retentionGridResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  await client.retention(retentionSpec);
+
+  const sql = fake.calls[0].sql;
+  // Cohort = actors who did the cohort event ($1), bucketed by granularity.
+  expect(sql).toContain("date_trunc('week', timestamp) AS cohort_bucket");
+  expect(sql).toContain('WHERE event = $1');
+  // Return rows = the return event ($2), same granularity bucketing.
+  expect(sql).toContain("date_trunc('week', timestamp) AS return_bucket");
+  expect(sql).toContain('WHERE event = $2');
+  // DENSE grid: generate_series over 0..periods-1 CROSS JOINed against distinct cohort buckets.
+  expect(sql).toContain('generate_series(0, 2)');
+  expect(sql).toContain('CROSS JOIN generate_series(0, 2) AS p(period_index)');
+  expect(sql).toContain('SELECT DISTINCT cohort_bucket FROM cohort');
+  // period_index=0 is the cohort's OWN bucket: the return bucket is cohort_bucket + offset*interval,
+  // so offset 0 targets the cohort's own bucket (not the first subsequent bucket).
+  expect(sql).toContain("g.cohort_bucket + (g.period_index * interval '1 week')");
+  // Per-cohort distinct-actor count (positive assertion — retention legitimately uses distinct).
+  expect(sql).toContain('count(DISTINCT c.distinct_id) AS value');
+  // Dense LEFT JOIN so an empty cell surfaces as 0, never a gap.
+  expect(sql).toContain('LEFT JOIN cells');
+  expect(sql).toContain('coalesce(cells.value, 0) AS value');
+  // day/week/month → bare ISO date cohort label.
+  expect(sql).toContain("to_char(g.cohort_bucket, 'YYYY-MM-DD') AS cohort");
+  // Over the typed view, never the base events table.
+  expect(sql).toContain('FROM events_typed');
+  expect(sql).not.toContain('FROM events ');
+});
+
+// ADVERSARIAL — period_index=0 is the cohort's OWN period (the most common off-by-one). The p0 cell
+// is the cohort base measured via the return event in the cohort's own bucket, NOT the first
+// SUBSEQUENT period. Asserted explicitly against the base values.
+test('retention ADVERSARIAL period_index=0 is the cohort base (its own period), not the first return period', async () => {
+  const fake = createFakeDbExecute(retentionGridResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.retention(retentionSpec);
+
+  // p0 is the cohort's own-bucket base (500 / 420) — the largest cell of each cohort; p1/p2 decay.
+  const cohort1 = result.rows.filter((r) => r.cohort === '2026-07-01');
+  expect(cohort1[0]).toEqual({ cohort: '2026-07-01', periodIndex: 0, value: 500 });
+  expect(cohort1[0].value).toBeGreaterThan(cohort1[1].value);
+  expect(cohort1[1].value).toBeGreaterThan(cohort1[2].value);
+  // The offset arithmetic makes p0 target the cohort's OWN bucket (offset 0), not the next bucket.
+  expect(fake.calls[0].sql).toContain("g.cohort_bucket + (g.period_index * interval '1 week')");
+});
+
+// ADVERSARIAL — actor in multiple cohorts: an actor doing the cohort event in two buckets is a
+// member of BOTH cohorts; the per-cell distinct-count is per-cohort, not global. The grid the SQL
+// returns reflects that: the same actor is counted once in each cohort's cells. Here the two
+// cohorts' p0 bases OVERLAP on one shared actor, yet each cohort's p0 counts that actor
+// independently (500 and 420 respectively) — a global distinct-count would have deduped across.
+test('retention ADVERSARIAL actor in multiple cohorts: counted per-cohort, not globally deduped', async () => {
+  // Two cohorts whose base counts include the same recurring actor; the per-cohort counts stand
+  // independently (the SQL groups by cohort_bucket, so a multi-cohort actor participates in each).
+  const multiCohortResult: DbExecuteResult = {
+    columns: [{ name: 'cohort' }, { name: 'period_index' }, { name: 'value' }],
+    rows: [
+      ['2026-07-01', 0, 500],
+      ['2026-07-01', 1, 310],
+      ['2026-07-01', 2, 190],
+      ['2026-07-08', 0, 420],
+      ['2026-07-08', 1, 250],
+      ['2026-07-08', 2, 150],
+    ],
+  };
+  const fake = createFakeDbExecute(multiCohortResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.retention(retentionSpec);
+
+  // Both cohorts' bases are present and counted independently — no cross-cohort dedup.
+  const c1p0 = result.rows.find((r) => r.cohort === '2026-07-01' && r.periodIndex === 0);
+  const c2p0 = result.rows.find((r) => r.cohort === '2026-07-08' && r.periodIndex === 0);
+  expect(c1p0).toEqual({ cohort: '2026-07-01', periodIndex: 0, value: 500 });
+  expect(c2p0).toEqual({ cohort: '2026-07-08', periodIndex: 0, value: 420 });
+  // The distinct-count is GROUPED per cohort_bucket (per-cohort), never a single global count.
+  expect(fake.calls[0].sql).toContain('GROUP BY g.cohort_bucket, g.period_index');
+  expect(fake.calls[0].sql).toContain('count(DISTINCT c.distinct_id)');
+});
+
+// ADVERSARIAL — return outside the periods window: a return event past `periods` buckets lands on
+// no grid cell (the grid is bounded to 0..periods-1) and contributes to nothing. The SQL the fake
+// stands in for would join returns only where return_bucket = cohort_bucket + offset for offset in
+// 0..periods-1, so an out-of-window return never appears. The returned grid has exactly
+// cohorts × periods rows (6), with the out-of-window activity NOT inflating any cell.
+test('retention ADVERSARIAL return outside the periods window contributes to no cell (bounded grid)', async () => {
+  // A cohort whose members returned in period 2 AND far outside the window; only the in-window
+  // return is reflected. The grid still has exactly periods (3) cells for the single cohort.
+  const boundedResult: DbExecuteResult = {
+    columns: [{ name: 'cohort' }, { name: 'period_index' }, { name: 'value' }],
+    rows: [
+      ['2026-07-01', 0, 100],
+      ['2026-07-01', 1, 40],
+      ['2026-07-01', 2, 12],
+    ],
+  };
+  const fake = createFakeDbExecute(boundedResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.retention(retentionSpec);
+
+  // Exactly `periods` cells for the single cohort — no period_index >= 3 leaks in from an
+  // out-of-window return.
+  expect(result.rows).toHaveLength(3);
+  expect(result.rows.every((r) => r.periodIndex < 3)).toBe(true);
+  // The grid is bounded by generate_series(0, periods-1); nothing past it is generated.
+  expect(fake.calls[0].sql).toContain('generate_series(0, 2)');
+});
+
+// ADVERSARIAL — no-return actor: a cohort member who never returns is counted in period 0 (the
+// base, via the return event in the cohort's own bucket) but decays to 0 in later periods. The
+// dense LEFT JOIN emits those later cells as value 0 rather than dropping them.
+test('retention ADVERSARIAL no-return actor: counted in period 0, decays to 0 in later periods (dense)', async () => {
+  const noReturnResult: DbExecuteResult = {
+    columns: [{ name: 'cohort' }, { name: 'period_index' }, { name: 'value' }],
+    rows: [
+      ['2026-07-01', 0, 80],
+      ['2026-07-01', 1, 0],
+      ['2026-07-01', 2, 0],
+    ],
+  };
+  const fake = createFakeDbExecute(noReturnResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.retention(retentionSpec);
+
+  expect(result.rows).toEqual([
+    { cohort: '2026-07-01', periodIndex: 0, value: 80 },
+    { cohort: '2026-07-01', periodIndex: 1, value: 0 },
+    { cohort: '2026-07-01', periodIndex: 2, value: 0 },
+  ]);
+  // The decayed cells are PRESENT rows with value 0 (dense), not omitted — coalesce fills them.
+  expect(fake.calls[0].sql).toContain('coalesce(cells.value, 0)');
+});
+
+// ADVERSARIAL — empty/sparse cohort: a cohort with a zero cell still emits a row with value 0. The
+// grid is dense over 0..periods-1 so there are NO gaps — a missing count becomes a present 0 cell.
+test('retention ADVERSARIAL sparse cohort: a zero cell still emits a row with value 0 (no gaps)', async () => {
+  // A sparse cohort: it has a base (p0) and a p2 blip but a completely empty p1. The dense grid
+  // fills p1 with 0 rather than skipping it — the row count stays cohorts × periods.
+  const sparseResult: DbExecuteResult = {
+    columns: [{ name: 'cohort' }, { name: 'period_index' }, { name: 'value' }],
+    rows: [
+      ['2026-07-01', 0, 60],
+      ['2026-07-01', 1, 0],
+      ['2026-07-01', 2, 5],
+    ],
+  };
+  const fake = createFakeDbExecute(sparseResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.retention(retentionSpec);
+
+  // Every period is present — the p1 gap is a value-0 row, not a missing row.
+  expect(result.rows).toHaveLength(3);
+  expect(result.rows.map((r) => r.periodIndex)).toEqual([0, 1, 2]);
+  expect(result.rows.find((r) => r.periodIndex === 1)).toEqual({
+    cohort: '2026-07-01',
+    periodIndex: 1,
+    value: 0,
+  });
+});
+
+test('retention with a breakdown: one grid per breakdown value, breakdown stringified onto every row, JSONB GROUP BY', async () => {
+  const breakdownResult: DbExecuteResult = {
+    columns: [
+      { name: 'cohort' },
+      { name: 'period_index' },
+      { name: 'value' },
+      { name: 'breakdown' },
+    ],
+    rows: [
+      ['2026-07-01', 0, 300, 'pro'],
+      ['2026-07-01', 1, 180, 'pro'],
+      ['2026-07-01', 0, 200, 'free'],
+      ['2026-07-01', 1, 60, 'free'],
+    ],
+  };
+  const fake = createFakeDbExecute(breakdownResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.retention({ ...retentionSpec, periods: 2, breakdown: 'plan' });
+
+  expect(result.rows).toEqual([
+    { cohort: '2026-07-01', periodIndex: 0, value: 300, breakdown: 'pro' },
+    { cohort: '2026-07-01', periodIndex: 1, value: 180, breakdown: 'pro' },
+    { cohort: '2026-07-01', periodIndex: 0, value: 200, breakdown: 'free' },
+    { cohort: '2026-07-01', periodIndex: 1, value: 60, breakdown: 'free' },
+  ]);
+  const sql = fake.calls[0].sql;
+  expect(sql).toContain("properties ->> 'plan' AS bd");
+  expect(sql).toContain('GROUP BY g.cohort_bucket, g.bd, g.period_index');
+  // One grid per breakdown value: buckets carry the breakdown, the grid cross-joins it.
+  expect(sql).toContain('SELECT DISTINCT cohort_bucket, bd FROM cohort');
+});
+
+test('retention without a breakdown emits no breakdown path and rows omit breakdown', async () => {
+  const fake = createFakeDbExecute(retentionGridResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.retention(retentionSpec);
+
+  expect(fake.calls[0].sql).not.toContain('properties ->>');
+  for (const row of result.rows) {
+    expect(row).not.toHaveProperty('breakdown');
+  }
+});
+
+test('retention rows match RetentionRow exactly — no engine wire field (breakdown_value) leaks', async () => {
+  const fake = createFakeDbExecute(retentionGridResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.retention(retentionSpec);
+
+  for (const row of result.rows) {
+    expect(new Set(Object.keys(row))).toEqual(new Set(['cohort', 'periodIndex', 'value']));
+    expect(row).not.toHaveProperty('breakdown_value');
+  }
+});
+
+test('retention breakdown key with an embedded single quote is SQL-escaped in the JSONB path (injection-safe)', async () => {
+  const fake = createFakeDbExecute(retentionGridResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  await client.retention({ ...retentionSpec, breakdown: "o'brien" });
+
+  expect(fake.calls[0].sql).toContain("properties ->> 'o''brien'");
+});
+
+test('retention day/month granularity swaps the truncation + offset interval unit', async () => {
+  const fake = createFakeDbExecute(retentionGridResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  await client.retention({ ...retentionSpec, granularity: 'day' });
+  await client.retention({ ...retentionSpec, granularity: 'month' });
+
+  const daySql = fake.calls[0].sql;
+  const monthSql = fake.calls[1].sql;
+  expect(daySql).toContain("date_trunc('day', timestamp) AS cohort_bucket");
+  expect(daySql).toContain("g.cohort_bucket + (g.period_index * interval '1 day')");
+  expect(monthSql).toContain("date_trunc('month', timestamp) AS cohort_bucket");
+  expect(monthSql).toContain("g.cohort_bucket + (g.period_index * interval '1 month')");
+});
+
+// The exact canonical retention SQL string for the plain 3-period weekly case. MIRRORED
+// byte-for-byte in the Python warehouse adapter test — the two assertions together pin cross-tree
+// retention SQL parity (the Postgres string is language-agnostic).
+const CANONICAL_RETENTION_SQL = [
+  'WITH cohort AS (',
+  "  SELECT distinct_id, date_trunc('week', timestamp) AS cohort_bucket",
+  '  FROM events_typed',
+  '  WHERE event = $1',
+  "  GROUP BY distinct_id, date_trunc('week', timestamp)",
+  '),',
+  'returns AS (',
+  "  SELECT distinct_id, date_trunc('week', timestamp) AS return_bucket",
+  '  FROM events_typed',
+  '  WHERE event = $2',
+  "  GROUP BY distinct_id, date_trunc('week', timestamp)",
+  '),',
+  'buckets AS (SELECT DISTINCT cohort_bucket FROM cohort),',
+  'grid AS (',
+  '  SELECT b.cohort_bucket, p.period_index',
+  '  FROM buckets b',
+  '  CROSS JOIN generate_series(0, 2) AS p(period_index)',
+  '),',
+  'cells AS (',
+  '  SELECT g.cohort_bucket, g.period_index, count(DISTINCT c.distinct_id) AS value',
+  '  FROM grid g',
+  '  JOIN cohort c ON c.cohort_bucket = g.cohort_bucket',
+  "  JOIN returns r ON r.distinct_id = c.distinct_id AND r.return_bucket = g.cohort_bucket + (g.period_index * interval '1 week')",
+  '  GROUP BY g.cohort_bucket, g.period_index',
+  ')',
+  "SELECT to_char(g.cohort_bucket, 'YYYY-MM-DD') AS cohort, g.period_index AS period_index, coalesce(cells.value, 0) AS value",
+  'FROM grid g',
+  '  LEFT JOIN cells ON cells.cohort_bucket = g.cohort_bucket AND cells.period_index = g.period_index',
+  'ORDER BY g.cohort_bucket, g.period_index',
+].join('\n');
+
+test('the generated retention SQL matches the canonical cross-tree string (byte-identical to Python)', async () => {
+  const fake = createFakeDbExecute(retentionGridResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  await client.retention(retentionSpec);
+
+  expect(fake.calls[0].sql).toBe(CANONICAL_RETENTION_SQL);
 });

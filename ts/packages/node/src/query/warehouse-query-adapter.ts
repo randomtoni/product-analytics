@@ -11,6 +11,7 @@ import { createDefaultDbExecute } from './default-db-execute';
 import type {
   AnalyticsQueryClient,
   FunnelSpec,
+  RetentionSpec,
   TrendSpec,
   UniqueCountSpec,
 } from './query-client';
@@ -18,6 +19,8 @@ import {
   assembleResult,
   buildFunnelRows,
   buildFunnelSql,
+  buildRetentionRows,
+  buildRetentionSql,
   buildTrendRows,
   buildTrendSql,
   buildUniqueCountSql,
@@ -77,8 +80,10 @@ export class WarehouseQueryAdapter<TX extends TaxonomyShape>
     return assembleResult(result, buildFunnelRows(spec.steps));
   }
 
-  async retention(): Promise<QueryResult<RetentionRow>> {
-    throw new Error(NOT_IMPLEMENTED);
+  async retention(spec: RetentionSpec<TX>): Promise<QueryResult<RetentionRow>> {
+    const { sql, params } = buildRetentionSql(spec);
+    const result = await this.dbExecute(sql, params);
+    return assembleResult(result, buildRetentionRows);
   }
 
   async trend(spec: TrendSpec<TX>): Promise<QueryResult<TrendRow>> {

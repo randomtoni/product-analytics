@@ -28,8 +28,11 @@ from .client import (
     Duration,
     FunnelSpec,
     FunnelStepRow,
+    Granularity,
     QueryColumn,
     QueryResult,
+    RetentionRow,
+    RetentionSpec,
     TrendRow,
     TrendSpec,
     UniqueCountSpec,
@@ -43,8 +46,10 @@ __all__ = [
     "build_trend_sql",
     "build_unique_count_sql",
     "build_funnel_sql",
+    "build_retention_sql",
     "build_trend_rows",
     "build_funnel_rows",
+    "build_retention_rows",
     "assemble_result",
 ]
 
@@ -313,6 +318,126 @@ def build_funnel_sql(spec: FunnelSpec) -> WarehouseQuery:
     )
 
 
+def _retention_walk_sql(
+    periods: int, granularity: Granularity, breakdown: str | None
+) -> str:
+    """The cohort self-join as a SINGLE Postgres statement producing a DENSE ``cohorts × periods``
+    grid.
+
+    A cohort is the set of actors who did the cohort event (``$1``) in a
+    ``date_trunc(granularity, timestamp)`` bucket, keyed by that bucket start (the neutral
+    ``cohort`` label). For each cohort bucket and each period offset ``0 .. periods-1``, the cell is
+    ``count(distinct distinct_id)`` of cohort members who did the RETURN event (``$2``) in
+    ``cohort_bucket + offset * interval``.
+
+    ``period_index = 0`` is the cohort's OWN period (the LOCKED convention): the offset-0 cell counts
+    members who returned in the cohort's own bucket (``offset * interval = 0``), NOT the first
+    subsequent bucket. This is the base cohort size measured via the return event — matching the
+    ``retention_cohorts`` fixture (index 0 = the cohort itself).
+
+    DENSE, bounded, deterministic: ``generate_series(0, periods-1)`` is CROSS JOINed against the
+    distinct cohort buckets to build the full grid, and the distinct-actor counts are LEFT JOINed
+    onto it, so every ``(cohort, period_index)`` cell emits a row — ``coalesce(..., 0)`` fills an
+    empty cell with ``0`` rather than dropping it (no gaps). A return event past ``periods-1``
+    buckets lands on no grid cell and contributes to nothing (bounded window). The distinct-count is
+    grouped per ``(cohort_bucket, period_index[, breakdown])``, so an actor in two cohort buckets
+    counts once in EACH cohort's cells — per-cohort, never global.
+
+    With a breakdown, the cohort's breakdown value is anchored at the cohort event (``properties ->>
+    key``, escaped exactly as trend/funnel), one grid per breakdown value; it is carried through the
+    grid and the join and stringified onto every row. The emitted string is byte-identical to the
+    TypeScript ``warehouse-sql.ts`` for the same spec.
+    """
+    bucket_format = _BUCKET_FORMAT_FOR_UNIT[granularity]
+    offset_interval = f"(g.period_index * interval '1 {granularity}')"
+    last_period = periods - 1
+    bucket_expr = f"date_trunc('{granularity}', timestamp)"
+
+    if breakdown is None:
+        return "\n".join(
+            [
+                "WITH cohort AS (",
+                f"  SELECT distinct_id, {bucket_expr} AS cohort_bucket",
+                f"  FROM {EVENTS_VIEW}",
+                "  WHERE event = $1",
+                f"  GROUP BY distinct_id, {bucket_expr}",
+                "),",
+                "returns AS (",
+                f"  SELECT distinct_id, {bucket_expr} AS return_bucket",
+                f"  FROM {EVENTS_VIEW}",
+                "  WHERE event = $2",
+                f"  GROUP BY distinct_id, {bucket_expr}",
+                "),",
+                "buckets AS (SELECT DISTINCT cohort_bucket FROM cohort),",
+                "grid AS (",
+                "  SELECT b.cohort_bucket, p.period_index",
+                "  FROM buckets b",
+                f"  CROSS JOIN generate_series(0, {last_period}) AS p(period_index)",
+                "),",
+                "cells AS (",
+                "  SELECT g.cohort_bucket, g.period_index, count(DISTINCT c.distinct_id) AS value",
+                "  FROM grid g",
+                "  JOIN cohort c ON c.cohort_bucket = g.cohort_bucket",
+                f"  JOIN returns r ON r.distinct_id = c.distinct_id AND r.return_bucket = g.cohort_bucket + {offset_interval}",
+                "  GROUP BY g.cohort_bucket, g.period_index",
+                ")",
+                f"SELECT to_char(g.cohort_bucket, '{bucket_format}') AS cohort, g.period_index AS period_index, coalesce(cells.value, 0) AS value",
+                "FROM grid g",
+                "  LEFT JOIN cells ON cells.cohort_bucket = g.cohort_bucket AND cells.period_index = g.period_index",
+                "ORDER BY g.cohort_bucket, g.period_index",
+            ]
+        )
+
+    breakdown_path = f"properties ->> {_quote_literal(breakdown)}"
+    return "\n".join(
+        [
+            "WITH cohort AS (",
+            f"  SELECT distinct_id, {bucket_expr} AS cohort_bucket, {breakdown_path} AS bd",
+            f"  FROM {EVENTS_VIEW}",
+            "  WHERE event = $1",
+            f"  GROUP BY distinct_id, {bucket_expr}, {breakdown_path}",
+            "),",
+            "returns AS (",
+            f"  SELECT distinct_id, {bucket_expr} AS return_bucket",
+            f"  FROM {EVENTS_VIEW}",
+            "  WHERE event = $2",
+            f"  GROUP BY distinct_id, {bucket_expr}",
+            "),",
+            "buckets AS (SELECT DISTINCT cohort_bucket, bd FROM cohort),",
+            "grid AS (",
+            "  SELECT b.cohort_bucket, b.bd, p.period_index",
+            "  FROM buckets b",
+            f"  CROSS JOIN generate_series(0, {last_period}) AS p(period_index)",
+            "),",
+            "cells AS (",
+            "  SELECT g.cohort_bucket, g.bd, g.period_index, count(DISTINCT c.distinct_id) AS value",
+            "  FROM grid g",
+            "  JOIN cohort c ON c.cohort_bucket = g.cohort_bucket AND c.bd IS NOT DISTINCT FROM g.bd",
+            f"  JOIN returns r ON r.distinct_id = c.distinct_id AND r.return_bucket = g.cohort_bucket + {offset_interval}",
+            "  GROUP BY g.cohort_bucket, g.bd, g.period_index",
+            ")",
+            f"SELECT to_char(g.cohort_bucket, '{bucket_format}') AS cohort, g.period_index AS period_index, coalesce(cells.value, 0) AS value, g.bd AS breakdown",
+            "FROM grid g",
+            "  LEFT JOIN cells ON cells.cohort_bucket = g.cohort_bucket AND cells.period_index = g.period_index AND cells.bd IS NOT DISTINCT FROM g.bd",
+            "ORDER BY g.bd, g.cohort_bucket, g.period_index",
+        ]
+    )
+
+
+def build_retention_sql(spec: RetentionSpec) -> WarehouseQuery:
+    """The generated retention SQL + params.
+
+    The cohort event and return event are the two positional params (``$1`` = ``cohort_event``,
+    ``$2`` = ``return_event``, in that order); ``periods`` and ``granularity`` are structural (the
+    series bound + the truncation/offset unit) and inlined; the breakdown key (when present) reaches
+    the SQL as an escaped JSONB path, exactly as trend/funnel.
+    """
+    return WarehouseQuery(
+        sql=_retention_walk_sql(spec.periods, spec.granularity, spec.breakdown),
+        params=[spec.cohort_event, spec.return_event],
+    )
+
+
 def _column_index(columns: list[DbColumn], name: str) -> int:
     for i, column in enumerate(columns):
         if column.name == name:
@@ -420,6 +545,55 @@ def build_funnel_rows(
         return rows
 
     return build
+
+
+def build_retention_rows(result: DbExecuteResult) -> list[RetentionRow]:
+    """Flatten the positional cells of a :class:`DbExecuteResult` into neutral
+    :class:`RetentionRow`\\ s.
+
+    The SQL yields one row per DENSE ``(cohort, period_index)`` cell (per breakdown value when broken
+    down): ``(cohort, period_index, value[, breakdown])``. This flattens those positional cells into
+    one :class:`RetentionRow` per cell — ``value=0`` for an empty cell (the grid is dense, so a zero
+    cell is a present row, never a gap). Sources ``cohort`` + ``period_index`` + ``value`` straight
+    from the flat cells (NOT the HTTP adapter's nested ``date`` + indexed ``values[]`` walk — the
+    RULE ``period_index=0 = the cohort's own period`` is shared, the SHAPE is not). Reads cells by
+    column name so a benign column reorder or the absence of the ``breakdown`` column never mis-maps.
+    """
+    columns = list(result.columns)
+    cohort_idx = _column_index(columns, "cohort")
+    period_idx = _column_index(columns, "period_index")
+    value_idx = _column_index(columns, "value")
+    breakdown_idx = _column_index(columns, "breakdown")
+
+    rows: list[RetentionRow] = []
+    for cells in result.rows:
+        cells_list = list(cells)
+        cohort = cells_list[cohort_idx] if 0 <= cohort_idx < len(cells_list) else None
+        period_index = (
+            cells_list[period_idx] if 0 <= period_idx < len(cells_list) else None
+        )
+        value = cells_list[value_idx] if 0 <= value_idx < len(cells_list) else None
+        if (
+            not isinstance(cohort, str)
+            or not isinstance(period_index, int)
+            or isinstance(period_index, bool)
+            or not isinstance(value, (int, float))
+            or isinstance(value, bool)
+        ):
+            continue
+        breakdown_cell = (
+            cells_list[breakdown_idx] if 0 <= breakdown_idx < len(cells_list) else None
+        )
+        breakdown = None if breakdown_cell is None else str(breakdown_cell)
+        rows.append(
+            RetentionRow(
+                cohort=cohort,
+                period_index=period_index,
+                value=value,
+                breakdown=breakdown,
+            )
+        )
+    return rows
 
 
 WarehouseRowBuilder = Callable[[DbExecuteResult], "list[_TRow]"]

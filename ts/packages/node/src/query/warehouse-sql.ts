@@ -2,6 +2,7 @@ import type {
   FunnelStepRow,
   QueryColumn,
   QueryResult,
+  RetentionRow,
   TaxonomyShape,
   TrendRow,
 } from '@randomtoni/analytics-kit';
@@ -11,6 +12,8 @@ import type {
   Aggregation,
   Duration,
   FunnelSpec,
+  Granularity,
+  RetentionSpec,
   TrendSpec,
   UniqueCountSpec,
 } from './query-client';
@@ -266,6 +269,119 @@ export function buildFunnelSql<TX extends TaxonomyShape>(spec: FunnelSpec<TX>): 
   };
 }
 
+// The cohort self-join as a SINGLE Postgres statement producing a DENSE `cohorts × periods` grid.
+// A cohort is the set of actors who did the cohort event (`$1`) in a `date_trunc(granularity,
+// timestamp)` bucket, keyed by that bucket start (the neutral `cohort` label). For each cohort
+// bucket and each period offset `0 .. periods-1`, the cell is `count(distinct distinct_id)` of
+// cohort members who did the RETURN event (`$2`) in `cohort_bucket + offset * interval`.
+//
+// `period_index = 0` is the cohort's OWN period (the LOCKED convention): the offset-0 cell counts
+// members who returned in the cohort's own bucket (`offset * interval = 0`), NOT the first
+// subsequent bucket. This is the base cohort size measured via the return event — matching the
+// `retentionCohorts` fixture (index 0 = the cohort itself).
+//
+// DENSE, bounded, deterministic: `generate_series(0, periods-1)` is CROSS JOINed against the
+// distinct cohort buckets to build the full grid, and the distinct-actor counts are LEFT JOINed
+// onto it, so every `(cohort, period_index)` cell emits a row — `coalesce(..., 0)` fills an empty
+// cell with `0` rather than dropping it (no gaps). A return event past `periods-1` buckets lands
+// on no grid cell and contributes to nothing (bounded window). The distinct-count is grouped per
+// `(cohort_bucket, period_index[, breakdown])`, so an actor in two cohort buckets counts once in
+// EACH cohort's cells — per-cohort, never global.
+//
+// With a breakdown, the cohort's breakdown value is anchored at the cohort event (`properties ->>
+// key`, escaped exactly as trend/funnel), one grid per breakdown value; it is carried through the
+// grid and the join and stringified onto every row.
+function retentionWalkSql(
+  periods: number,
+  granularity: Granularity,
+  breakdown: string | undefined
+): string {
+  const bucketFormat = BUCKET_FORMAT_FOR_UNIT[granularity];
+  const offsetInterval = `(g.period_index * interval '1 ${granularity}')`;
+  const lastPeriod = periods - 1;
+  const bucketExpr = `date_trunc('${granularity}', timestamp)`;
+
+  if (breakdown === undefined) {
+    return [
+      'WITH cohort AS (',
+      `  SELECT distinct_id, ${bucketExpr} AS cohort_bucket`,
+      `  FROM ${EVENTS_VIEW}`,
+      '  WHERE event = $1',
+      `  GROUP BY distinct_id, ${bucketExpr}`,
+      '),',
+      'returns AS (',
+      `  SELECT distinct_id, ${bucketExpr} AS return_bucket`,
+      `  FROM ${EVENTS_VIEW}`,
+      '  WHERE event = $2',
+      `  GROUP BY distinct_id, ${bucketExpr}`,
+      '),',
+      'buckets AS (SELECT DISTINCT cohort_bucket FROM cohort),',
+      'grid AS (',
+      '  SELECT b.cohort_bucket, p.period_index',
+      '  FROM buckets b',
+      `  CROSS JOIN generate_series(0, ${lastPeriod}) AS p(period_index)`,
+      '),',
+      'cells AS (',
+      '  SELECT g.cohort_bucket, g.period_index, count(DISTINCT c.distinct_id) AS value',
+      '  FROM grid g',
+      '  JOIN cohort c ON c.cohort_bucket = g.cohort_bucket',
+      `  JOIN returns r ON r.distinct_id = c.distinct_id AND r.return_bucket = g.cohort_bucket + ${offsetInterval}`,
+      '  GROUP BY g.cohort_bucket, g.period_index',
+      ')',
+      `SELECT to_char(g.cohort_bucket, '${bucketFormat}') AS cohort, g.period_index AS period_index, coalesce(cells.value, 0) AS value`,
+      'FROM grid g',
+      '  LEFT JOIN cells ON cells.cohort_bucket = g.cohort_bucket AND cells.period_index = g.period_index',
+      'ORDER BY g.cohort_bucket, g.period_index',
+    ].join('\n');
+  }
+
+  const breakdownPath = `properties ->> ${quoteLiteral(breakdown)}`;
+  return [
+    'WITH cohort AS (',
+    `  SELECT distinct_id, ${bucketExpr} AS cohort_bucket, ${breakdownPath} AS bd`,
+    `  FROM ${EVENTS_VIEW}`,
+    '  WHERE event = $1',
+    `  GROUP BY distinct_id, ${bucketExpr}, ${breakdownPath}`,
+    '),',
+    'returns AS (',
+    `  SELECT distinct_id, ${bucketExpr} AS return_bucket`,
+    `  FROM ${EVENTS_VIEW}`,
+    '  WHERE event = $2',
+    `  GROUP BY distinct_id, ${bucketExpr}`,
+    '),',
+    'buckets AS (SELECT DISTINCT cohort_bucket, bd FROM cohort),',
+    'grid AS (',
+    '  SELECT b.cohort_bucket, b.bd, p.period_index',
+    '  FROM buckets b',
+    `  CROSS JOIN generate_series(0, ${lastPeriod}) AS p(period_index)`,
+    '),',
+    'cells AS (',
+    '  SELECT g.cohort_bucket, g.bd, g.period_index, count(DISTINCT c.distinct_id) AS value',
+    '  FROM grid g',
+    '  JOIN cohort c ON c.cohort_bucket = g.cohort_bucket AND c.bd IS NOT DISTINCT FROM g.bd',
+    `  JOIN returns r ON r.distinct_id = c.distinct_id AND r.return_bucket = g.cohort_bucket + ${offsetInterval}`,
+    '  GROUP BY g.cohort_bucket, g.bd, g.period_index',
+    ')',
+    `SELECT to_char(g.cohort_bucket, '${bucketFormat}') AS cohort, g.period_index AS period_index, coalesce(cells.value, 0) AS value, g.bd AS breakdown`,
+    'FROM grid g',
+    '  LEFT JOIN cells ON cells.cohort_bucket = g.cohort_bucket AND cells.period_index = g.period_index AND cells.bd IS NOT DISTINCT FROM g.bd',
+    'ORDER BY g.bd, g.cohort_bucket, g.period_index',
+  ].join('\n');
+}
+
+// The generated retention SQL + positional params. The cohort event and return event are the
+// two positional params (`$1` = cohortEvent, `$2` = returnEvent, in that order); `periods` and
+// `granularity` are structural (the series bound + the truncation/offset unit) and inlined; the
+// breakdown key (when present) reaches the SQL as an escaped JSONB path, exactly as trend/funnel.
+export function buildRetentionSql<TX extends TaxonomyShape>(
+  spec: RetentionSpec<TX>
+): WarehouseQuery {
+  return {
+    sql: retentionWalkSql(spec.periods, spec.granularity, spec.breakdown),
+    params: [spec.cohortEvent, spec.returnEvent],
+  };
+}
+
 // The index of each named column in a `DbExecuteResult` row, so a flat-row builder reads
 // positional cells by name once rather than hard-coding offsets. The warehouse SELECT names its
 // columns (`bucket`, `value`, optional `breakdown`), so the driver reports them in `columns`.
@@ -360,6 +476,40 @@ export function buildFunnelRows(
     }
     return rows;
   };
+}
+
+// The retention flat-row builder. The SQL yields one row per DENSE `(cohort, period_index)` cell
+// (per breakdown value when broken down): `(cohort, period_index, value[, breakdown])`. This
+// flattens those positional cells into neutral `RetentionRow`s — one row per cell, `value: 0` for
+// an empty cell (the grid is dense, so a zero cell is a present row, never a gap). Sources `cohort`
+// + `periodIndex` + `value` straight from the flat cells (NOT the HTTP adapter's nested
+// `date` + indexed `values[]` walk — the RULE `period_index=0 = the cohort's own period` is shared,
+// the SHAPE is not). Reads cells by column name so a benign column reorder or the absence of the
+// `breakdown` column never mis-maps.
+export function buildRetentionRows(result: DbExecuteResult): ReadonlyArray<RetentionRow> {
+  const cohortIdx = columnIndex(result.columns, 'cohort');
+  const periodIdx = columnIndex(result.columns, 'period_index');
+  const valueIdx = columnIndex(result.columns, 'value');
+  const breakdownIdx = columnIndex(result.columns, 'breakdown');
+
+  const rows: RetentionRow[] = [];
+  for (const cells of result.rows) {
+    const cohort = cells[cohortIdx];
+    const periodIndex = cells[periodIdx];
+    const value = cells[valueIdx];
+    if (typeof cohort !== 'string' || typeof periodIndex !== 'number' || typeof value !== 'number') {
+      continue;
+    }
+    const breakdownCell = breakdownIdx === -1 ? undefined : cells[breakdownIdx];
+    const breakdown =
+      breakdownCell === undefined || breakdownCell === null ? undefined : String(breakdownCell);
+    rows.push(
+      breakdown === undefined
+        ? { cohort, periodIndex, value }
+        : { cohort, periodIndex, value, breakdown }
+    );
+  }
+  return rows;
 }
 
 // A flat-row builder: a `DbExecuteResult` in, the primitive's neutral rows out. Sibling of the

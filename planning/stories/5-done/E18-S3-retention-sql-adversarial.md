@@ -136,4 +136,25 @@ is correct as-is.
   (S5 asserts it).
 - Assembler pattern to reuse from S1: the warehouse `normalizeResult` analog.
 
+> Reviewer suggestion (2026-07-14) → E18 improvement pass: the multi-cohort adversarial test's canned
+> grid is byte-identical to the base grid, so its only real guard is the `GROUP BY cohort_bucket` +
+> `count(DISTINCT …)` SQL-string assertion (legitimate, non-tautological) — the canned data proves
+> nothing extra about the builder. Either give it a distinguishing grid (a shared recurring actor whose
+> two-cohort presence is legible in the numbers, where a global-dedup bug would lower the total) or
+> rename it to reflect it asserts the grouping SQL shape.
+> Reviewer suggestion (2026-07-14) → E21: retention breakdown groups per `(distinct_id, cohort_bucket,
+> properties->>'key')`, so an actor whose cohort-week rows carry two different breakdown values lands in
+> two breakdown cohorts — UNLIKE funnel, which anchors breakdown to the first-event value
+> (`array_agg(bd ORDER BY timestamp)[1]`). Defensible + spec doesn't pin it, but document this divergence
+> when E21 validates breakdown on real data.
+
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files changed:** TS `warehouse-sql.ts` (+ `buildRetentionSql`, `buildRetentionRows`), `warehouse-query-adapter.ts` (+ `.test.ts`); Python `warehouse_sql.py` (+ `build_retention_sql`, `build_retention_rows`), `warehouse_adapter.py` (+ `tests/test_warehouse_query_adapter.py`)
+- **New public API:** none consumer-facing (adapter-internal SQL-gen; reached via `createQueryClient`)
+- **Tests added:** TS 17 + Python 17 retention tests — SQL shape (cohort self-join, granularity bucketing, `generate_series` dense grid, per-cohort `count(DISTINCT …)`, offset arithmetic, params), byte-identical `CANONICAL_RETENTION_SQL`, **adversarial** (period_index=0-is-base, actor-in-multiple-cohorts, return-outside-window, no-return-decays, sparse-cohort-zero-cell), breakdown grid + JSONB GROUP BY, no-`breakdown_value`-leak key seal — all against the E17-S3 fake
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP-READY (no criticals) — retention semantics independently confirmed on real Postgres 16 (period-0-is-base, calendar-aware month offsets, bounded window, per-cohort distinct — every cell matched hand-computed); 2 forward suggestions captured above
+- **Cross-story seams exposed:** retention SQL is a single-statement cohort self-join + `generate_series` dense grid (deterministic `cohorts × periods` rows), `period_index=0` = cohort's own bucket, multi-cohort = all-signups (per-cohort distinct, no cross-cohort dedup), reusing S1's `assembleResult`. **S4 (raw_query) is the last E18 primitive** — adds to the same `warehouse-sql` module; then **S5** proves all four flatten to the locked fixtures. **E21:** re-run retention (+ funnel) adversarial scenarios against real Postgres; document the retention-breakdown per-value-per-actor semantics.
