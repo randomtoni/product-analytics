@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import uuid
+
 import pytest
 from db_execute_fakes import FakeCursor, FakeDbExecute, RecordedExec
 
@@ -130,3 +133,75 @@ def test_default_driver_tolerates_a_none_description() -> None:
 
     assert result.columns == []
     assert result.rows == []
+
+
+# Real-driver conformance the fake-backed tests above structurally cannot cover: a non-RETURNING
+# `INSERT ... ON CONFLICT (uuid) DO NOTHING` executed through the REAL DefaultDbExecute against a
+# REAL Postgres — the exact write the E19 receiver emits. On such a write the driver leaves
+# cursor.description None and produces no result set, so an UNGUARDED fetchall() raises
+# ProgrammingError; this proves the guard returns the empty result instead.
+#
+# Gated on DATABASE_URL truthiness (no marker): inert in the fast gate until a real Postgres DSN
+# is supplied — and a set-but-EMPTY DATABASE_URL skips rather than erroring on construction. The
+# needs-Postgres test tier/marker is registered separately (S3).
+_DATABASE_URL = os.environ.get("DATABASE_URL")
+
+_skip_without_db = pytest.mark.skipif(
+    not _DATABASE_URL, reason="DATABASE_URL unset — no real database available"
+)
+
+
+@_skip_without_db
+def test_default_driver_returns_empty_result_on_a_non_returning_write() -> None:
+    db_execute = create_default_db_execute(_DATABASE_URL)  # type: ignore[arg-type]
+
+    table = f"akit_e21s1_{uuid.uuid4().hex}"
+    row_uuid = str(uuid.uuid4())
+    sql = (
+        f"CREATE TEMP TABLE {table} (uuid uuid UNIQUE NOT NULL, note text);\n"
+        f"INSERT INTO {table} (uuid, note) VALUES ('{row_uuid}', 'seed');\n"
+        f"INSERT INTO {table} (uuid, note) VALUES ('{row_uuid}', 'conflict') "
+        "ON CONFLICT (uuid) DO NOTHING;"
+    )
+
+    result = db_execute.execute(sql)
+
+    assert result == DbExecuteResult(rows=[], columns=[])
+    assert result.rows == []
+    assert result.columns == []
+
+
+# The write-PERSISTENCE proof the single-call test above structurally cannot give: the driver
+# opens a fresh connection PER execute() call and holds no cross-call transaction, so a write only
+# counts if it is committed before its connection closes. This writes in one execute() and reads
+# back in a SEPARATE execute() — the read runs on a brand-new connection, so a non-zero count can
+# only mean the row survived the writing connection's close (i.e. was committed, via autocommit).
+# A REAL (non-TEMP) table is mandatory: a TEMP table is connection-scoped and would vanish with
+# the per-call connection, so it can never prove cross-connection persistence. Uuid-suffixed to
+# avoid cross-run collisions, DROP TABLE in a finally for cleanup.
+@_skip_without_db
+def test_default_driver_persists_a_write_across_the_per_call_connection() -> None:
+    db_execute = create_default_db_execute(_DATABASE_URL)  # type: ignore[arg-type]
+
+    table = f"akit_e21s1_persist_{uuid.uuid4().hex}"
+    row_uuid = str(uuid.uuid4())
+    try:
+        db_execute.execute(f"CREATE TABLE {table} (uuid text primary key)")
+        db_execute.execute(
+            f"INSERT INTO {table} (uuid) VALUES (%s) ON CONFLICT (uuid) DO NOTHING",
+            [row_uuid],
+        )
+
+        # A SEPARATE execute() — a brand-new connection. Seeing the row proves it was committed.
+        result = db_execute.execute(f"SELECT count(*) FROM {table}")
+        assert result.rows == [(1,)]
+
+        # Re-running the same insert is a no-op (ON CONFLICT DO NOTHING) — still exactly one row.
+        db_execute.execute(
+            f"INSERT INTO {table} (uuid) VALUES (%s) ON CONFLICT (uuid) DO NOTHING",
+            [row_uuid],
+        )
+        recount = db_execute.execute(f"SELECT count(*) FROM {table}")
+        assert recount.rows == [(1,)]
+    finally:
+        db_execute.execute(f"DROP TABLE IF EXISTS {table}")

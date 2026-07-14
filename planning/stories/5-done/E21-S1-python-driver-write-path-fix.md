@@ -103,6 +103,20 @@ verbatim by the architect against the shipped src.
   Sizing is genuinely SMALL: a one-line guard + one gated real-driver unit test, no seam change.
   — story-refiner (2026-07-14)
 
+> Reviewer suggestion (2026-07-14) → E21 improvement pass (cosmetic): the single-call fetchall-guard
+> test f-string-interpolates its `uuid4()` into the SQL while the persistence test uses parameterized
+> `%s`; parameterize the former too for hygiene (no injection risk — values are library-generated).
+> Reviewer suggestion (2026-07-14) → E21 improvement pass (cosmetic): both real-driver tests carry a
+> `# type: ignore[arg-type]` for the `str | None` DSN; a module-level narrowed `_DSN: str = _DATABASE_URL
+> or ""` or a fixture would drop the repeated ignore.
+
 ## Shipped
 
-<!-- Filled by /implement-epics on move to 5-done. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files changed:** `python/src/analytics_kit/query/default_db_execute.py` (the `_result_from_cursor` fetchall guard + `autocommit=True` on the per-call connection), `python/tests/test_db_execute.py` (two real-driver tests + a truthiness `DATABASE_URL` gate)
+- **New public API:** none — adapter-internal driver mechanics behind the frozen `DbExecute` seam
+- **Tests added:** `test_default_driver_returns_empty_result_on_a_non_returning_write` (fetchall guard) + `test_default_driver_persists_a_write_across_the_per_call_connection` (writes on one `execute`, reads `count(*)` on a SEPARATE `execute`, asserts the row survived the connection close + idempotency, `DROP TABLE` in `finally`) — both `skipif(not DATABASE_URL)`-gated, PROVEN on live PG16.14 with a two-form negative proof
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** RETRY story — first review found a CRITICAL (writes rolled back: `autocommit=False` + no commit) beyond the recorded fetchall bug; retry fixed it with `autocommit=True` + the cross-call persistence test. Re-review verdict SHIP (both criticals resolved, no regression). 2 cosmetic suggestions above
+- **Cross-story seams exposed:** **the Python default driver now PERSISTS writes** (`autocommit=True`, matching TS `pg`'s autocommit-by-default — a parity gap closed) AND returns the empty result on a non-RETURNING write. **E21-S3's E1 loop can now write via the E19 receiver and read the rows back via a warehouse query** (the round-trip that was silently broken). TS needed no change. The `needs_postgres` marker is NOT yet registered — the tests use `skipif(not DATABASE_URL)`; **S3 registers the marker + extends `addopts`** and provisions the Docker PG16 both S1's and S3's real-driver tests need.
