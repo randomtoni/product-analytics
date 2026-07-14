@@ -27,6 +27,17 @@ export { createDefaultDbExecute } from './query/default-db-execute';
 export type { DefaultDbExecuteConfig } from './query/default-db-execute';
 export { createReceiver } from './receiver';
 export type { Receiver, ReceiverHeaders, ReceiveOutcome } from './receiver';
+export {
+  createReceiverHandler,
+  createExpressReceiver,
+  createNextRouteReceiver,
+  createNextApiReceiver,
+} from './receiver';
+export type {
+  ExpressRequestLike,
+  ExpressResponseLike,
+  AppRouterRequestLike,
+} from './receiver';
 export { createFlagClient } from './flags/create-flag-client';
 export type { NodeFlagClient } from './flags/create-flag-client';
 export type { FlagClientConfig } from './flags/config';

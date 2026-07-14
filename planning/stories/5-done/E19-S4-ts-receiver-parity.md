@@ -142,6 +142,25 @@ gzipped and raw variants) and the S1 `createFakeDbExecute` — assert the core i
 Mirror how S1 asserts the upsert against the fake and how the send-side tests use the minimal structural
 `NodeFetch` rather than a real server.
 
+> Reviewer suggestion (2026-07-14) → E19 improvement pass (real parity gap): TS `translate.ts` swallows
+> the write-failure exception with a bare `catch {}` and logs NOTHING, while the Python sibling
+> `mount.py:48-49` `_logger.exception(...)`s the swallowed 5xx so an operator sees the cause. Not a
+> client-facing leak (response stays neutral+empty — correct), but a TS/Python operator-observability
+> parity miss. Fix: `catch (err) { console.error('analytics-kit receiver: write failed; returning a
+> neutral 5xx', err); }` (bind the error) — the node package already uses `console.error` on a
+> comparable swallowed path (`node-analytics.ts:220`).
+> Reviewer suggestion (2026-07-14) → E19 improvement pass (cosmetic): App-Router `next-mount.ts:32`
+> hand-maintains a `STATUS_TEXT` map for 200/400/500 — a second place a new status must be added.
+> Omit `statusText` (let the platform supply the phrase) or derive from `translate`'s `STATUS_*` constants.
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this on move to stories/5-done/. Do not hand-edit. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files added:** `ts/packages/node/src/receiver/translate.ts` (shared framework-free mapping), `plain-handler.ts`, `express-mount.ts`, `next-mount.ts` + their `.test.ts` + `import-safety.test.ts`
+- **Files changed:** `ts/packages/node/src/receiver/index.ts`, `ts/packages/node/src/index.ts` (mount-handler exports). `package.json` UNCHANGED (no framework peer-dep — see below)
+- **New public API:** `createReceiverHandler` (plain Node), `createExpressReceiver`, `createNextRouteReceiver` (App-Router), `createNextApiReceiver` (Pages-API) — each `(receiver) → handler`; + `ExpressRequestLike`/`ExpressResponseLike`/`AppRouterRequestLike` structural types. All role-named
+- **Tests added:** 25 — raw-body + gzip-survives-the-mount (all four mounts, real `gzipSync` → asserted `uuid` decoded), thin-wrapper, 2xx/4xx/neutral-5xx mapping with driver-message-absent proof (realistic leaky errors), `import-safety` (handlers resolve with express/next genuinely absent + a negative that they're unresolvable) — all against the S1 `createFakeDbExecute`
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP (no criticals). **Peer-dep ruling ENDORSED:** no-peer-dep pure-structural typing satisfies AC-3 more strongly than a decorative peer — the mounts touch only request/response SHAPES, never a framework VALUE (verified `pg` IS `await import`ed but express/next never are). 2 forward suggestions above (a TS-logging parity gap + a cosmetic statusText)
+- **Cross-story seams exposed:** **S3 (the last E19 story) adds the top-level from-config factory export to the SAME `index.ts`** (export-split: S4 owns the mount HANDLERS, S3 owns the factory + keeps its DSN-build helper submodule-scoped) and composes DSN→driver→`createReceiver(dbExecute)`→whichever mount. Both trees' mounts take an injected `Receiver`; the shared `translate` (TS) / `translate` (Python) guarantees identical status mapping. Consumer body-acquisition posture: Express `express.raw({type:'*/*'})`, Pages-API `bodyParser:false`, App-Router `arrayBuffer()`.
