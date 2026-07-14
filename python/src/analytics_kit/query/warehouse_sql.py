@@ -67,6 +67,12 @@ def _quote_literal(value: str) -> str:
 # The `date_trunc` bucket unit, mirroring the HTTP adapter's `_INTERVAL_FOR_UNIT`: minute/hour
 # collapse to `hour`; day/week/month pass through. A closed enum lookup (never free text), so
 # interpolating the result into the SQL is safe — the same discipline `_CAST_TYPE` uses.
+#
+# This is a DISTINCT axis from `_INTERVAL_KEYWORD_FOR_WINDOW_UNIT` below (bucket GRAIN vs the
+# `generate_series` STEP keyword) that currently coincides value-for-value. They are kept as two
+# tables on purpose — a desync between them (the spine stepping at a different grain than the
+# buckets truncate to) would silently misalign the LEFT JOIN. The `_CANONICAL_TREND_SQL_HOURLY`
+# pin exercises the sub-day case where both feed the SAME query, so any divergence trips a gate.
 _BUCKET_UNIT_FOR_WINDOW_UNIT: dict[str, str] = {
     "minute": "hour",
     "hour": "hour",
@@ -76,6 +82,8 @@ _BUCKET_UNIT_FOR_WINDOW_UNIT: dict[str, str] = {
 }
 
 # The plural interval keyword for the `generate_series` step and the window lower bound.
+# Conceptually distinct from `_BUCKET_UNIT_FOR_WINDOW_UNIT` (see its note) though currently the same
+# values — the hourly canonical pin guards the two staying in step.
 _INTERVAL_KEYWORD_FOR_WINDOW_UNIT: dict[str, str] = {
     "minute": "hour",
     "hour": "hour",

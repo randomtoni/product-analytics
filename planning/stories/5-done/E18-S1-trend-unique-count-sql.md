@@ -204,3 +204,9 @@ projections). Route SQL through the injected seam; the adapter already holds it 
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** independent gate verdict SOLID, no criticals — "S2/S3/S4 should build directly on this pattern"; 3 suggestions captured above (all deferred/forward)
 - **Cross-story seams exposed:** **S2/S3/S4 import** `assembleResult`/`assemble_result` + `WarehouseRowBuilder`/`WarehouseQuery` from `warehouse-sql` and add their per-primitive flat-row builder there — the assembler is generic over `TRow` and needs no fork. Event/step names bind as SQL **params** (`$1`, …), never inlined; the breakdown key is `quoteLiteral`-escaped. Sync/async posture stays per-tree (TS `async`/`await`, Python plain `def`). `columns` is stamped from the driver SELECT schema (neutral aliases) — do NOT "fix" it to `columns:[]`.
+
+## Follow-up
+
+> E18 improvement pass (2026-07-14) — verified test+comment-only (no emitted-SQL change; all canonical pins green).
+
+- Guarded the latent interval/bucket-table desync (reviewer suggestion #1): chose the **hour-pin** over collapsing the two byte-identical maps (they're genuinely distinct axes — the funnel path reuses only the interval-keyword table). Added a `CANONICAL_TREND_SQL_HOURLY` cross-tree pin (`window: {value: 6, unit: 'hour'}`) exercising the sub-day collapse row of BOTH tables in one query, so a future divergence trips a gate. Expanded the map comments to state the two-axes intent. Both trees; zero emitted-SQL byte changed.

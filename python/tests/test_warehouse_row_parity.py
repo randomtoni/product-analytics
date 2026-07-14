@@ -267,8 +267,10 @@ def test_computed_period_index_zero_is_the_cohort_period() -> None:
 # -- Seal (leak guard): no ENGINE_ROW_FIELD_NAMES token on any warehouse-produced row -----------
 # The warehouse never speaks the engine wire, so this holds trivially - asserted anyway so a future
 # regression (e.g. a leaked SQL column alias) fails this gate. Serializes the full QueryResult via
-# model_dump_json() (Pydantic v2 recurses into the frozen-dataclass rows). Uses the broken-down
-# inputs (the ones most likely to leak a breakdown_value-style token).
+# model_dump_json() (Pydantic v2 recurses into the frozen-dataclass rows). Covers BOTH paths: the
+# broken-down inputs (the ones most likely to leak a breakdown_value-style token) AND a plain
+# (non-breakdown) output per primitive - the builders share one code path, so sealing both is a
+# completeness nicety.
 
 
 def test_seal_no_engine_row_field_name_on_any_warehouse_row() -> None:
@@ -282,11 +284,23 @@ def test_seal_no_engine_row_field_name_on_any_warehouse_row() -> None:
         RetentionSpec(cohort_event="signed_up", return_event="order_placed", periods=3, granularity="week")
     )
 
-    for result in (trend, funnel, retention):
+    # Plain (non-breakdown) outputs - the same shared builder path, exercised without a breakdown.
+    trend_plain = _adapter_returning(_TREND_SINGLE_SQL).trend(
+        TrendSpec(event="order_placed", aggregation="total", window=Duration(7, "day"))
+    )
+    funnel_plain = _adapter_returning(_FUNNEL_PLAIN_SQL).funnel(
+        FunnelSpec(steps=["signed_up", "order_placed", "document_uploaded"], within=Duration(7, "day"))
+    )
+    retention_plain = _adapter_returning(_RETENTION_SQL).retention(
+        RetentionSpec(cohort_event="signed_up", return_event="order_placed", periods=3, granularity="week")
+    )
+
+    results = (trend, funnel, retention, trend_plain, funnel_plain, retention_plain)
+    for result in results:
         dumped = result.model_dump_json()
         for engine_field in ENGINE_ROW_FIELD_NAMES:
             assert engine_field not in dumped, f"engine key {engine_field!r} leaked into {dumped}"
     # A leaked SQL column alias would surface as a dict key in the serialized rows too.
-    dumped_rows = json.dumps([json.loads(r.model_dump_json())["rows"] for r in (trend, funnel, retention)])
+    dumped_rows = json.dumps([json.loads(r.model_dump_json())["rows"] for r in results])
     for engine_field in ENGINE_ROW_FIELD_NAMES:
         assert engine_field not in dumped_rows

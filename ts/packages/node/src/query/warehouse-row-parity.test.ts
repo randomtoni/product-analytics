@@ -308,12 +308,12 @@ test('COMPUTED periodIndex 0 = the cohort period: the base-cohort cell matches t
 
 // ── Seal (leak guard): no ENGINE_ROW_FIELD_NAMES token on any warehouse-produced row ──────────
 // The warehouse never speaks the engine wire, so this holds trivially — asserted anyway so a future
-// regression (e.g. a leaked SQL column alias) fails this gate. Uses the broken-down inputs (the ones
-// most likely to leak a `breakdown_value`-style token).
+// regression (e.g. a leaked SQL column alias) fails this gate. Covers BOTH paths: the broken-down
+// inputs (the ones most likely to leak a `breakdown_value`-style token) AND a plain (non-breakdown)
+// output per primitive — the builders share one code path, so sealing both is a completeness nicety.
 
-test('SEAL: no ENGINE_ROW_FIELD_NAMES token appears on any warehouse-produced row', async () => {
-  const adapter = adapterReturning(trendBreakdownSql);
-  const trend = await adapter.trend({
+test('SEAL: no ENGINE_ROW_FIELD_NAMES token appears on any warehouse-produced row (breakdown + plain paths)', async () => {
+  const trend = await adapterReturning(trendBreakdownSql).trend({
     event: 'order_placed',
     aggregation: 'total',
     window: { value: 7, unit: 'day' },
@@ -331,7 +331,31 @@ test('SEAL: no ENGINE_ROW_FIELD_NAMES token appears on any warehouse-produced ro
     granularity: 'week',
   });
 
-  for (const rows of [trend.rows, funnel.rows, retention.rows]) {
+  // Plain (non-breakdown) outputs — the same shared builder path, exercised without a breakdown.
+  const trendPlain = await adapterReturning(trendSingleSql).trend({
+    event: 'order_placed',
+    aggregation: 'total',
+    window: { value: 7, unit: 'day' },
+  });
+  const funnelPlain_ = await adapterReturning(funnelPlainSql).funnel({
+    steps: ['signed_up', 'order_placed', 'document_uploaded'],
+    within: { value: 7, unit: 'day' },
+  });
+  const retentionPlain = await adapterReturning(retentionSql).retention({
+    cohortEvent: 'signed_up',
+    returnEvent: 'order_placed',
+    periods: 3,
+    granularity: 'week',
+  });
+
+  for (const rows of [
+    trend.rows,
+    funnel.rows,
+    retention.rows,
+    trendPlain.rows,
+    funnelPlain_.rows,
+    retentionPlain.rows,
+  ]) {
     const serialized = JSON.stringify(rows);
     for (const field of ENGINE_ROW_FIELD_NAMES) {
       expect(serialized).not.toContain(field);

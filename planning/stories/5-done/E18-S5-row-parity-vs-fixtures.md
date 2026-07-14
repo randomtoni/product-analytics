@@ -145,3 +145,9 @@ generic column-keyed `QueryResult`, contract-checked in S4's own zip test, not i
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** independent gate verdict APPROVE (no criticals) — **proof proven GENUINE (non-circular)**: the reviewer falsified circularity with 3 builder mutations (drop zero-guard → 2 fails; break ratio → 4 fails; re-source event from SQL column → 7 fails), each caught. The `event_name` red-herring column the builder ignores is a deliberate honesty signal. 2 minor suggestions above
 - **Cross-story seams exposed:** **the read-side bar-A guarantee is now executable** — the warehouse adapter produces byte-identical neutral rows to the HTTP adapter, proven against the locked `query-contract.fixtures` (parity-by-mirror). Inputs carry raw counts; builders COMPUTE the derived fields (conversionRate/periodIndex), so a builder regression fails a gate. **E21** re-proves this against real Neon (real SELECT → rows), not canned `DbExecuteResult`s.
+
+## Follow-up
+
+> E18 improvement pass (2026-07-14) — verified test-only (no production change).
+
+- Extended the `ENGINE_ROW_FIELD_NAMES` seal to cover the plain (non-breakdown) path too (reviewer suggestion #1): it previously serialized only the breakdown outputs (the likeliest leak). Added plain trend/funnel/retention outputs to the seal loop in both trees, so a leaked SQL alias on a plain-path row would also fail the gate.

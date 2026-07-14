@@ -158,3 +158,9 @@ is correct as-is.
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** independent gate verdict SHIP-READY (no criticals) — retention semantics independently confirmed on real Postgres 16 (period-0-is-base, calendar-aware month offsets, bounded window, per-cohort distinct — every cell matched hand-computed); 2 forward suggestions captured above
 - **Cross-story seams exposed:** retention SQL is a single-statement cohort self-join + `generate_series` dense grid (deterministic `cohorts × periods` rows), `period_index=0` = cohort's own bucket, multi-cohort = all-signups (per-cohort distinct, no cross-cohort dedup), reusing S1's `assembleResult`. **S4 (raw_query) is the last E18 primitive** — adds to the same `warehouse-sql` module; then **S5** proves all four flatten to the locked fixtures. **E21:** re-run retention (+ funnel) adversarial scenarios against real Postgres; document the retention-breakdown per-value-per-actor semantics.
+
+## Follow-up
+
+> E18 improvement pass (2026-07-14) — verified test-only (no production change).
+
+- Fixed the multi-cohort test's honesty gap (reviewer suggestion #1): the case's canned grid was byte-identical to the base grid, so its only real guard was the SQL-string assertion. **Renamed** it to reflect it asserts the per-cohort GROUPING SQL shape (`GROUP BY cohort_bucket` + `count(DISTINCT …)`, no global dedup) AND gave it a **distinguishing grid** (cohorts `2026-06-01`/`08`, p0 bases 900/700 — visibly different from the base case) so a reader isn't misled. Both trees, mirrored; the SQL-string guard retained.

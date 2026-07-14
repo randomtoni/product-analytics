@@ -315,6 +315,36 @@ test('the generated trend SQL matches the canonical cross-tree string (byte-iden
   expect(fake.calls[0].sql).toBe(CANONICAL_TREND_SQL);
 });
 
+// The sub-day (hour-granularity) canonical trend SQL. The `day` pin above only touches the
+// pass-through row of BOTH interval/bucket tables (`day → day` in each). This hourly case is the
+// ONE that feeds the sub-day COLLAPSE row of both tables into a SINGLE query at once — the bucket
+// grain (`date_trunc('hour', …)` from `BUCKET_UNIT_FOR_WINDOW_UNIT`) and the `generate_series` step
+// keyword (`interval '1 hour'` from `INTERVAL_KEYWORD_FOR_WINDOW_UNIT`) are both derived here. If a
+// future edit desyncs the two tables (e.g. bumps one collapse target but not the other), the grain
+// and the step diverge and this literal breaks — the standing gate against a latent parity trap.
+// MIRRORED byte-for-byte in the Python warehouse adapter test.
+const CANONICAL_TREND_SQL_HOURLY = [
+  'WITH counts AS (',
+  "  SELECT date_trunc('hour', timestamp) AS bucket, count(*) AS value",
+  '  FROM events_typed',
+  "  WHERE event = $1 AND timestamp >= date_trunc('hour', now() - interval '6 hour')",
+  "  GROUP BY date_trunc('hour', timestamp)",
+  ')',
+  'SELECT to_char(spine.bucket, \'YYYY-MM-DD"T"HH24:00:00\') AS bucket, coalesce(counts.value, 0) AS value',
+  "FROM generate_series(date_trunc('hour', now() - interval '6 hour'), date_trunc('hour', now()), interval '1 hour') AS spine(bucket)",
+  '  LEFT JOIN counts ON counts.bucket = spine.bucket',
+  'ORDER BY spine.bucket',
+].join('\n');
+
+test('the generated hourly trend SQL matches the canonical cross-tree string (sub-day: bucket grain + step keyword stay in step)', async () => {
+  const fake = createFakeDbExecute(trendSingleResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  await client.trend({ event: 'order_placed', aggregation: 'total', window: { value: 6, unit: 'hour' } });
+
+  expect(fake.calls[0].sql).toBe(CANONICAL_TREND_SQL_HOURLY);
+});
+
 test('a breakdown key with an embedded single quote is SQL-escaped in the JSONB path (injection-safe)', async () => {
   const fake = createFakeDbExecute(trendSingleResult);
   const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
@@ -783,23 +813,25 @@ test('retention ADVERSARIAL period_index=0 is the cohort base (its own period), 
   expect(fake.calls[0].sql).toContain("g.cohort_bucket + (g.period_index * interval '1 week')");
 });
 
-// ADVERSARIAL — actor in multiple cohorts: an actor doing the cohort event in two buckets is a
-// member of BOTH cohorts; the per-cell distinct-count is per-cohort, not global. The grid the SQL
-// returns reflects that: the same actor is counted once in each cohort's cells. Here the two
-// cohorts' p0 bases OVERLAP on one shared actor, yet each cohort's p0 counts that actor
-// independently (500 and 420 respectively) — a global distinct-count would have deduped across.
-test('retention ADVERSARIAL actor in multiple cohorts: counted per-cohort, not globally deduped', async () => {
+// The GROUPING SQL SHAPE for the multi-cohort case: `GROUP BY cohort_bucket` + `count(DISTINCT …)`
+// is what makes a multi-cohort actor count per-cohort rather than globally deduped. The fake echoes
+// whatever grid it is handed (it does not re-run SQL), so the REAL guard here is the SQL-STRING
+// assertion — this test pins the per-cohort GROUPING shape, NOT a builder computation. The canned
+// grid is deliberately DISTINCT from the base-case grid (different cohort labels + p0 bases 900/700,
+// overlapping on a shared actor) so a reader sees the two-cohort scenario is genuinely its own — and
+// the row assertion confirms the builder passes each cohort's cells through independently.
+test('retention multi-cohort GROUPING shape: SQL groups per cohort_bucket with count(DISTINCT) (no global dedup)', async () => {
   // Two cohorts whose base counts include the same recurring actor; the per-cohort counts stand
   // independently (the SQL groups by cohort_bucket, so a multi-cohort actor participates in each).
   const multiCohortResult: DbExecuteResult = {
     columns: [{ name: 'cohort' }, { name: 'period_index' }, { name: 'value' }],
     rows: [
-      ['2026-07-01', 0, 500],
-      ['2026-07-01', 1, 310],
-      ['2026-07-01', 2, 190],
-      ['2026-07-08', 0, 420],
-      ['2026-07-08', 1, 250],
-      ['2026-07-08', 2, 150],
+      ['2026-06-01', 0, 900],
+      ['2026-06-01', 1, 540],
+      ['2026-06-01', 2, 300],
+      ['2026-06-08', 0, 700],
+      ['2026-06-08', 1, 420],
+      ['2026-06-08', 2, 210],
     ],
   };
   const fake = createFakeDbExecute(multiCohortResult);
@@ -807,12 +839,13 @@ test('retention ADVERSARIAL actor in multiple cohorts: counted per-cohort, not g
 
   const result = await client.retention(retentionSpec);
 
-  // Both cohorts' bases are present and counted independently — no cross-cohort dedup.
-  const c1p0 = result.rows.find((r) => r.cohort === '2026-07-01' && r.periodIndex === 0);
-  const c2p0 = result.rows.find((r) => r.cohort === '2026-07-08' && r.periodIndex === 0);
-  expect(c1p0).toEqual({ cohort: '2026-07-01', periodIndex: 0, value: 500 });
-  expect(c2p0).toEqual({ cohort: '2026-07-08', periodIndex: 0, value: 420 });
-  // The distinct-count is GROUPED per cohort_bucket (per-cohort), never a single global count.
+  // Both cohorts' bases are present and passed through independently — no cross-cohort dedup.
+  const c1p0 = result.rows.find((r) => r.cohort === '2026-06-01' && r.periodIndex === 0);
+  const c2p0 = result.rows.find((r) => r.cohort === '2026-06-08' && r.periodIndex === 0);
+  expect(c1p0).toEqual({ cohort: '2026-06-01', periodIndex: 0, value: 900 });
+  expect(c2p0).toEqual({ cohort: '2026-06-08', periodIndex: 0, value: 700 });
+  // The REAL guard: the distinct-count is GROUPED per cohort_bucket (per-cohort), never a single
+  // global count — this SQL shape is what makes a multi-cohort actor count in EACH cohort.
   expect(fake.calls[0].sql).toContain('GROUP BY g.cohort_bucket, g.period_index');
   expect(fake.calls[0].sql).toContain('count(DISTINCT c.distinct_id)');
 });

@@ -377,6 +377,37 @@ def test_the_generated_trend_sql_matches_the_canonical_cross_tree_string() -> No
     assert query.sql == _CANONICAL_TREND_SQL
 
 
+# The sub-day (hour-granularity) canonical trend SQL. The `day` pin above only touches the
+# pass-through row of BOTH interval/bucket tables (`day -> day` in each). This hourly case is the ONE
+# that feeds the sub-day COLLAPSE row of both tables into a SINGLE query at once — the bucket grain
+# (`date_trunc('hour', ...)` from `_BUCKET_UNIT_FOR_WINDOW_UNIT`) and the `generate_series` step
+# keyword (`interval '1 hour'` from `_INTERVAL_KEYWORD_FOR_WINDOW_UNIT`) are both derived here. If a
+# future edit desyncs the two tables (e.g. bumps one collapse target but not the other), the grain
+# and the step diverge and this literal breaks — the standing gate against a latent parity trap.
+# MIRRORED byte-for-byte in the TS warehouse adapter test.
+_CANONICAL_TREND_SQL_HOURLY = (
+    "WITH counts AS (\n"
+    "  SELECT date_trunc('hour', timestamp) AS bucket, count(*) AS value\n"
+    "  FROM events_typed\n"
+    "  WHERE event = $1 AND timestamp >= date_trunc('hour', now() - interval '6 hour')\n"
+    "  GROUP BY date_trunc('hour', timestamp)\n"
+    ")\n"
+    "SELECT to_char(spine.bucket, 'YYYY-MM-DD\"T\"HH24:00:00') AS bucket, coalesce(counts.value, 0) AS value\n"
+    "FROM generate_series(date_trunc('hour', now() - interval '6 hour'), date_trunc('hour', now()), interval '1 hour') AS spine(bucket)\n"
+    "  LEFT JOIN counts ON counts.bucket = spine.bucket\n"
+    "ORDER BY spine.bucket"
+)
+
+
+def test_the_generated_hourly_trend_sql_matches_the_canonical_cross_tree_string() -> None:
+    # The sub-day case that feeds both interval/bucket tables into one query — bucket grain + step
+    # keyword must stay in step, or this literal breaks (the desync guard).
+    from analytics_kit.query.warehouse_sql import build_trend_sql
+
+    query = build_trend_sql(TrendSpec(event="order_placed", aggregation="total", window=Duration(6, "hour")))
+    assert query.sql == _CANONICAL_TREND_SQL_HOURLY
+
+
 def test_a_breakdown_key_with_an_embedded_single_quote_is_sql_escaped() -> None:
     # The breakdown key is the ONE runtime consumer string that reaches the SQL text (everything
     # else is $1-bound or closed-enum-inlined). It reuses the view generator's quote-doubling
@@ -808,19 +839,23 @@ def test_retention_adversarial_period_zero_is_the_cohort_base_not_first_return_p
     assert "g.cohort_bucket + (g.period_index * interval '1 week')" in fake.calls[0].sql
 
 
-def test_retention_adversarial_actor_in_multiple_cohorts_counted_per_cohort_not_globally() -> None:
-    # An actor doing the cohort event in two buckets is a member of BOTH cohorts; the per-cell
-    # distinct-count is per-cohort, not global. Both cohorts' bases stand independently — a global
-    # distinct-count would have deduped a recurring actor across cohorts.
+def test_retention_multi_cohort_grouping_shape_groups_per_cohort_bucket_no_global_dedup() -> None:
+    # The GROUPING SQL SHAPE for the multi-cohort case: `GROUP BY cohort_bucket` + `count(DISTINCT)`
+    # is what makes a multi-cohort actor count per-cohort rather than globally deduped. The fake
+    # echoes whatever grid it is handed (it does not re-run SQL), so the REAL guard here is the
+    # SQL-STRING assertion — this test pins the per-cohort GROUPING shape, NOT a builder computation.
+    # The canned grid is deliberately DISTINCT from the base-case grid (different cohort labels + p0
+    # bases 900/700, overlapping on a shared actor) so a reader sees the two-cohort scenario is
+    # genuinely its own — and the row assertion confirms each cohort's cells pass through independently.
     multi_cohort = DbExecuteResult(
         columns=[DbColumn(name="cohort"), DbColumn(name="period_index"), DbColumn(name="value")],
         rows=[
-            ("2026-07-01", 0, 500),
-            ("2026-07-01", 1, 310),
-            ("2026-07-01", 2, 190),
-            ("2026-07-08", 0, 420),
-            ("2026-07-08", 1, 250),
-            ("2026-07-08", 2, 150),
+            ("2026-06-01", 0, 900),
+            ("2026-06-01", 1, 540),
+            ("2026-06-01", 2, 300),
+            ("2026-06-08", 0, 700),
+            ("2026-06-08", 1, 420),
+            ("2026-06-08", 2, 210),
         ],
     )
     fake = FakeDbExecute(multi_cohort)
@@ -828,11 +863,12 @@ def test_retention_adversarial_actor_in_multiple_cohorts_counted_per_cohort_not_
 
     result = adapter.retention(_RETENTION_SPEC)
 
-    c1p0 = next(r for r in result.rows if r.cohort == "2026-07-01" and r.period_index == 0)
-    c2p0 = next(r for r in result.rows if r.cohort == "2026-07-08" and r.period_index == 0)
-    assert c1p0 == RetentionRow(cohort="2026-07-01", period_index=0, value=500)
-    assert c2p0 == RetentionRow(cohort="2026-07-08", period_index=0, value=420)
-    # The distinct-count is GROUPED per cohort_bucket (per-cohort), never a single global count.
+    c1p0 = next(r for r in result.rows if r.cohort == "2026-06-01" and r.period_index == 0)
+    c2p0 = next(r for r in result.rows if r.cohort == "2026-06-08" and r.period_index == 0)
+    assert c1p0 == RetentionRow(cohort="2026-06-01", period_index=0, value=900)
+    assert c2p0 == RetentionRow(cohort="2026-06-08", period_index=0, value=700)
+    # The REAL guard: the distinct-count is GROUPED per cohort_bucket (per-cohort), never a single
+    # global count — this SQL shape is what makes a multi-cohort actor count in EACH cohort.
     assert "GROUP BY g.cohort_bucket, g.period_index" in fake.calls[0].sql
     assert "count(DISTINCT c.distinct_id)" in fake.calls[0].sql
 
