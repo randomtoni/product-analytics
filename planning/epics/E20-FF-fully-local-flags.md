@@ -37,11 +37,12 @@ consumer config.
   this vocabulary is declared **adapter-internal wire** and is NOT exported from either package's public
   surface (`ts/packages/node/src/flags/local/definition-types.ts` docstring: "None of it appears on the
   neutral surface"; `python/.../flags/local/definition_types.py` `FlagDefinition = dict[str, object]`).
-  **Open decision surfaced to the user (see Concern):** whether E20 exposes the raw de-branded wire
-  shape directly (fast, but a Bar-A structural leak per architect) or introduces a **neutral,
-  purpose-designed consumer-facing definition type + internal mapping** to `DefinitionSnapshot` (the
-  Bar-A-clean path, but net-new seam surface beyond the locked decision). The token-level "zero vendor
-  field names" check is necessary but NOT sufficient.
+  **RESOLVED (user, 2026-07-14): the NEUTRAL FRONT.** E20 introduces a neutral, purpose-designed
+  consumer-facing flag-definition type + an internal mapping to `DefinitionSnapshot`; the consumer
+  NEVER authors the raw de-branded wire shape. The neutral type is the versioned additive contract;
+  the internal wire types stay as-is. Malformed static definitions are validated loudly at seed time
+  (a genuine input boundary). The token-level "zero vendor field names" check is the floor, not the
+  whole guard — the surface must be structurally neutral, not just de-tokenized.
 - **Bar A:** flag evaluation is provider-independent — the same static definitions + evaluator work
   regardless of backend, zero consumer change. **Bar B:** a consumer enables fully-local flags by
   config alone (supply static definitions), zero library change.
@@ -50,15 +51,19 @@ consumer config.
 
 ## Stories
 
-<Tentative slice — story files are drafted just-in-time at implement time. Second story is additive and
-explicitly deferrable.>
+<Tentative slice — story files are drafted just-in-time at implement time. The neutral-front decision
+(Notes D, resolved 2026-07-14) adds the definition-type story below the static-seeding story; the Neon
+follow-up stays additive and explicitly deferrable.>
 
-- **consumer-supplied static definitions** — a config field seeding the `DefinitionSnapshot` directly
-  (bypassing the poller fetch); the zero-infra self-host default; evaluator unchanged; document the
-  local-only default posture. **Gated on the user's decision (see Notes D / Concern 1):** whether the
-  consumer authors the raw de-branded wire shape or a new neutral definition type + mapping — that
-  choice sets what this story builds and whether the Python side gains a structured type. The
-  token-level "zero vendor field names" check is the floor, not the whole guard.
+- **neutral consumer-facing flag-definition type + internal mapping** — a purpose-designed neutral
+  definition type (TS interface + a parity Python TypedDict/dataclass) that consumers author, plus an
+  internal mapping to the `DefinitionSnapshot` the evaluator already consumes. The internal wire types
+  stay as-is; the neutral type is the versioned additive contract. TS/Python parity on the type + the
+  mapping. This is the Bar-A-clean surface the static-seeding story builds on.
+- **consumer-supplied static definitions** — a config field taking the NEUTRAL definition type and
+  seeding the `DefinitionSnapshot` (via the mapping above) directly, bypassing the poller fetch; the
+  zero-infra self-host default; evaluator unchanged; malformed definitions validated loudly at seed
+  time; document the local-only default posture.
 - **(additive, deferrable) Neon `flag_definitions` table + warehouse-backed definition fetch** — an
   `events`-schema-adjacent `flag_definitions` table + a warehouse-backed definition source, for
   consumers who prefer definitions in Neon over static config. Mark deferrable; not required for the
@@ -105,8 +110,10 @@ Locked by architect consult (2026-07-13) — do not re-litigate in stories.
   the locked decision**, so it is surfaced to the user rather than silently encoded here. Two further
   architect asks if the neutral front lands: (1) validate malformed static definitions loudly at
   seed time (a genuine input boundary — Pydantic/Zod posture); (2) make the NEUTRAL type the versioned
-  additive contract, decoupled from wire-shape churn. — architect (2026-07-13 locked; escalation
-  2026-07-14)
+  additive contract, decoupled from wire-shape churn. **RESOLVED (user, 2026-07-14): the NEUTRAL FRONT
+  is chosen** — E20 gains the neutral consumer-facing definition type + internal mapping (the new
+  first story above), the consumer never touches the raw wire shape, and both architect riders (1) and
+  (2) are in-scope. — architect (2026-07-13 locked; escalation 2026-07-14; user-resolved 2026-07-14)
 - **Lowest-risk epic in the cycle.** The remote fallback is already suppressible and the evaluator is
   already local; this epic only relocates the definition source to config. Risk: low.
 
