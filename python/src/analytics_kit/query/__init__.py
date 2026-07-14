@@ -27,6 +27,13 @@ from .config import QueryClientConfig
 from .factory import create_query_client
 from .noop import QueryNoop
 from .warehouse_adapter import WarehouseQueryAdapter, create_warehouse_query_adapter
+from .warehouse_schema import (
+    EVENTS_TABLE,
+    EVENTS_TABLE_DDL,
+    EVENTS_VIEW,
+    build_migration_sql,
+    build_typed_view_sql,
+)
 
 __all__ = [
     "AnalyticsQueryClient",
@@ -49,4 +56,9 @@ __all__ = [
     "QueryNoop",
     "WarehouseQueryAdapter",
     "create_warehouse_query_adapter",
+    "EVENTS_TABLE",
+    "EVENTS_TABLE_DDL",
+    "EVENTS_VIEW",
+    "build_typed_view_sql",
+    "build_migration_sql",
 ]

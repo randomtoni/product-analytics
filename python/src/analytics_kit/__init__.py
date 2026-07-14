@@ -40,6 +40,9 @@ from .ports import (
 )
 from .provider import Analytics
 from .query import (
+    EVENTS_TABLE,
+    EVENTS_TABLE_DDL,
+    EVENTS_VIEW,
     Aggregation,
     AnalyticsQueryClient,
     Duration,
@@ -58,6 +61,8 @@ from .query import (
     UniqueCountRow,
     UniqueCountSpec,
     WarehouseQueryAdapter,
+    build_migration_sql,
+    build_typed_view_sql,
     create_query_client,
     create_warehouse_query_adapter,
 )
@@ -143,4 +148,9 @@ __all__ = [
     "QueryNoop",
     "WarehouseQueryAdapter",
     "create_warehouse_query_adapter",
+    "EVENTS_TABLE",
+    "EVENTS_TABLE_DDL",
+    "EVENTS_VIEW",
+    "build_typed_view_sql",
+    "build_migration_sql",
 ]

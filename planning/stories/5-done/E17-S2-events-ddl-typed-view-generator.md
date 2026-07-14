@@ -130,6 +130,25 @@ a generation-shape decision, not a contract change — S1 froze the columns, not
 execute anything — execution rides the S3 DB-execute seam. Keep S2 free of any driver dependency so
 it builds/tests with zero warehouse extra installed.
 
+> Reviewer suggestion (2026-07-14): the `pg_input_is_valid` safe-cast has a Postgres-16 floor; flag it
+> for the E21 acceptance recipe. ADDRESSED at ship: added a ≥16 note to `E21`'s Development
+> prerequisites (provision PG≥16 in the E1 test; state the floor in the recipe).
+> Reviewer suggestion (2026-07-14): `TRAIT_GROUP_NESTED_KEYS` export parity is uneven (TS exports from
+> the package index; Python only from the submodule). DEFER to the E17 improvement pass — make it
+> private `_TRAIT_GROUP_NESTED_KEYS` in BOTH trees (it's a test-facing guard constant, not consumer
+> surface) with the tests reaching the module-internal name.
+> Reviewer suggestion (2026-07-14): `text→timestamptz` casts are session-`DateStyle`/`TimeZone`-
+> dependent for ambiguous inputs (inherent to the cast, never an error). Carried to E18/E21 as a
+> query-time expectation note (also recorded in E21's prerequisites).
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this once the story moves to stories/5-done/. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files added:** `ts/packages/node/src/query/warehouse-schema.ts` (+ `.test.ts`), `python/src/analytics_kit/query/warehouse_schema.py` (+ `python/tests/test_warehouse_schema.py`)
+- **Files changed:** `ts/packages/node/src/index.ts`, `python/src/analytics_kit/query/__init__.py`, `python/src/analytics_kit/__init__.py` (export additions)
+- **New public API:** `EVENTS_TABLE`, `EVENTS_TABLE_DDL`, `EVENTS_VIEW`, `buildTypedViewSql`/`build_typed_view_sql`, `buildMigrationSql`/`build_migration_sql` (both trees, role-named)
+- **Tests added:** TS `warehouse-schema.test.ts` (17) + Python `test_warehouse_schema.py` (16) — incl. the byte-identical cross-tree parity assertion (shared `EXPECTED_VIEW_SQL`), the trait/group-guard test, and a mixed-case key (`Referrer`) forcing code-point (not locale) sort
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** verdict SOUND, no criticals; 3 suggestions (see Technical notes) — #1 addressed (E21 PG16 note), #2 deferred to the E17 improvement pass, #3 carried forward to E18/E21
+- **Cross-story seams exposed:** the typed view is `EVENTS_VIEW` over `EVENTS_TABLE`; E18's query SQL targets `EVENTS_VIEW` columns (base cols + safe-cast projections), never `properties` directly. E19's receiver writes rows into `EVENTS_TABLE`. **Operational floor: the generated view requires Postgres ≥16** (`pg_input_is_valid`) — E21's acceptance test + recipe must provision/state ≥16. Column order is base-first then event-prop keys stable-sorted (code-point) — the frozen parity rule.

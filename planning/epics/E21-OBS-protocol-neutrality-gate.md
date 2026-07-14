@@ -5,7 +5,7 @@ area: observability
 touches: [adapters, query, node, feature-flags]
 api_impact: additive
 blocked_by: []
-updated: 2026-07-13
+updated: 2026-07-14
 ---
 
 # E21-OBS-protocol-neutrality-gate — Protocol-neutrality gate + self-host acceptance recipe
@@ -48,6 +48,13 @@ it validates E17–E20 end to end.
   injected fake DB-execute seam without it, so this prerequisite lands on THIS epic only and does not
   gate building E17–E20. Not mirrored as a `blocked_by` (it gates the acceptance test's execution, not
   the epic's construction).
+- **The Postgres must be ≥16** (surfaced by the E17-S2 review, 2026-07-14). The typed-view generator's
+  safe-cast form uses `pg_input_is_valid` — a Postgres-16 function — so the generated view **requires
+  PG ≥16**. Neon runs 16/17/18, so the greenfield target is fine. Two must-dos here: (1) the **E1
+  acceptance test provisions PG ≥16**; (2) the **self-host recipe states the ≥16 floor** in its
+  honest dev-prerequisites (a consumer on PG15 would get a view that errors at creation). Also carry a
+  line for E18/E21 that `text→timestamptz` casts are session-`DateStyle`/`TimeZone`-dependent for
+  ambiguous inputs (inherent to the cast, never an error — a query-time expectation note, not a defect).
 
 ## Stories
 
