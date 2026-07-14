@@ -130,7 +130,11 @@ Document this prominently — it is the single most likely mount bug.
 S2 (Python) after S1. S3's from-config factory wraps S4's TS mounts (the TS receiver from-config wiring),
 so S3 and S4 touch overlapping TS receiver files — run S3 after (or coordinated with) S4 for the TS
 factory wiring, per the epic dependency graph. S4 also edits `index.ts` (exports) — coordinate the export
-add with S3's factory export.
+add with S3's factory export. **Export split (mirrors the E17-S4 shipped posture):** S4 exports the mount
+HANDLERS from `index.ts` (they are the consumer-facing surface the consumer imports and mounts); S3
+exports the single top-level from-config factory (the `createQueryClient` analog) and keeps its
+DSN→driver build helper submodule-scoped — do NOT export a second bare DSN-building helper (E17-S4
+Follow-up, 2026-07-14). Two distinct export intents on one `index.ts`, no collision.
 
 **Test posture.** Drive each mount with a fake/minimal request (canned raw body bytes + headers,
 gzipped and raw variants) and the S1 `createFakeDbExecute` — assert the core is called with the raw body

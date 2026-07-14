@@ -42,8 +42,11 @@ core. The core stays DSN-free.
     the S1 core (and the S2 mounts). Role-named.
   - The exact factory name settles at implement time; PIN that it mirrors E17-S4's factory pattern (read
     DSN at the boundary → lazily build driver → build default `DbExecute` → inject). Reuse E17-S3's
-    `createDefaultDbExecute`/`create_default_db_execute` + `DefaultDbExecuteConfig` — do NOT re-implement
-    a driver build.
+    `createDefaultDbExecute`/`create_default_db_execute` — do NOT re-implement a driver build. **The
+    two build signatures DIFFER by tree (confirmed against E17-S3):** TS `createDefaultDbExecute({
+    warehouseDsn })` takes a `DefaultDbExecuteConfig` object (`{ warehouseDsn: string }`); Python
+    `create_default_db_execute(warehouse_dsn)` takes a POSITIONAL string (there is NO Python
+    `DefaultDbExecuteConfig`). Call each with its real shape.
 - **The DSN is read ONLY at this factory boundary; the receiver core (S1) and mounts (S2/S4) hold only
   the injected `DbExecute`, never a DSN or driver handle.** Same split as the query side: a DSN is
   credential-shaped config, read at the boundary, never stored on the working object. The core/mount
@@ -51,8 +54,16 @@ core. The core stays DSN-free.
 - **Wire the factory into the mounts.** The from-config factory is the single ergonomic entry a consumer
   uses: `warehouse_dsn` in → a mount-ready handler out (the S2/S4 mount, backed by a DSN-built
   `DbExecute`). Presence-based, no `backend:` enum (consistent with every existing factory ladder —
-  E17-S4's Notes C). If `warehouse_dsn` is absent, define the neutral behavior (a clear neutral error /
-  no-op — mirror the query factory's absence handling; pin the choice).
+  E17-S4's Notes C).
+  - **Absent-`warehouse_dsn` behavior: a CLEAR NEUTRAL ERROR, not a silent no-op (pinned this story).**
+    The query-side no-op (`QueryNoop`) works because a READ has a natural empty answer — an unconfigured
+    query returns a well-formed empty `QueryResult`. A WRITE receiver has NO such natural empty success:
+    a consumer who explicitly mounts a receiver but supplies no DSN has a misconfiguration, and silently
+    dropping every inbound event would be a Bar-A footgun (events vanish with no signal). So the factory,
+    given no `warehouse_dsn`, raises/throws a clear neutral error (naming the missing field) — mirroring
+    the default-driver's clear-neutral-error posture when the `warehouse` extra is absent, NOT the query
+    factory's no-op. This diverges from the query factory DELIBERATELY (the read/write asymmetry above);
+    flag to the orchestrator if the builder hits a reason to reconsider.
 - **TS/Python parity** on the field name shape, the from-config factory pattern, the DSN-read-at-boundary
   invariant, and the "core holds only `DbExecute`" split.
 
@@ -79,7 +90,8 @@ core. The core stays DSN-free.
       they never import `pg`/`psycopg`. Only this factory boundary imports the driver (lazily). Both
       neutrality scans green.
 - [ ] Selection is presence-based (a `warehouse_dsn` supplied ⇒ a DSN-built receiver); no `backend:`
-      enum; absent-DSN behavior is a defined neutral error/no-op (pinned, mirroring the query factory).
+      enum; absent-DSN behavior is a CLEAR NEUTRAL ERROR naming the missing field (pinned — the
+      write-side diverges from the query factory's no-op; see Scope rationale), never a silent drop.
 - [ ] Bar B: a consumer selects self-host persistence by supplying `warehouse_dsn` alone (same coherent
       field as the query side) and mounting the returned handler — zero library edit.
 - [ ] Factory tests in both trees inject/build the `DbExecute` using the E17-S3 fake seam (no real
@@ -116,6 +128,16 @@ writing:
   unit-testable against the S3 fake `DbExecute`. — architect (2026-07-13, 2026-07-14)
 - **Injectable ⇒ no real Postgres this epic.** The factory builds a real `DbExecute` from a DSN in
   production, but tests inject/build against the E17-S3 fake seam — no real Neon. — architect (2026-07-13)
+
+**Export posture — mirror E17-S4's SHIPPED resolution (config-only, submodule-scoped).** E17-S4's
+improvement pass NARROWED the warehouse from-config factory to be submodule-only in BOTH trees —
+`createWarehouseQueryAdapterFromConfig` / `create_warehouse_query_adapter_from_config` are NOT exported
+from the package `__init__`/`index.ts`; the warehouse adapter is reachable ONLY via the top-level
+`createQueryClient`/`create_query_client` selection factory (E17-S4 Follow-up, 2026-07-14). Follow that
+precedent: S3's receiver from-config factory is the single ergonomic top-level entry a consumer imports
+(the receiver analog of `createQueryClient`), and the DSN→driver build stays an internal detail — do NOT
+export a second bare DSN-building helper alongside it. One config-in → mount-ready-handler-out entry per
+tree.
 
 **`touches: core`** because the shared config/factory posture (presence-based selection, DSN-at-boundary,
 the neutral core interface) is a seam-level convention the receiver honors — mirroring the E17-S4

@@ -21,11 +21,18 @@ zero server logic authored by the consumer. Bar B: adopt by config + mounting th
 
 ### In
 
-- Ship **Django + FastAPI/ASGI receiver mounts** in Python, mirroring the existing request-context
-  middleware set (`python/src/analytics_kit/integrations/django.py`, `asgi.py`) — the same lazy-import,
-  extra-gated, `__getattr__`-re-exported posture. Suggested home: alongside the S1 receiver core
-  (`python/src/analytics_kit/receiver/`), OR extended into `integrations/` following the middleware
-  precedent — the builder picks ONE, consistent with the middleware pattern; pin the choice.
+- Ship **Django + FastAPI/ASGI receiver mounts** in Python, REPLICATING the existing request-context
+  middleware set's convention (`python/src/analytics_kit/integrations/django.py`, `asgi.py`) — the same
+  lazy-import, extra-gated, `__getattr__`-re-exported posture. **PINNED home (architect 2026-07-14):
+  alongside the S1 receiver core in `python/src/analytics_kit/receiver/`, NOT `integrations/`.** The
+  receiver mounts share a MECHANISM with the `integrations/` middlewares (the lazy-extra-gated framework
+  binding convention) but not a SUBJECT — `integrations/` is the DB-agnostic request-context scope layer
+  (`new_context`/`scoped`/`context`), whereas the receiver is the self-host WRITE ingest path. One
+  capability, one package: `receiver/` holds the core AND its mounts AND S3's factory (mirroring how
+  `query/` keeps `db_execute` + `default_db_execute` together). **COPY the `integrations`
+  `__getattr__`/extra-gating convention into `receiver/` — do NOT import from or extend the
+  `integrations/` package** ("mirrors the integrations pattern" is a convention to replicate, never a
+  license to reach into that package).
   - **Django mount** — a view/handler (the receiver analog of `RequestContextMiddleware`) that reads the
     request body + headers, calls the S1 core, and returns a Django `HttpResponse` from the neutral
     outcome (2xx on accept, 4xx on a neutral parse error). Django imported LAZILY behind
@@ -44,10 +51,10 @@ zero server logic authored by the consumer. Bar B: adopt by config + mounting th
 - **Response mapping.** Neutral accept → 2xx (empty/minimal body); neutral parse error → 4xx. Do NOT
   leak a driver/framework exception to the client — a DB failure surfaces as a neutral 5xx-class outcome
   the mount maps (define the minimal mapping; keep it neutral).
-- **Public export posture** mirrors the existing middlewares: lazy `__getattr__` re-export from the
-  package `__init__` so a bare import never pulls a framework, and the framework module (which imports its
-  framework) loads only on name access (mirror `integrations/__init__.py:48-61`). Role-named handlers
-  (never a vendor name).
+- **Public export posture** replicates the existing middlewares' convention: a lazy `__getattr__`
+  re-export from the `receiver/` package `__init__` (its OWN, copied from `integrations/__init__.py:48-61`
+  — not shared with it) so a bare import never pulls a framework, and the framework mount module (which
+  imports its framework) loads only on name access. Role-named handlers (never a vendor name).
 - **The `[fastapi]`/`[django]` extras already exist** (`pyproject.toml:13-14`) — no new extra; the mounts
   ride the existing ones exactly as the middlewares do.
 
@@ -100,7 +107,8 @@ proven pattern, not a new design.** Read these before writing:
   request-wrapping middleware, but the extra-gating mechanics are identical.
 - **Lazy public export** (`python/src/analytics_kit/integrations/__init__.py:48-61`) — `_LAZY_EXPORTS`
   map + `__getattr__` so a bare `import` never pulls a framework. The receiver handlers re-export the same
-  way from their package `__init__`.
+  way from the `receiver/` package's OWN `__init__` — the convention is COPIED into `receiver/`, the
+  `integrations/` package is neither imported nor extended.
 
 **Pre-resolved decisions (locked by the epic Notes):**
 

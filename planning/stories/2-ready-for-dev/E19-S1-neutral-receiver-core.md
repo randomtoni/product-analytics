@@ -24,9 +24,12 @@ this core.
 
 - Ship a **framework-agnostic receiver core** in both trees — a pure function/callable that takes a
   raw request body (`bytes`/`Buffer`) + the request headers and persists the contained events. It
-  imports NO web framework. Suggested home: TS `ts/packages/node/src/receiver/` (a new sibling of
-  `query/`); Python `python/src/analytics_kit/receiver/` (a new sibling of `server/`). PIN the module
-  home here so S2/S3/S4 bind to a known path.
+  imports NO web framework. **PINNED module home (architect 2026-07-14):** TS
+  `ts/packages/node/src/receiver/` (a new sibling of `query/`); Python
+  `python/src/analytics_kit/receiver/` (a new sibling of `server/`). This is the ONE capability's home:
+  the S2/S4 framework mounts live INSIDE this same `receiver/` package (as thin edges, mirroring how
+  `query/` holds both `db_execute` and `default_db_execute`), NOT in `integrations/`. S3's from-config
+  factory also lives here. S2/S3/S4 bind to this path — the home is decided, not a builder pick.
 - **Decompress conditionally on the wire.** The transport gzips the body by default and sets
   `Content-Encoding: gzip`, with a raw-JSON fallback that OMITS the header (see `send-batch.ts` /
   `transport.py`). The receiver mirrors that exactly: if `Content-Encoding: gzip` is present,
@@ -50,7 +53,9 @@ this core.
     the driver casts to `jsonb`). Trait/group events already nest `set`/`set_once`/`group_type`/
     `group_key`/`group_set` INSIDE `properties` (node wire-mapper) — persist AS-IS. NO column named after
     those keys (per the E17 schema contract's nesting guard). An absent `properties` binds an empty JSON
-    object `{}` (never NULL — the column is un-constrained but the neutral bag is always at least `{}`).
+    object `{}` (never NULL — the column is `jsonb NOT NULL DEFAULT '{}'` per the shipped E17 DDL, so a
+    NULL bind would violate the constraint; bind `{}` explicitly rather than relying on the column
+    default).
   - Bind values as **SQL params**, never string-interpolated (mirror E18's `$1`-param posture — no
     injection surface).
 - **`timestamp` NOT NULL → the receiver supplies a default when the wire omits it.** The `timestamp`
@@ -59,15 +64,42 @@ this core.
   in that batch that omits `timestamp`.** One receipt instant per batch (not per-row) so a batch reads
   as one arrival. When the wire carries `timestamp`, it is used verbatim. Document this in the receiver
   module.
+  - **Make the receipt clock testable by the SEND-SIDE parameter pattern, NOT a `wait`-style hook
+    (confirmed against the real transport).** The precedent is `assembleBatchEnvelope(apiKey, events,
+    now: Date)` / `assemble_batch_envelope(api_key, events, sent_at)` — the PURE mapper takes the
+    instant as a PARAMETER; the impure caller (`postEnvelope`/`post_envelope`) supplies the real
+    `new Date()` / `datetime.now(timezone.utc)`, and the send-side test (`wire-mapper.test.ts:229`)
+    passes a FIXED `now` for a deterministic assertion. `sent_at` is NOT an injected hook (only the
+    retry `wait` is). Mirror that here: the pure parse→persist step takes the receipt instant as an
+    argument (defaultable to `new Date()` / `datetime.now(timezone.utc)` at the impure boundary), so a
+    receipt-time test passes a fixed instant and asserts the exact bound `timestamp` param against the
+    fake — no clock-hook machinery. Keep TS/Python parity on this shape.
 - **Batch upsert shape.** A batch persists all its events. Whether that is one multi-row `INSERT … ON
   CONFLICT DO NOTHING` or a per-event loop is the builder's pick — but it MUST be assertable against the
   E17 fake `DbExecute` (SQL + params). Prefer one statement per batch (fewer round-trips) if it stays
-  cleanly assertable; a per-event loop is acceptable. Pin the choice so S2/S4 mounts don't re-decide it.
+  cleanly assertable; a per-event loop is acceptable. Pin the choice (record it in the module) so S2/S4
+  mounts don't re-decide it. **Intra-batch duplicate `uuid` is SAFE under the multi-row path:** `ON
+  CONFLICT … DO NOTHING` does NOT raise on a `uuid` repeated within one statement's VALUES list (the
+  "cannot affect row a second time" error is `DO UPDATE`-only) — so the multi-row form needs no
+  pre-dedupe pass. Since the seam takes `(sql, params?)`, the multi-row path builds one parameterized
+  VALUES list (flattened positional params); the per-event path records N calls — either is directly
+  assertable against `RecordedExec`. Whichever is chosen, keep it identical in shape across both trees.
 - **Injectable seam — the core holds only the `DbExecute`, never a DSN or driver handle.** The core's
   signature takes an injected `DbExecute` (TS `dbExecute`; Python `db_execute`) exactly as the warehouse
   query adapter does. S3 builds the `DbExecute` from the DSN at the config boundary and hands it in; the
   core never imports `pg`/`psycopg`. This is what makes the core unit-testable against the E17 **reusable
   fake** with NO real Postgres.
+- **The write reuses the READ-designed seam — treat the result as OPAQUE (seam-invariant, architect
+  2026-07-14).** The `DbExecute` seam (`DbExecuteResult = {rows, columns}`) was designed for E18 READS;
+  E19 reuses it for a WRITE. The receiver MUST call `DbExecute` for its `INSERT … ON CONFLICT DO NOTHING`
+  and treat the result as opaque — it neither reads rows nor requires a result set. **The seam contract
+  is: a non-RETURNING write resolves to an empty `DbExecuteResult` (`{rows: [], columns: []}`).** The E17
+  fakes already honor this (default to empty + record SQL+params), so this asserts cleanly against the
+  fake with NO real Postgres. The TS default driver already conforms (`pg` returns `rows: []`/`fields: []`
+  on a non-RETURNING INSERT). The Python default driver does NOT yet conform (`_result_from_cursor`'s
+  unconditional `fetchall()` raises on a write) — that is an E17/E21 driver-conformance follow-up, NOT
+  E19 surface (see the Concern flagged to the orchestrator); the receiver core, being fake-backed this
+  epic, is unaffected. Do NOT try to make the write path safe against a real driver from inside E19.
 - **Return a neutral outcome the mounts translate to an HTTP response.** The core returns a small neutral
   result (e.g. accepted-count, or a neutral error for a malformed body) — NOT an HTTP response object
   (that is the mount's concern, S2/S4). A malformed/undecodable body is a neutral parse error the core
@@ -111,6 +143,10 @@ this core.
       verbatim.
 - [ ] The core holds only the injected `DbExecute` (never a DSN or driver handle); it never imports
       `pg`/`psycopg`. Both neutrality scans green.
+- [ ] The write treats the `DbExecute` result as OPAQUE — the receiver never reads rows off the write and
+      does not require a result set (the non-RETURNING-write contract: an empty `DbExecuteResult`). The
+      E17 fake's default empty result stands in for a real write; the test asserts only recorded
+      SQL+params, never a returned row.
 - [ ] A malformed/undecodable body yields a neutral parse error (not a raised driver/framework
       exception); a valid empty `batch` is a no-op success. Bar A: no vendor type on the core's surface.
 - [ ] TS/Python parity on envelope parse, decompress rule, upsert SQL shape, receipt-time default, and
@@ -184,9 +220,11 @@ transport.** Read the send side and mirror it exactly; do NOT invent a wire:
 from '../query/db-execute.fixtures'`; Python `from db_execute_fakes import FakeDbExecute` (in
 `python/tests/`). Assert: the upsert SQL string (`INSERT INTO events (...) ... ON CONFLICT (uuid) DO
 NOTHING`), the bound params for a batch (distinct_id/event/timestamp/uuid/properties), the receipt-time
-default fill, and idempotency (same `uuid` → the `DO NOTHING` form; the fake records one call shape).
-The E17 fake records exec calls (`RecordedExec`) so the SQL + params are directly assertable — the same
-way E18's SQL-shape tests assert against it.
+default fill (pass a FIXED instant, assert the exact bound `timestamp` param), and idempotency (same
+`uuid` → the `DO NOTHING` form; the fake records one call shape). The E17 fake records exec calls
+(`RecordedExec`) and returns its default EMPTY `DbExecuteResult` — which IS the write contract (a
+non-RETURNING write resolves to `{rows: [], columns: []}`), so the receiver ignores the return and the
+test asserts only the recorded SQL+params. Same way E18's SQL-shape tests assert against the fake.
 
 **Reference pointers (read before writing):**
 - Outbound wire: `ts/packages/node/src/wire-mapper.ts`, `send-batch.ts`, `gzip.ts`; Python
