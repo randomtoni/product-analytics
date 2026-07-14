@@ -320,7 +320,9 @@ describe.skipIf(!DATABASE_URL)('E1 — end-to-end zero-egress acceptance (real P
     expect(unique.rows.reduce((sum, r) => sum + r.value, 0)).toBe(2);
 
     // raw_query over the consumer's own schema — a neutral column-keyed result from real Postgres.
-    // cohort_signup rows: R1,R2,R3,R4 = 4 cohort_signup events.
+    // cohort_signup rows: R1,R2,R3,R4 = 4 cohort_signup events. The explicit `::int` cast makes this
+    // a provenance anchor over OID 23 (int4) — NOT the OID-20 bigint-parser exercise; the bare
+    // `count(...)` bigint that parser targets is proven by the funnel/retention counts above.
     const raw = await query.rawQuery(`SELECT count(*)::int AS n FROM events WHERE event = 'cohort_signup'`);
     expect((raw.rows[0] as { n: number }).n).toBe(4);
 
@@ -381,8 +383,9 @@ describe.skipIf(!DATABASE_URL)('E1 — end-to-end zero-egress acceptance (real P
     for (const r of trendBd.rows) {
       totalByTier.set(r.breakdown, (totalByTier.get(r.breakdown) ?? 0) + r.value);
     }
-    expect(totalByTier.get('42')).toBe(2);
-    expect(totalByTier.get('7')).toBe(1);
+    // Exact-map check (mirrors Python's exact-dict `== {"42": 2, "7": 1}`): the ONLY groups are the
+    // two declared tiers, each with its exact total — no phantom '42.0' key, no extra group.
+    expect(new Set(totalByTier.entries())).toEqual(new Set([['42', 2] as const, ['7', 1] as const]));
     // HALF (2): the numeric key rendered to the EXACT string '42' — not '42.0', not a Number repr.
     expect(totalByTier.has('42')).toBe(true);
     expect(totalByTier.has('42.0')).toBe(false);

@@ -51,7 +51,9 @@ interface DriverModule {
 // value is a different OID and is untouched.
 const PG_INT8_OID = 20;
 
-// Coerce bigint (as reported: a decimal string) to a JS number for the neutral cell.
+// Coerce bigint (as reported: a decimal string) to a JS number for the neutral cell. Lossy past
+// `Number.MAX_SAFE_INTEGER` — safe for the count aggregates it targets, but a true `int8` COLUMN
+// selected via `raw_query` could exceed it; a per-query opt-out is the follow-up if one surfaces.
 function parseBigIntAsNumber(value: string): number {
   return Number(value);
 }

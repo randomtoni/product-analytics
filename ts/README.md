@@ -537,7 +537,8 @@ defects:
 - **`text → timestamptz` casts are session-dependent for ambiguous inputs.** A timestamp string with
   an ambiguous field order is resolved against the session's `DateStyle` / `TimeZone` settings. This
   is inherent to the cast, not an error — pin those session settings if your ingested timestamps are
-  ambiguous.
+  ambiguous. (This is the value-parsing cast only; the bucket labels the queries emit are
+  session-immune `to_char` renders.)
 - **The retention breakdown groups per `(distinct_id, cohort_bucket, value)`.** An actor with two
   breakdown values in one cohort week lands in **both** breakdown cohorts — one row per distinct
   breakdown value, by design.

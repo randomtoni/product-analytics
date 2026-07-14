@@ -150,26 +150,35 @@ _skip_without_db = pytest.mark.skipif(
     not _DATABASE_URL, reason="DATABASE_URL unset — no real database available"
 )
 
+# Narrowed to `str` for the real-driver tests: they run only under `_skip_without_db` (DATABASE_URL
+# truthy), so the empty-string fallback is never the value passed — it just satisfies the type.
+_DSN: str = _DATABASE_URL or ""
+
 
 @pytest.mark.needs_postgres
 @_skip_without_db
 def test_default_driver_returns_empty_result_on_a_non_returning_write() -> None:
-    db_execute = create_default_db_execute(_DATABASE_URL)  # type: ignore[arg-type]
+    db_execute = create_default_db_execute(_DSN)
 
+    # A real (non-TEMP) table: each execute() opens its own connection, so a TEMP table would vanish
+    # between calls. Uuid-suffixed, DROP in a finally — same posture as the persistence proof below.
     table = f"akit_e21s1_{uuid.uuid4().hex}"
     row_uuid = str(uuid.uuid4())
-    sql = (
-        f"CREATE TEMP TABLE {table} (uuid uuid UNIQUE NOT NULL, note text);\n"
-        f"INSERT INTO {table} (uuid, note) VALUES ('{row_uuid}', 'seed');\n"
-        f"INSERT INTO {table} (uuid, note) VALUES ('{row_uuid}', 'conflict') "
-        "ON CONFLICT (uuid) DO NOTHING;"
-    )
+    try:
+        db_execute.execute(f"CREATE TABLE {table} (uuid uuid UNIQUE NOT NULL, note text)")
+        db_execute.execute(f"INSERT INTO {table} (uuid, note) VALUES (%s, 'seed')", [row_uuid])
 
-    result = db_execute.execute(sql)
+        # The non-RETURNING write under test: leaves cursor.description None and no result set.
+        result = db_execute.execute(
+            f"INSERT INTO {table} (uuid, note) VALUES (%s, 'conflict') ON CONFLICT (uuid) DO NOTHING",
+            [row_uuid],
+        )
 
-    assert result == DbExecuteResult(rows=[], columns=[])
-    assert result.rows == []
-    assert result.columns == []
+        assert result == DbExecuteResult(rows=[], columns=[])
+        assert result.rows == []
+        assert result.columns == []
+    finally:
+        db_execute.execute(f"DROP TABLE IF EXISTS {table}")
 
 
 # The write-PERSISTENCE proof the single-call test above structurally cannot give: the driver
@@ -183,7 +192,7 @@ def test_default_driver_returns_empty_result_on_a_non_returning_write() -> None:
 @pytest.mark.needs_postgres
 @_skip_without_db
 def test_default_driver_persists_a_write_across_the_per_call_connection() -> None:
-    db_execute = create_default_db_execute(_DATABASE_URL)  # type: ignore[arg-type]
+    db_execute = create_default_db_execute(_DSN)
 
     table = f"akit_e21s1_persist_{uuid.uuid4().hex}"
     row_uuid = str(uuid.uuid4())
@@ -219,7 +228,7 @@ def test_default_driver_persists_a_write_across_the_per_call_connection() -> Non
 @pytest.mark.needs_postgres
 @_skip_without_db
 def test_default_driver_rewrites_dollar_placeholders_for_the_db_api_driver() -> None:
-    db_execute = create_default_db_execute(_DATABASE_URL)  # type: ignore[arg-type]
+    db_execute = create_default_db_execute(_DSN)
 
     table = f"akit_e21s3_ph_{uuid.uuid4().hex}"
     u1, u2 = str(uuid.uuid4()), str(uuid.uuid4())

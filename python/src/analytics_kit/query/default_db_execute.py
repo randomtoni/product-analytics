@@ -37,9 +37,11 @@ _DRIVER_MISSING = (
 # replace: `$1` is a prefix of `$10`); positional order is preserved because the builders generate
 # `$1..$N` in strict lockstep with the flat params. The emitted SQL the neutrality scan and the
 # parity fixtures assert on is UNCHANGED — only what crosses into the driver is adapted. No injection
-# surface: the `$N` tokens are builder-generated, never consumer input (raw_query takes no params, so
-# this is a no-op there). The builders emit no `%` literal today; if one is ever added it must be
-# `%%`-escaped at the builder — out of this seam's scope.
+# surface: the `$N` tokens are builder-generated, never consumer input. For raw_query the rewrite is a
+# no-op ONLY when the raw SQL carries no `$digit` token; a `$N`-shaped literal in raw SQL WOULD be
+# rewritten to `%s` (raw_query passes no params, so such a rewritten placeholder then binds nothing).
+# The builders emit no `%` literal today; if one is ever added it must be `%%`-escaped at the builder
+# — out of this seam's scope.
 _POSITIONAL_PLACEHOLDER = re.compile(r"\$\d+")
 
 

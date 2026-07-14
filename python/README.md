@@ -308,6 +308,8 @@ factories select the HTTP backend or a silent no-op. `create_query_client`
 present:
 
 ```python
+import os
+
 from analytics_kit.query import create_query_client, QueryClientConfig
 
 queries = create_query_client(
@@ -327,6 +329,8 @@ polls nothing and evaluates every flag against the `FlagContext` locally
 (`src/analytics_kit/flags/factory.py`):
 
 ```python
+import os
+
 from analytics_kit.flags import create_flag_client, FlagClientConfig
 
 flags = create_flag_client(
@@ -350,6 +354,8 @@ a framework-agnostic `Receiver`. Hand that `Receiver` to the mount for your fram
 server):
 
 ```python
+import os
+
 from analytics_kit.receiver import create_receiver_from_config, ReceiverASGIApp, ReceiverConfig
 
 receiver = create_receiver_from_config(ReceiverConfig(warehouse_dsn=os.environ["WAREHOUSE_DSN"]))
@@ -383,7 +389,8 @@ defects:
 - **`text → timestamptz` casts are session-dependent for ambiguous inputs.** A timestamp string with
   an ambiguous field order is resolved against the session's `DateStyle` / `TimeZone` settings. This
   is inherent to the cast, not an error — pin those session settings if your ingested timestamps are
-  ambiguous.
+  ambiguous. (This is the value-parsing cast only; the bucket labels the queries emit are
+  session-immune `to_char` renders.)
 - **The retention breakdown groups per `(distinct_id, cohort_bucket, value)`.** An actor with two
   breakdown values in one cohort week lands in **both** breakdown cohorts — one row per distinct
   breakdown value, by design.

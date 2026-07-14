@@ -139,3 +139,10 @@ prerequisites + PG ≥16 floor + cast caveat), and `## Notes` (F — honest exte
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** independent gate verdict SHIP (no criticals) — the recipe is genuinely NEUTRAL (role-named backends "the default HTTP backend" / "the self-host warehouse backend", "neither privileged in the code"; PostHog named nowhere; zero vendor/hostname/`$`-token), ACCURATE (every cited symbol + behavior cross-checked against shipped TS + Python source), and HONEST (all 5 prerequisites named as provisioning/config + the PG≥16 floor grounded in `pg_input_is_valid`; no "config-only" over-claim). Bar A/B + the three query-time caveats (timestamptz session-dependence, retention breakdown grouping, declared-breakdown-keys) all match reality. 2 cosmetic suggestions above
 - **Cross-story seams exposed:** **the self-host cycle's consumer-facing capstone.** A consumer follows the recipe (migration → `warehouse_dsn` → driver extra → static flags → receiver mount) to run capture→store→query+flags on their own Neon with zero PostHog calls and zero call-site change (Bar A/B). Neutrality is now enforced on the most consumer-visible surface (the README passes `pnpm neutrality-scan` + the Python analog). **E21 (and the whole self-host cycle) closes with this.**
+
+## Follow-up
+
+> E21 improvement pass (2026-07-14) — cosmetic (doc prose), both READMEs re-scanned clean.
+
+- Added `import os` to the three Python recipe snippets that use `os.environ[...]` (warehouse query-client, flag-client, receiver-mount) so each block is copy-paste self-contained; TS uses global `process.env`, no change.
+- Qualified the `text → timestamptz` caveat in both trees — "(the value-parsing cast only; the bucket labels the queries emit are session-immune `to_char` renders)" — so a reader doesn't conflate the value-parsing cast with the deliberately session-immune bucket labels.

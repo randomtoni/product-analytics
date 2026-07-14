@@ -148,3 +148,10 @@ selection ladders and entry points confirmed against the shipped src.
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** independent gate verdict SHIP (no criticals) — assertions genuinely selection-level (never URL/AST); the TS-lazy/Python-eager driver asymmetry handled right (Python monkeypatches the driver-build boundary → asserts not errors; no mock leaks into the TS query `instanceof`); flags zero-egress proven behaviorally without touching privates; the three source tests left in place (consolidation, not duplication). 3 cosmetic suggestions above
 - **Cross-story seams exposed:** **the standing behavioral-neutrality gate is live** — the name scan proves observability neutrality; this proves BEHAVIORAL neutrality (a self-host config SELECTS the neutral backends: warehouse query adapter, local-only flags with no URL, DSN-built receiver — the HTTP adapters are never even constructed). Complements, doesn't replace, `neutrality-scan`. **S3** is the EXECUTING proof (the same selections driven end-to-end against real Postgres with a zero-egress log). `phx_read`/`pk_read` are test-only dummy HTTP credentials proving the warehouse rung wins even alongside a full HTTP config.
+
+## Follow-up
+
+> E21 improvement pass (2026-07-14) — cosmetic, test-only, no semantics change.
+
+- Rewrote the TS mock comment to state the real invariant — construction is driver-agnostic (the lazy driver imports `pg` only on first `execute`), so `instanceof WarehouseQueryAdapter` holds against the fake DSN with no `pg` peer — instead of the misleading "exercises the genuine lazy driver".
+- Aligned both trees on the neutral dummy token `pk_read` (Python was `phx_read`); the TS flags `fetchSpy` now throws-on-egress (matching Python's `_RecordingTransport`) so a stray call fails loudly at the call site, not just at the after-the-fact assertion.

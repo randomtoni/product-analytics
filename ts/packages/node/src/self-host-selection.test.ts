@@ -44,8 +44,9 @@ const STATIC_DEFINITIONS: FeatureFlagDefinition[] = [
 
 // The DSN-built exec boundary the receiver factory reads. Mocked so the receiver rung is proven
 // with a fake DbExecute (no `pg` peer, no Postgres). The mock DEFAULTS to the real lazy export
-// (via importActual) so the query rung below still exercises the genuine lazy driver with no mock
-// behaviour of its own — only the receiver test installs a per-test implementation.
+// (via importActual). Construction is DRIVER-AGNOSTIC — the lazy driver imports `pg` only on first
+// `execute`, never at build time — so the query rung's `instanceof WarehouseQueryAdapter` holds
+// against the fake DSN with no `pg` peer; only the receiver test installs a per-test implementation.
 const { defaultDbExecuteMock } = vi.hoisted(() => ({ defaultDbExecuteMock: vi.fn() }));
 vi.mock('./query/default-db-execute', async () => {
   const actual = await vi.importActual<typeof import('./query/default-db-execute')>(
@@ -101,9 +102,15 @@ describe('self-host-selection gate — a self-host config selects the neutral ba
   // --- Flags rung: static definitions ⇒ a local-only client with no reachable flag URL --------
   test('flags: static definitions + onlyEvaluateLocally selects the real adapter, local-only, and never fetches', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    // The recording transport: ANY call is a self-host neutrality failure. A static-seeded local-only
-    // client resolves entirely in-process — no definition fetch, no /flags/ round-trip, no URL.
-    const fetchSpy = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }) as never);
+    // The recording transport: ANY call is a self-host neutrality failure — it THROWS on egress
+    // (matching Python's `_RecordingTransport`) so a stray call fails loudly at the call site, not
+    // only at the after-the-fact assertion. A static-seeded local-only client resolves entirely
+    // in-process — no definition fetch, no /flags/ round-trip, no URL.
+    const fetchSpy = vi.fn((async (input: unknown, init?: { method?: string }) => {
+      throw new Error(
+        `egress attempted (${init?.method ?? 'GET'} ${String(input)}) — a static-seeded client must not egress`
+      );
+    }) as unknown as typeof fetch);
 
     const client = createFlagClient({
       key: 'k',

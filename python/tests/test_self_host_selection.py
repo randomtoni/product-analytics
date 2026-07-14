@@ -106,7 +106,7 @@ def test_query_warehouse_dsn_wins_over_a_full_http_config(
     client = create_query_client(
         QueryClientConfig(
             warehouse_dsn=FAKE_DSN,
-            personal_key="phx_read",
+            personal_key="pk_read",
             query_endpoint="https://query.example",
             project_id="42",
         )

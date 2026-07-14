@@ -360,3 +360,9 @@ frozen `WAREHOUSE-SCHEMA-CONTRACT.md`). Pin this design verbatim — do not re-l
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** independent gate verdict READY TO SHIP (no criticals) — zero `properties ->>` in the breakdown path (SQL + prose); `::text` cross-tree determinism proven on live PG16.14 (numeric→`'42'`, both halves); errors raise at SQL-gen (not query-time); adapter stores only a reduced neutral key set (no `Taxonomy`/driver leak); contract line-72 verbatim, disciplined reconciliation; `o'brien` escaping change correct; funnel zero-cell consistent. 1 cosmetic suggestion above
 - **Cross-story seams exposed:** **warehouse BREAKDOWN now works on real Postgres** — trend/funnel/retention group on the declared typed view column via `("<key>")::text`; undeclared breakdown key = a taxonomy error at SQL-gen; the contract's "never target `properties` directly" now holds WITHOUT the self-granted exception. **S4** can document WORKING breakdown (declared-typed-column semantics; a `date` breakdown renders session-dependently — a documented divergence). The self-host query side is now capability-complete on real Neon.
+
+## Follow-up
+
+> E21 improvement pass (2026-07-14) — cosmetic, test-only, no semantics change.
+
+- Tightened the TS real-PG trend-breakdown assertion to an exact-map check — `expect(new Set(totalByTier.entries())).toEqual(new Set([['42', 2], ['7', 1]]))` — mirroring Python's exact-dict `== {"42": 2, "7": 1}`. The `'42.0'`-absent and per-row `typeof … === 'string'` checks are retained.
