@@ -13,6 +13,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
+from db_execute_fakes import FakeDbExecute
 
 from analytics_kit import (
     Duration,
@@ -26,6 +27,10 @@ from analytics_kit import (
 from analytics_kit.query.http_adapter import HttpQueryAdapter
 from test_query_client import _conforms
 
+# The injected DB-execute seam — the S3 reusable fake. In S4 the stub methods still raise before
+# ever calling it; it only has to satisfy the required ``db_execute`` kwarg (E18 invokes it).
+_FAKE_EXEC = FakeDbExecute()
+
 
 # --- bar A: two adapters, one Protocol, zero interface change ----------------------------
 
@@ -33,7 +38,7 @@ from test_query_client import _conforms
 def test_warehouse_adapter_conforms_to_the_query_protocol_structurally() -> None:
     # The bar-A proof: the warehouse stub satisfies AnalyticsQueryClient by SHAPE alone — mypy
     # proves it at the _conforms sink, no subclassing, ZERO change to the PY5-S1 Protocol.
-    adapter = WarehouseQueryAdapter()
+    adapter = WarehouseQueryAdapter(db_execute=_FAKE_EXEC)
     _conforms(adapter)
     from analytics_kit import AnalyticsQueryClient
 
@@ -48,7 +53,7 @@ def test_both_query_adapters_satisfy_one_protocol_unchanged() -> None:
         personal_key="k",
         project_id="1",
     )
-    warehouse_adapter = WarehouseQueryAdapter()
+    warehouse_adapter = WarehouseQueryAdapter(db_execute=_FAKE_EXEC)
     _conforms(http_adapter)
     _conforms(warehouse_adapter)
 
@@ -57,7 +62,7 @@ def test_both_query_adapters_satisfy_one_protocol_unchanged() -> None:
 
 
 def test_every_primitive_raises_a_neutral_not_implemented_error() -> None:
-    adapter = WarehouseQueryAdapter()
+    adapter = WarehouseQueryAdapter(db_execute=_FAKE_EXEC)
     with pytest.raises(NotImplementedError, match="warehouse query adapter is not yet implemented"):
         adapter.funnel(FunnelSpec(steps=["a", "b"], within=Duration(1, "day")))
     with pytest.raises(NotImplementedError, match="warehouse query adapter is not yet implemented"):
@@ -84,17 +89,61 @@ def test_adapter_has_exactly_the_five_protocol_members() -> None:
     assert members == {"funnel", "retention", "trend", "unique_count", "raw_query"}
 
 
+# --- the adapter REQUIRES an injected DbExecute; two-tier factory (DI + from-config) --------
+
+
+def test_constructor_requires_a_db_execute() -> None:
+    # The adapter's whole reason to exist post-S4 is to hold the injected seam — no "no exec"
+    # state. A bare construction is a TypeError (missing required keyword-only argument).
+    with pytest.raises(TypeError):
+        WarehouseQueryAdapter()  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        create_warehouse_query_adapter()  # type: ignore[call-arg]
+
+
+def test_from_config_builds_the_adapter_and_reads_the_dsn_at_the_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The config-reading twin: it reads warehouse_dsn, builds the default driver from it, injects
+    # it — proven here with the S3 fake at the driver-build boundary (no real Postgres/extra).
+    import analytics_kit.query.warehouse_adapter as wh
+    from analytics_kit import QueryClientConfig, create_warehouse_query_adapter_from_config
+
+    seen: list[str] = []
+
+    def _record(dsn: str) -> FakeDbExecute:
+        seen.append(dsn)
+        return _FAKE_EXEC
+
+    monkeypatch.setattr(wh, "create_default_db_execute", _record)
+    adapter = create_warehouse_query_adapter_from_config(
+        QueryClientConfig(warehouse_dsn="postgresql://localhost/analytics")
+    )
+
+    assert isinstance(adapter, WarehouseQueryAdapter)
+    assert seen == ["postgresql://localhost/analytics"]
+
+
+def test_adapter_module_imports_without_the_warehouse_extra_installed() -> None:
+    # Importing the adapter module must not import the driver (the lazy driver import stays at the
+    # driver-build boundary). The dev env has no `warehouse` extra, so a clean import proves it.
+    import analytics_kit.query.default_db_execute as dbx
+
+    assert dbx._WAREHOUSE_DRIVER_AVAILABLE is False
+    import analytics_kit.query.warehouse_adapter as wh  # noqa: F401 — the import itself is the assertion
+
+
 # --- constructable + exported, but NOT the default selection ----------------------------
 
 
 def test_create_warehouse_query_adapter_builds_the_adapter() -> None:
-    adapter = create_warehouse_query_adapter()
+    adapter = create_warehouse_query_adapter(db_execute=_FAKE_EXEC)
     assert isinstance(adapter, WarehouseQueryAdapter)
 
 
-def test_warehouse_adapter_is_not_the_factory_default() -> None:
-    # create_query_client selects the no-op / HTTP adapter; the warehouse adapter is constructable
-    # but never the config-selected default (that selection is a future additive step).
+def test_warehouse_adapter_is_not_selected_without_a_warehouse_dsn() -> None:
+    # create_query_client selects the warehouse adapter ONLY when warehouse_dsn is present; an
+    # unkeyed config is the no-op, a keyed+endpointed one is the HTTP adapter — neither warehouse.
     from analytics_kit import QueryClientConfig, QueryNoop, create_query_client
 
     assert isinstance(create_query_client(QueryClientConfig()), QueryNoop)

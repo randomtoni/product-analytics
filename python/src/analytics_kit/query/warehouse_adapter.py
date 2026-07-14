@@ -47,6 +47,9 @@ from .client import (
     UniqueCountRow,
     UniqueCountSpec,
 )
+from .config import QueryClientConfig
+from .db_execute import DbExecute
+from .default_db_execute import create_default_db_execute
 
 _NOT_IMPLEMENTED = "analytics-kit: warehouse query adapter is not yet implemented"
 
@@ -57,7 +60,16 @@ class WarehouseQueryAdapter:
     The bar-A proof: it conforms to the same neutral read seam as the HTTP adapter by shape, with
     zero Protocol change. Each primitive raises :class:`NotImplementedError` — the shape is proven,
     the body is the fill-in seat (see the module docstring's per-method SQL mapping).
+
+    Holds the injected :class:`~analytics_kit.query.db_execute.DbExecute` seam OPAQUE — exactly as
+    the HTTP adapter holds its transport. Required: the adapter's whole reason to exist is to route
+    SQL through this seam (E18), so there is no "no exec" state. The adapter NEVER sees a DSN or a
+    driver handle and never imports the driver; the DSN→driver build lives at the
+    :func:`create_warehouse_query_adapter_from_config` boundary.
     """
+
+    def __init__(self, *, db_execute: DbExecute) -> None:
+        self._db_execute = db_execute
 
     def funnel(self, spec: FunnelSpec) -> QueryResult[FunnelStepRow]:
         raise NotImplementedError(_NOT_IMPLEMENTED)
@@ -75,10 +87,28 @@ class WarehouseQueryAdapter:
         raise NotImplementedError(_NOT_IMPLEMENTED)
 
 
-def create_warehouse_query_adapter() -> AnalyticsQueryClient:
-    """Construct the warehouse query adapter as an :class:`AnalyticsQueryClient`.
+def create_warehouse_query_adapter(*, db_execute: DbExecute) -> AnalyticsQueryClient:
+    """Construct the warehouse query adapter from an already-built :class:`DbExecute`.
 
-    Exported and constructable, but NOT the default — ``create_query_client`` selects the no-op or
-    the HTTP adapter; config-driven HTTP↔warehouse selection is a future additive step.
+    The low-level DI twin of :func:`~analytics_kit.query.http_adapter.create_http_query_adapter`:
+    a caller (or a test with a fake exec) that already holds a ``DbExecute`` injects it directly,
+    skipping DSN parsing. Returns an :class:`AnalyticsQueryClient` (satisfied structurally).
     """
-    return WarehouseQueryAdapter()
+    return WarehouseQueryAdapter(db_execute=db_execute)
+
+
+def create_warehouse_query_adapter_from_config(
+    config: QueryClientConfig,
+) -> AnalyticsQueryClient:
+    """Build the warehouse adapter from a ``warehouse_dsn``-carrying :class:`QueryClientConfig`.
+
+    The config-reading twin of
+    :func:`~analytics_kit.query.http_adapter.create_http_query_adapter`: it reads
+    ``warehouse_dsn``, builds the default :class:`DbExecute` driver from it, and injects it. The
+    driver import stays behind the ``analytics-kit[warehouse]`` extra — importing this module does
+    not import the driver; only CONSTRUCTING the default driver here does. Reached only via
+    ``create_query_client``'s warehouse rung, where ``warehouse_dsn`` is known present.
+    """
+    return WarehouseQueryAdapter(
+        db_execute=create_default_db_execute(config.warehouse_dsn or "")
+    )

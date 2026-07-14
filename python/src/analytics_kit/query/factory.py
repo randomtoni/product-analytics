@@ -19,14 +19,19 @@ from .client import AnalyticsQueryClient
 from .config import QueryClientConfig
 from .http_adapter import create_http_query_adapter
 from .noop import QueryNoop
+from .warehouse_adapter import create_warehouse_query_adapter_from_config
 
 
 def create_query_client(config: QueryClientConfig) -> AnalyticsQueryClient:
-    """Build a read client from configuration, selecting the no-op or the HTTP adapter.
+    """Build a read client from configuration, selecting by field PRESENCE.
 
-    Unkeyed (or keyed-but-endpointless) yields the whole-surface no-op; a keyed + endpointed
-    config selects the HTTP query adapter (PY5-S2 fills that branch).
+    ``warehouse_dsn`` present ⇒ the warehouse adapter (the first rung, the explicit self-host
+    signal — it wins over the HTTP ladder); else unkeyed (or keyed-but-endpointless) yields the
+    whole-surface no-op; else a keyed + endpointed config selects the HTTP query adapter. There is
+    no ``backend:`` enum — selection is by presence, matching every other factory.
     """
+    if config.warehouse_dsn is not None:
+        return create_warehouse_query_adapter_from_config(config)
     if config.personal_key is None or config.query_endpoint is None:
         return QueryNoop()
     return _build_http_query_client(config)

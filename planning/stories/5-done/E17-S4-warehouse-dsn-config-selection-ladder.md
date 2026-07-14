@@ -141,6 +141,24 @@ adapter interface) is a seam-level convention; the change lives in the `node`/qu
 honors the core seam contract (bars A/B). No change to the `core` package itself is expected — flag it
 if the builder finds one is needed.
 
+> Reviewer suggestion (2026-07-14): the TS/Python selection tests differ in fidelity (TS drives the
+> real lazy factory; Python monkeypatches `create_default_db_execute` because its driver load is
+> eager). Verified honest + idiomatic — the real `create_query_client`→warehouse rung IS exercised
+> end-to-end, only the leaf driver-build is faked. On record, no action.
+> Reviewer suggestion (2026-07-14): warehouse-adapter export-parity gap — Python's public `__init__`
+> exports `WarehouseQueryAdapter`/`create_warehouse_query_adapter`/`create_warehouse_query_adapter_from_config`;
+> TS's `node/src/index.ts` exports none of the warehouse-adapter symbols (pre-existing, extended here).
+> DEFER to the E17 improvement pass: align both trees to the HTTP-adapter export precedent
+> (`HttpQueryAdapter`/`createHttpQueryAdapter*` posture), symmetrically — whichever posture HTTP uses,
+> warehouse matches, in both trees. Bar B holds regardless (config-only access via `createQueryClient`).
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this once the story moves to stories/5-done/. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files changed:** TS `ts/packages/node/src/query/config.ts`, `create-query-client.ts`, `warehouse-query-adapter.ts` (+ `.test.ts`s); Python `python/src/analytics_kit/query/config.py`, `factory.py`, `warehouse_adapter.py`, `query/__init__.py`, `__init__.py` (+ `tests/test_query_client.py`, `tests/test_warehouse_query_adapter.py`)
+- **New public API:** `warehouseDsn?`/`warehouse_dsn` on `QueryClientConfig`; `createWarehouseQueryAdapter(options)` + `createWarehouseQueryAdapterFromConfig(config)` (TS) / `create_warehouse_query_adapter(*, db_execute)` + `create_warehouse_query_adapter_from_config(config)` (Python) — the latter Python-exported, TS export posture to be aligned in the improvement pass (see suggestion)
+- **Tests added:** warehouse-rung selection + DSN-precedence-over-HTTP + DSN-never-stored guard + constructs-without-`pg`-peer + required-`dbExecute`-field, both trees; existing HTTP/no-op rungs still green
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** verdict SOUND, no criticals; 2 suggestions — the test-fidelity divergence is on-record (no action), the export-parity gap deferred to the E17 improvement pass
+- **Cross-story seams exposed:** the warehouse path is now **config-selectable** — `warehouse_dsn` present ⇒ `WarehouseQueryAdapter` (first rung, wins over HTTP), constructed via the from-config factory that builds the S3 `DbExecute` from the DSN and injects it; the adapter holds only the `DbExecute` (never a DSN/handle). **E18** fills the adapter's stub method bodies against `this.dbExecute`/`self._db_execute` — no seam/factory change needed. **E19** mirrors the pinned `warehouse_dsn` field shape onto the receiver config.

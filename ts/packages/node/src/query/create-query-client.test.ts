@@ -6,6 +6,7 @@ import type { QueryClientConfig } from './config';
 import { HttpQueryAdapter } from './http-query-adapter';
 import type { AnalyticsQueryClient } from './query-client';
 import { QueryNoop } from './query-noop';
+import { WarehouseQueryAdapter } from './warehouse-query-adapter';
 
 const taxonomy = defineTaxonomy({
   events: { order_placed: { amount: 'number' }, signed_up: {} },
@@ -171,6 +172,59 @@ test('the unkeyed no-op path does not warn (nothing is ever queried)', () => {
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   createQueryClient({ taxonomy });
 
+  expect(warn).not.toHaveBeenCalled();
+});
+
+// --- the warehouse rung: presence of `warehouseDsn` selects the warehouse adapter (first rung) ---
+
+test('warehouseDsn present ⇒ the warehouse adapter (first rung, no HTTP fetch, no warn)', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const fetchSpy = vi.fn(async () => ({ status: 200 }) as never);
+  const client = createQueryClient({
+    warehouseDsn: 'postgres://localhost/analytics',
+    taxonomy,
+    fetch: fetchSpy as never,
+  });
+
+  expect(client).toBeInstanceOf(WarehouseQueryAdapter);
+  expect(client).not.toBeInstanceOf(HttpQueryAdapter);
+  expect(client).not.toBeInstanceOf(QueryNoop);
+  expect(warn).not.toHaveBeenCalled();
+  expect(fetchSpy).not.toHaveBeenCalled();
+});
+
+test('warehouseDsn wins over a full personalKey+queryEndpoint HTTP config (precedence)', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const client = createQueryClient({
+    warehouseDsn: 'postgres://localhost/analytics',
+    personalKey: 'pk_read',
+    queryEndpoint: 'https://query.example',
+    projectId: 'proj-1',
+    taxonomy,
+  });
+
+  // Presence of the DSN takes precedence — the warehouse rung sits ahead of the personalKey
+  // ladder — so the HTTP branch is never reached even though it is fully configured.
+  expect(client).toBeInstanceOf(WarehouseQueryAdapter);
+  expect(client).not.toBeInstanceOf(HttpQueryAdapter);
+  expect(warn).not.toHaveBeenCalled();
+});
+
+test('the warehouse rung constructs clean without the `warehouse` peer installed (lazy driver)', () => {
+  // Selecting + constructing the adapter must not reach the optional `pg` peer — the driver is
+  // loaded only when the DB-execute seam is CALLED (E18), never at selection/construction time.
+  expect(() =>
+    createQueryClient({ warehouseDsn: 'postgres://localhost/analytics', taxonomy })
+  ).not.toThrow();
+});
+
+test('no warehouseDsn ⇒ the existing ladder is unchanged (HTTP when keyed+endpointed)', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const http = createQueryClient({ personalKey: 'pk', queryEndpoint: 'https://query.example', projectId: 'p', taxonomy });
+  const noop = createQueryClient({ taxonomy });
+
+  expect(http).toBeInstanceOf(HttpQueryAdapter);
+  expect(noop).toBeInstanceOf(QueryNoop);
   expect(warn).not.toHaveBeenCalled();
 });
 

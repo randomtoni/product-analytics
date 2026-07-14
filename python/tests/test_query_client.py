@@ -15,6 +15,7 @@ import inspect
 from typing import Any
 
 import pytest
+from db_execute_fakes import FakeDbExecute
 from pydantic import BaseModel, ValidationError
 
 from analytics_kit import (
@@ -37,6 +38,7 @@ from analytics_kit import (
     TrendSpec,
     UniqueCountRow,
     UniqueCountSpec,
+    WarehouseQueryAdapter,
     create_query_client,
     define_taxonomy,
 )
@@ -292,6 +294,7 @@ def test_query_config_fields_do_not_alias_the_ingest_config() -> None:
 
 def test_query_config_defaults_are_none() -> None:
     config = QueryClientConfig()
+    assert config.warehouse_dsn is None
     assert config.query_endpoint is None
     assert config.personal_key is None
     assert config.project_id is None
@@ -302,15 +305,27 @@ def test_query_config_defaults_are_none() -> None:
 def test_query_config_accepts_its_fields() -> None:
     transport = _RecordingTransport()
     config = QueryClientConfig(
+        warehouse_dsn="postgresql://localhost/analytics",
         query_endpoint="https://query.example",
         personal_key="phx_read",
         project_id="42",
         transport=transport,
     )
+    assert config.warehouse_dsn == "postgresql://localhost/analytics"
     assert config.query_endpoint == "https://query.example"
     assert config.personal_key == "phx_read"
     assert config.project_id == "42"
     assert config.transport is transport
+
+
+def test_query_config_carries_warehouse_dsn_and_still_forbids_extras() -> None:
+    # The warehouse_dsn field is on the surface; extra="forbid" is preserved (a typo still raises).
+    assert "warehouse_dsn" in QueryClientConfig.model_fields
+    assert QueryClientConfig(warehouse_dsn="postgresql://localhost/db").warehouse_dsn == (
+        "postgresql://localhost/db"
+    )
+    with pytest.raises(ValidationError):
+        QueryClientConfig(warehouse_dsnn="postgresql://localhost/db")  # type: ignore[call-arg]
 
 
 def test_query_config_forbids_unknown_keys() -> None:
@@ -376,6 +391,105 @@ def test_keyed_and_endpointed_config_selects_the_http_adapter_branch() -> None:
     )
     assert isinstance(client, HttpQueryAdapter)
     assert not isinstance(client, QueryNoop)
+
+
+# --- create_query_client: the warehouse rung — warehouse_dsn present ⇒ warehouse (first rung) ---
+#
+# The factory's warehouse rung builds the default DB-execute driver from the DSN, which requires
+# the `analytics-kit[warehouse]` extra (not installed in the dev env). These tests inject the S3
+# FAKE exec at the driver-build boundary (`create_default_db_execute`) so selection + construction
+# are proven with NO real Postgres — exactly the AC's "S3 fake seam, no real Postgres".
+
+
+def _patch_default_db_execute(monkeypatch: pytest.MonkeyPatch) -> FakeDbExecute:
+    fake = FakeDbExecute()
+    monkeypatch.setattr(
+        "analytics_kit.query.warehouse_adapter.create_default_db_execute",
+        lambda _dsn: fake,
+    )
+    return fake
+
+
+def test_warehouse_dsn_present_selects_the_warehouse_adapter_first_rung(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from analytics_kit.query.http_adapter import HttpQueryAdapter
+
+    _patch_default_db_execute(monkeypatch)
+    client = create_query_client(QueryClientConfig(warehouse_dsn="postgresql://localhost/analytics"))
+
+    assert isinstance(client, WarehouseQueryAdapter)
+    assert not isinstance(client, HttpQueryAdapter)
+    assert not isinstance(client, QueryNoop)
+
+
+def test_warehouse_dsn_wins_over_a_full_http_config_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from analytics_kit.query.http_adapter import HttpQueryAdapter
+
+    _patch_default_db_execute(monkeypatch)
+    # A fully keyed + endpointed config that ALSO carries warehouse_dsn: presence of the DSN wins
+    # (the warehouse rung sits ahead of the personal_key ladder), so HTTP is never reached.
+    client = create_query_client(
+        QueryClientConfig(
+            warehouse_dsn="postgresql://localhost/analytics",
+            personal_key="phx_read",
+            query_endpoint="https://query.example",
+            project_id="42",
+        )
+    )
+    assert isinstance(client, WarehouseQueryAdapter)
+    assert not isinstance(client, HttpQueryAdapter)
+
+
+def test_warehouse_rung_builds_the_default_driver_from_the_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The factory reads warehouse_dsn and threads it into the driver build — proving the DSN is
+    # read at the boundary (not stored on the adapter).
+    seen: list[str] = []
+    fake = FakeDbExecute()
+
+    def _record(dsn: str) -> FakeDbExecute:
+        seen.append(dsn)
+        return fake
+
+    monkeypatch.setattr(
+        "analytics_kit.query.warehouse_adapter.create_default_db_execute", _record
+    )
+    create_query_client(QueryClientConfig(warehouse_dsn="postgresql://u:p@localhost/analytics"))
+
+    assert seen == ["postgresql://u:p@localhost/analytics"]
+
+
+def test_warehouse_adapter_holds_only_the_opaque_db_execute_never_the_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The adapter never sees a DSN or driver handle — its only injected field is the opaque exec.
+    fake = _patch_default_db_execute(monkeypatch)
+    client = create_query_client(
+        QueryClientConfig(warehouse_dsn="postgresql://user:secret@localhost/analytics")
+    )
+
+    assert isinstance(client, WarehouseQueryAdapter)
+    field_values = list(vars(client).values())
+    assert fake in field_values
+    for value in field_values:
+        assert not (isinstance(value, str) and "postgresql://" in value)
+        assert not (isinstance(value, str) and "secret" in value)
+
+
+def test_no_warehouse_dsn_leaves_the_existing_ladder_unchanged() -> None:
+    # Without warehouse_dsn the existing rungs are untouched: unkeyed ⇒ no-op, keyed+endpointed ⇒
+    # HTTP. No driver build is attempted, so no warehouse extra is needed here.
+    from analytics_kit.query.http_adapter import HttpQueryAdapter
+
+    assert isinstance(create_query_client(QueryClientConfig()), QueryNoop)
+    http = create_query_client(
+        QueryClientConfig(personal_key="phx_read", query_endpoint="https://query.example")
+    )
+    assert isinstance(http, HttpQueryAdapter)
 
 
 # --- raw_query returns the result CONTRACT, only the LANGUAGE is a string -----------------

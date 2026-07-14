@@ -3,6 +3,7 @@ import type { QueryClientConfig } from './config';
 import { createHttpQueryAdapterFromConfig } from './http-query-adapter';
 import type { AnalyticsQueryClient } from './query-client';
 import { QueryNoop } from './query-noop';
+import { createWarehouseQueryAdapterFromConfig } from './warehouse-query-adapter';
 
 export function createQueryClient<const T extends TaxonomyDecl>(
   config: QueryClientConfig & { taxonomy: Taxonomy<T> }
@@ -13,6 +14,15 @@ export function createQueryClient(
 export function createQueryClient(
   config: QueryClientConfig
 ): AnalyticsQueryClient<DefaultTaxonomyShape> {
+  // A `warehouseDsn` present ⇒ the warehouse rung wins (the explicit self-host signal). It
+  // reads over the consumer's own Postgres via the S3 default DB-execute driver built from the
+  // DSN — selection is by field PRESENCE, never a `backend:` enum, so this rung sits AHEAD of
+  // the personalKey ladder and takes precedence when present.
+  if (config.warehouseDsn !== undefined) {
+    return createWarehouseQueryAdapterFromConfig<DefaultTaxonomyShape>({
+      warehouseDsn: config.warehouseDsn,
+    });
+  }
   // Unkeyed ⇒ a silent no-op read client: the null object queries nothing, never
   // constructs an adapter or touches the network, and every method resolves to a
   // well-formed empty QueryResult (bar B — config-only adoption, an unconfigured

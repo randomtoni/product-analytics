@@ -70,6 +70,7 @@ from .query import (
     create_default_db_execute,
     create_query_client,
     create_warehouse_query_adapter,
+    create_warehouse_query_adapter_from_config,
 )
 from .server import (
     BatchConsumer,
@@ -158,6 +159,7 @@ __all__ = [
     "QueryNoop",
     "WarehouseQueryAdapter",
     "create_warehouse_query_adapter",
+    "create_warehouse_query_adapter_from_config",
     "EVENTS_TABLE",
     "EVENTS_TABLE_DDL",
     "EVENTS_VIEW",

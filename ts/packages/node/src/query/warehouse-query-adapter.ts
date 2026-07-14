@@ -6,6 +6,8 @@ import type {
   TrendRow,
   UniqueCountRow,
 } from '@randomtoni/analytics-kit';
+import type { DbExecute } from './db-execute';
+import { createDefaultDbExecute } from './default-db-execute';
 import type { AnalyticsQueryClient } from './query-client';
 
 const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implemented';
@@ -36,9 +38,24 @@ const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implement
 //
 // Every real body normalizes the driver's rows/columns into the neutral `QueryResult` before
 // returning, exactly as the HTTP adapter normalizes its wire envelope.
+
+export interface WarehouseQueryAdapterOptions {
+  // The injected DB-execute seam — held OPAQUE, exactly as `HttpQueryAdapter` holds its
+  // `FetchLike`. Required: the adapter's whole reason to exist is to route SQL through this
+  // seam, so there is no "no exec" state. The adapter NEVER sees a DSN or a driver handle;
+  // the DSN→driver build lives at the `createWarehouseQueryAdapterFromConfig` boundary.
+  dbExecute: DbExecute;
+}
+
 export class WarehouseQueryAdapter<TX extends TaxonomyShape>
   implements AnalyticsQueryClient<TX>
 {
+  private readonly dbExecute: DbExecute;
+
+  constructor(options: WarehouseQueryAdapterOptions) {
+    this.dbExecute = options.dbExecute;
+  }
+
   async funnel(): Promise<QueryResult<FunnelStepRow>> {
     throw new Error(NOT_IMPLEMENTED);
   }
@@ -60,6 +77,24 @@ export class WarehouseQueryAdapter<TX extends TaxonomyShape>
   }
 }
 
-export function createWarehouseQueryAdapter<TX extends TaxonomyShape>(): WarehouseQueryAdapter<TX> {
-  return new WarehouseQueryAdapter<TX>();
+// Low-level constructor twin of `createHttpQueryAdapter(options)` — takes an already-built
+// `DbExecute` and injects it. The DI entry point: a caller (or a test with a fake exec) that
+// already holds a `DbExecute` skips DSN parsing entirely.
+export function createWarehouseQueryAdapter<TX extends TaxonomyShape>(
+  options: WarehouseQueryAdapterOptions
+): WarehouseQueryAdapter<TX> {
+  return new WarehouseQueryAdapter<TX>(options);
+}
+
+// Config-reading twin of `createHttpQueryAdapterFromConfig(config)`. Reads `warehouseDsn`,
+// lazily builds the S3 default `DbExecute` from it, and injects it. The lazy optional-`pg`-peer
+// load lives INSIDE `createDefaultDbExecute` (deferred to first exec call), so this factory and
+// the adapter module import clean without the `warehouse` peer installed. Reached only via
+// `createQueryClient`'s warehouse rung, where `warehouseDsn` is known present.
+export function createWarehouseQueryAdapterFromConfig<TX extends TaxonomyShape>(config: {
+  warehouseDsn: string;
+}): WarehouseQueryAdapter<TX> {
+  return new WarehouseQueryAdapter<TX>({
+    dbExecute: createDefaultDbExecute({ warehouseDsn: config.warehouseDsn }),
+  });
 }
