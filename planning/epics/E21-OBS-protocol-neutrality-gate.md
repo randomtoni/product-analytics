@@ -71,7 +71,8 @@ it validates E17–E20 end to end.
 - **[E21-S1](../stories/2-ready-for-dev/E21-S1-python-driver-write-path-fix.md)** *(additive, no deps)* — the recorded MUST-FIX: guard `_result_from_cursor` to return an empty `DbExecuteResult` when `cursor.description is None` (before `fetchall()`), plus a real-driver write unit test; TS already conforms. Unblocks the Python side of the E1 loop.
 - **[E21-S2](../stories/2-ready-for-dev/E21-S2-factory-selection-standing-gate.md)** *(additive, no deps)* — the E2 standing factory-selection gate: given a self-host config, assert the warehouse query adapter (not HTTP), a local-only flag client with no flag URL, and a DSN-targeted receiver are selected — fast, no real Postgres, in the quality set at TS/Python parity.
 - **[E21-S3](../stories/2-ready-for-dev/E21-S3-e2e-zero-egress-acceptance-test.md)** *(additive, depends on E21-S1)* — the E1 capstone: the full self-host loop against a real Postgres ≥16 behind a per-tree needs-Postgres test tier, asserting zero HTTP egress (recording-transport log empty of `/api/projects/.../query/`, `/flags/`, `/batch/`) and counts provably from Neon.
-- **[E21-S4](../stories/2-ready-for-dev/E21-S4-self-host-recipe-doc.md)** *(additive, depends on E21-S3)* — the self-host recipe doc: the provider-swap walkthrough (migration, DSN, driver extra, static flags, receiver mount) with the external prerequisites named honestly and the PG ≥16 floor stated; PostHog framed as one selectable backend.
+- **[E21-S5](../stories/2-ready-for-dev/E21-S5-warehouse-breakdown-fix.md)** *(additive, depends on E21-S3)* — Defect 3 fix (surfaced by the E1 capstone): the warehouse breakdown builders (trend/funnel/retention, both trees) group on `("<key>")::text` over the typed view instead of the non-existent raw `properties`, undeclared keys error at SQL-gen time, `WAREHOUSE-SCHEMA-CONTRACT.md` reconciled, + a real-PG breakdown scenario re-adding what S3 descoped.
+- **[E21-S4](../stories/2-ready-for-dev/E21-S4-self-host-recipe-doc.md)** *(additive, depends on E21-S3 + E21-S5)* — the self-host recipe doc: the provider-swap walkthrough (migration, DSN, driver extra, static flags, receiver mount) with the external prerequisites named honestly and the PG ≥16 floor stated; PostHog framed as one selectable backend. Sequenced AFTER S5 so it documents WORKING breakdown, not a known limitation.
 
 ## Out of scope
 
@@ -115,6 +116,20 @@ Locked by architect consult (2026-07-13) — do not re-litigate in stories.
   ONLY, and NOT as a blocking `blocked_by` on the build epics. — architect (2026-07-13)
 - **Greenfield — no data-migration to prove.** The target consumer has no existing PostHog deployment
   or data, so the recipe covers a fresh self-host stand-up, not a vendor-to-Neon migration.
+- **Mid-epic story addition — E21-S5 (Defect 3 fix), 2026-07-14.** The E1 capstone (E21-S3) surfaced,
+  on real Postgres, that all three warehouse breakdown builders (trend/funnel/retention, both trees)
+  emit `GROUP BY (properties ->> '<key>')` FROM `events_typed` — but the E17 view projects no raw
+  `properties`, so **every breakdown query fails** (`column "properties" does not exist`),
+  contradicting `WAREHOUSE-SCHEMA-CONTRACT.md:72`. Fake-backed E18/E19 tests never caught it. User
+  decided (2026-07-14) to FIX before closing the cycle. **E21-S5** carries the fix — locked by an
+  architect consult (2026-07-14): **option (a)** — breakdown groups on the declared typed view column
+  (`("<key>")::text`, the `::text` cast keeping non-string breakdown values cross-tree-deterministic),
+  undeclared keys **error at SQL-gen time**, and `WAREHOUSE-SCHEMA-CONTRACT.md` is **reconciled** (the
+  self-granted "EXCEPT the breakdown path" exception is struck; line 72 stays verbatim — this tightens
+  the contract, it does not open the one-way door). Ripple: the taxonomy is threaded the last hop
+  (factory → warehouse adapter → the `build_*_sql` builders) so they know the declared key set. **Re-
+  sequenced: S4 (recipe) now depends on [E21-S3, E21-S5]** so it documents WORKING breakdown, not a
+  known limitation. New graph: `(S1 ∥ S2) → S3 → S5 → S4`. — architect (2026-07-14) + user decision
 
 ## Expansion path
 

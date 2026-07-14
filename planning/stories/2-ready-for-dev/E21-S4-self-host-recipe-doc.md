@@ -4,7 +4,7 @@ epic: E21-OBS-protocol-neutrality-gate
 status: ready-for-dev
 area: observability
 touches: [adapters, query, node, feature-flags]
-depends_on: [E21-S3-e2e-zero-egress-acceptance-test]
+depends_on: [E21-S3-e2e-zero-egress-acceptance-test, E21-S5-warehouse-breakdown-fix]
 api_impact: additive
 ---
 
@@ -70,6 +70,15 @@ now-working loop (S3) documents — the human-facing complement to the machine g
 
 Locked by the epic `## Success criteria` (the recipe), `## Development prerequisites` (the honest
 prerequisites + PG ≥16 floor + cast caveat), and `## Notes` (F — honest external dev-prerequisites).
+
+- **Now depends on E21-S5 as well as E21-S3 (re-sequenced 2026-07-14).** The E1 capstone surfaced
+  Defect 3 — the warehouse breakdown builders targeted a non-existent raw `properties` column, so
+  every breakdown query failed on real Postgres. E21-S5 fixes it (breakdown groups on the declared
+  typed view column). This recipe is sequenced AFTER S5 so it documents WORKING breakdown, not a known
+  limitation. New graph: `(S1 ∥ S2) → S3 → S5 → S4`. If the recipe illustrates a broken-down query,
+  it reflects S5's declared-typed-column semantics: **breakdown keys must be declared event
+  properties** (an undeclared breakdown key raises at query build time) — state this honestly in the
+  recipe if breakdown is shown. — PM (2026-07-14) + architect (2026-07-14, via E21-S5)
 
 - **Honest, not "config-only."** The epic locks: the recipe names, honestly, a Neon DSN, running the
   migration, installing the driver extra, authoring static flags, mounting the receiver. All
