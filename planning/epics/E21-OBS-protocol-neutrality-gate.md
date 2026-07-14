@@ -55,6 +55,16 @@ it validates E17–E20 end to end.
   honest dev-prerequisites (a consumer on PG15 would get a view that errors at creation). Also carry a
   line for E18/E21 that `text→timestamptz` casts are session-`DateStyle`/`TimeZone`-dependent for
   ambiguous inputs (inherent to the cast, never an error — a query-time expectation note, not a defect).
+- **MUST-FIX before the E1 real-Postgres test — the Python default-driver write path (surfaced by the
+  E19 refinement, 2026-07-14).** `python/src/analytics_kit/query/default_db_execute.py` `_result_from_cursor`
+  calls `cursor.fetchall()` unconditionally; on a non-RETURNING write (the E19 receiver's `INSERT …
+  ON CONFLICT (uuid) DO NOTHING`), psycopg3 raises `ProgrammingError("the last operation didn't produce a
+  result")` because `cursor.description is None`. The TS `pg` driver already conforms (returns `rows: []`).
+  One-line guard: return an empty `DbExecuteResult` when `cursor.description is None`, BEFORE `fetchall()`.
+  It is E17-driver-owned src and **unreachable from any E17–E20 test** (all fake-backed), so it was
+  deliberately NOT folded into an E19 commit — it lands here, where the real driver first executes a write
+  against real Postgres. Add a real-driver write unit test alongside the E1 test. (The receiver's own
+  E19 tests stay fake-backed and green; this is the seam's real-driver conformance the fake can't cover.)
 
 ## Stories
 
