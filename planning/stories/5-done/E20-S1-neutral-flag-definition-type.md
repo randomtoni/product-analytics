@@ -224,6 +224,26 @@ authored set (mirror the existing `local-parity.test.ts` posture — which uses 
 variant-key, NEVER a `false` key: the values-known-correct external contract the lowering output must
 match).
 
+> Reviewer suggestion (2026-07-14) → E20 improvement pass (defensive): Python `neutral_definition.__all__`
+> lists `lower_definitions`/`validate_definitions`/`ValidationError` at MODULE level. It does NOT breach
+> the package surface (verified absent from `analytics_kit.__all__`/`analytics_kit.flags.__all__`), but
+> a future `from ...neutral_definition import *` could pull the wire-`DefinitionSnapshot`-returning
+> `lower_definitions` into a barrel (a latent Bar-A leak), and re-exporting Pydantic's `ValidationError`
+> in `__all__` is a subtle impl re-export. Trim the module `__all__` to the six neutral types (functions
+> stay importable by explicit path for S2) — matching the TS module, which advertises nothing via a barrel.
+> Reviewer suggestion (2026-07-14) → E20 improvement pass (message parity): TS rejects an empty variant
+> key with a distinct `a variant has an empty 'key'` message; Python uses a generic Pydantic
+> `min_length` error. Behaviorally equivalent; add an explicit Python check + matching phrase for
+> consumer-facing diagnostic parity.
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this on move to 5-done/. Do not hand-edit. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files added:** TS `ts/packages/node/src/flags/local/neutral-definition.ts` (+ `validate-definitions.ts`, `neutral-definition.test.ts`); Python `python/src/analytics_kit/flags/local/neutral_definition.py` (+ `tests/test_neutral_definition.py`)
+- **Files changed:** TS `ts/packages/node/src/index.ts`; Python `flags/__init__.py`, `__init__.py` (public exports — the six neutral TYPES only)
+- **New public API:** `FeatureFlagDefinition`, `FlagCondition`, `PropertyFilter`, `FlagVariant`, `FlagFilterValue`, `FlagFilterOperator` (both trees, neutral vocabulary, type-only). The lowering + validator are INTERNAL (S2 imports by explicit module path) — NOT public (they'd drag the wire snapshot onto the surface)
+- **Tests added:** TS 24 + Python 21 — lowering shape (complete snapshot, disabled kept, no wire tokens, vocab map, negated→negation, multivariate/variantOverride), the **lower-then-evaluate-equals-poller parity proof** (against a hand-authored wire fixture through the real evaluator), every validator reject case, dead-`'false'`-key WARN-not-reject, bar A, the public-surface contract
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP (no criticals) — **public surface verified structurally neutral in the built `dist/index.d.ts`** (zero wire tokens; six type-only exports; lowering/validator off every barrel). Builder's self-review already caught+fixed a public-export leak; the independent gate confirmed the fix at the artifact level. 2 forward suggestions above
+- **Cross-story seams exposed:** **S2 imports** `lowerDefinitions`/`lower_definitions` + `validateDefinitions`/`validate_definitions` from the INTERNAL modules (`flags/local/neutral-definition` + `validate-definitions` / `flags.local.neutral_definition`) and the public `FeatureFlagDefinition` type for its `staticDefinitions?` config field. `lower_definitions` returns the COMPLETE seeded-poller-ready `DefinitionSnapshot` (non-empty `flags`, disabled kept in `flagsByKey`) — exactly what the poller builds, so S2's seeded poller reports ready via the same `is_ready()` gate. **Story wording nit for future readers: "Zod in TS" → there is no zod; the config-layer idiom is `throw new Error`** (implemented correctly).

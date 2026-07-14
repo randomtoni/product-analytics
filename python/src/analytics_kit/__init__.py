@@ -15,10 +15,16 @@ from .allowlist import ViolationPolicy, enforce_allowlist
 from .config import AnalyticsConfig, FlagBootstrap, FlagsConfig
 from .factory import create_analytics
 from .flags import (
+    FeatureFlagDefinition,
     FlagClientConfig,
+    FlagCondition,
+    FlagFilterOperator,
+    FlagFilterValue,
     FlagNoop,
     FlagTransport,
+    FlagVariant,
     HttpFlagAdapter,
+    PropertyFilter,
     create_flag_client,
 )
 from .neutral_event import (
@@ -119,6 +125,12 @@ __all__ = [
     "FlagNoop",
     "HttpFlagAdapter",
     "create_flag_client",
+    "FeatureFlagDefinition",
+    "FlagCondition",
+    "PropertyFilter",
+    "FlagVariant",
+    "FlagFilterValue",
+    "FlagFilterOperator",
     "Analytics",
     "AnalyticsConfig",
     "FlagsConfig",

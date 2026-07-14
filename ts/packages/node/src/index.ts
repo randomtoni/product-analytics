@@ -44,6 +44,14 @@ export { createFlagClient } from './flags/create-flag-client';
 export type { NodeFlagClient } from './flags/create-flag-client';
 export type { FlagClientConfig } from './flags/config';
 export type {
+  FeatureFlagDefinition,
+  FlagCondition,
+  PropertyFilter,
+  FlagVariant,
+  FlagFilterValue,
+  FlagFilterOperator,
+} from './flags/local/neutral-definition';
+export type {
   FeatureFlagPort,
   FlagContext,
   FlagEvaluateOptions,

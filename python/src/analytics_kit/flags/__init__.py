@@ -15,6 +15,14 @@ ingest config carries a ``key`` + ``flags.flag_endpoint``.
 from .adapter import HttpFlagAdapter
 from .config import FlagClientConfig
 from .factory import create_flag_client
+from .local.neutral_definition import (
+    FeatureFlagDefinition,
+    FlagCondition,
+    FlagFilterOperator,
+    FlagFilterValue,
+    FlagVariant,
+    PropertyFilter,
+)
 from .noop import FlagNoop
 from .transport import FlagTransport
 
@@ -24,4 +32,10 @@ __all__ = [
     "HttpFlagAdapter",
     "FlagNoop",
     "create_flag_client",
+    "FeatureFlagDefinition",
+    "FlagCondition",
+    "PropertyFilter",
+    "FlagVariant",
+    "FlagFilterValue",
+    "FlagFilterOperator",
 ]
