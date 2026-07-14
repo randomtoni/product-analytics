@@ -27,11 +27,19 @@ so S2/S3/S4 fill in per-primitive builders, not scaffolding.
   they COMPUTE (no more not-implemented throw), routing SQL through the injected DB-execute seam
   (`this.dbExecute` TS / `self._db_execute` Python — already on the constructed adapter from E17-S4).
 - Establish the **SQL-generation module** — a new co-located module (TS `ts/packages/node/src/query/`,
-  Python `python/src/analytics_kit/query/`; pick a role-named file, e.g. `warehouse-sql.ts` /
-  `warehouse_sql.py`, unless the builder finds a better-fitting home) holding pure SQL-builder
-  functions that emit Postgres SQL over `EVENTS_VIEW` (from E17-S2's `warehouse-schema`), never
-  `properties` directly and never the base `events` table. The trend/unique_count builder is the first
-  resident; funnel/retention/raw builders (S2–S4) join it.
+  Python `python/src/analytics_kit/query/`) holding pure SQL-builder functions that emit Postgres SQL
+  over `EVENTS_VIEW` (from E17-S2's `warehouse-schema`), never `properties` directly and never the base
+  `events` table. The trend/unique_count builder is the first resident; funnel/retention/raw builders
+  (S2–S4) join it.
+  - **PIN the filename in S1 (story-refiner 2026-07-14): `warehouse-sql.ts` / `warehouse_sql.py`.**
+    Do NOT leave the module home as an implement-time pick — S2/S3/S4 each `depends_on` S1 and add a
+    per-primitive builder to THIS module, so the path must be known when S1 lands, not re-discovered
+    per downstream story. If the builder has a strong reason to diverge, that is a scope/pattern change
+    to raise with the orchestrator before landing S1, not a silent per-story choice.
+  - **Where the shared assembler lives:** the assembler (below) is warehouse-adapter concern (it
+    produces a `QueryResult`), so it co-locates with the adapter (`warehouse-query-adapter.ts` /
+    `warehouse_adapter.py`) or in `warehouse-sql` next to the builders — the builder picks ONE home in
+    S1 and S2–S4 import it from there; do not let each downstream story re-home it.
 - **The shared trend walk** (`trend` and `unique_count` share it — `UniqueCountRow` IS `TrendRow`):
   - `date_trunc(<bucket-unit>, timestamp)` bucket over `spec.window` (a `Duration` — derive the
     `date_trunc` unit + the window lower bound from `window.unit`/`window.value`).
@@ -56,6 +64,22 @@ so S2/S3/S4 fill in per-primitive builders, not scaffolding.
     `QueryColumn{name,type?}`), `generatedAt: new Date().toISOString()` / `datetime.now(...).isoformat()`,
     and no `fromCache` (a live SQL exec has no cache flag — omit it, do not fabricate one). This
     assembler is what S2–S4 reuse; only the per-primitive flat-row builder changes.
+    - **Sync/async posture (code-shape pin, story-refiner 2026-07-14).** The `DbExecute` seam and the
+      adapter methods keep the EXISTING per-tree sync/async split (E17-S3-shipped, deliberate — do NOT
+      "fix" toward one posture): **TS** `dbExecute` is `async` (`Promise<DbExecuteResult>`) so the TS
+      bodies `await this.dbExecute(sql, params)` and the methods stay `async`; **Python**
+      `DbExecute.execute` is **sync** (blocking, no coroutine) so the Python bodies call
+      `self._db_execute.execute(sql, params)` with NO `await` and the methods stay plain `def` (an
+      `async def` returns a coroutine, not a `QueryResult`, and fails the structural-conformance check —
+      the stub is already sync `def`). Same split the HTTP adapter/`QueryTransport` already carry.
+    - **`columns` differs from the HTTP structured path — intended.** The HTTP structured builders force
+      `columns: []` on the result (a real insight response carries no columns; keying off a spurious
+      wire `columns` would reopen the leak — see `http_adapter.py:336-343`). The warehouse is the
+      OPPOSITE: `DbExecuteResult.columns` is the driver-reported SELECT schema and is always present, so
+      the warehouse assembler STAMPS it (mapping each `DbColumn{name,type?}` → `QueryColumn{name,type?}`)
+      on every primitive, structured included. This is not a leak: the columns are the neutral SELECT
+      schema (E17-S2 aliases them to the taxonomy prop keys / base cols), never engine wire tokens.
+      Write it as a NEW sibling assembler, not the HTTP one (whose input type is `WireResultBearing`).
 - **TS/Python parity:** same SQL shape, same bucket/count/zero-fill rule, same flat-row-builder +
   assembler split, same neutral rows. The generated SQL is Postgres and identical across trees; assert
   the SQL shape in both trees' unit tests against the E17-S3 **reusable fake `DbExecute`** (canned
@@ -120,10 +144,26 @@ projections). Route SQL through the injected seam; the adapter already holds it 
   greenfield — no PostHog data to match, no posthog-source-guide-vs-server-repo dependency. Trend has no
   contested convention (bucket + count is unambiguous); still, document the chosen `date_trunc` unit
   derivation from `Duration.unit`.
+  - **`date_trunc` unit mapping — mirror the HTTP adapter's `INTERVAL_FOR_UNIT` (story-refiner
+    2026-07-14).** `Duration.unit` is `'minute'|'hour'|'day'|'week'|'month'`, but the HTTP adapter
+    already collapses `minute → hour` and `hour → hour` for its trend interval (`INTERVAL_FOR_UNIT`,
+    `http-query-adapter.ts:165-171`; `day`/`week`/`month` pass through). For cross-adapter consistency,
+    the warehouse `date_trunc` unit should use the SAME collapse (`date_trunc('hour', …)` for
+    `minute`/`hour`; `'day'`/`'week'`/`'month'` direct). This mirrors an EXISTING mapping, not a new
+    decision — no fixture exercises sub-day buckets (`query-contract.fixtures` trend cases are all
+    day-granularity), so this is a consistency pin, not a contract requirement. If the builder has a
+    reason to bucket at true minute granularity, raise it — but default to the HTTP collapse.
 - **The adapter fills its stub method bodies against the injected seam — no seam/factory change.** E17-S4
   already made the adapter constructable with an injected `DbExecute` and selectable; S1 only fills the
   `trend`/`unique_count` bodies. The DSN→driver build stays at the `createWarehouseQueryAdapterFromConfig`
   boundary; the adapter never sees a DSN/handle.
+  - **Add the `spec` parameter to the TS method signatures when filling (code-shape pin, story-refiner
+    2026-07-14).** The TS stubs are currently arg-less (`async trend(): Promise<QueryResult<TrendRow>>`)
+    and only typecheck because a narrower method structurally satisfies the wider
+    `AnalyticsQueryClient.trend(spec: TrendSpec<TX>)`. Filling the body REQUIRES adding the `spec`
+    parameter — `async trend(spec: TrendSpec<TX>)` / `async uniqueCount(spec: UniqueCountSpec<TX>)` —
+    or the SQL has nothing to read. (The Python stubs already take `spec`, so this is a TS-only add;
+    import `TrendSpec`/`UniqueCountSpec` from `./query-client` as `http-query-adapter.ts` does.)
 - **Buildable/testable against the E17-S3 reusable fake — NO real Postgres.** Import: TS
   `import { createFakeDbExecute } from '../query/db-execute.fixtures'`; Python
   `from db_execute_fakes import FakeDbExecute` (in `python/tests/`). Assert the generated SQL string

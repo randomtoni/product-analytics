@@ -38,6 +38,13 @@ construction.
     exactly the HTTP adapter's `retentionCohorts` fixture (index 0 = the cohort itself).
   - Self-join the typed view: cohort rows (`spec.cohortEvent`) against return rows
     (`spec.returnEvent`) bucketed by `spec.granularity` for `spec.periods` periods.
+  - **Dense grid via `generate_series` (PINNED — architect consult, story-refiner 2026-07-14).** Emit
+    a row for EVERY `(cohort, period_index)` cell over `0 .. periods-1`, including zero cells. Generate
+    the grid — `generate_series(0, spec.periods - 1)` cross-joined against the distinct cohort buckets —
+    and LEFT JOIN the distinct-actor counts onto it, so an empty cell surfaces as `value: 0` rather than
+    a missing row. This is the DENSE convention (chosen over sparse) so the result row count is
+    deterministic (`cohorts × periods`) and easy to assert against a canned fixture. It stays a SINGLE
+    statement.
   - `breakdown` when present: `GROUP BY (properties->>'<breakdown>')` (same JSONB-path posture as
     S1/S2), one cohort/period grid per breakdown value, stringified onto every row.
 - **The flat-row builder** flattens positional `DbExecuteResult.rows` into `RetentionRow`
@@ -88,11 +95,24 @@ construction.
 Builds on S1's SQL-gen module + shared assembler (reuse both; add a `retention` builder). S2/S3/S4 edit
 the same adapter file + SQL-gen module and run sequentially in practice.
 
+**Orchestrator sequencing (story-refiner 2026-07-14):** S2/S3/S4 are dependency-parallel off S1 but all
+edit the SAME adapter + `warehouse-sql` files in both trees — run them **serially S2 → S3 → S4** (not
+parallel) to avoid shared-file merge friction. Run-ordering recommendation only; the `depends_on` graph
+is correct as-is.
+
 **Pre-resolved decisions (locked by the epic Notes + user decision — do NOT re-litigate):**
 
 - **`period_index=0` is the cohort's own period (locked convention).** Not the first return period.
   Matches the HTTP `retentionCohorts` fixture (index 0 = the cohort itself). This is the chosen,
   documented convention (epic Notes; Success criteria). — architect (2026-07-13) + user decision
+- **Single SQL statement, dense grid, one canned result (architect consult, story-refiner
+  2026-07-14).** The whole retention grid is expressible as ONE statement returning one row per
+  `(cohort, period_index[, breakdown])` cell with its `count(distinct distinct_id)` — the self-join,
+  the `generate_series(0, periods-1)` dense grid, and the per-cell aggregation all resolve inside one
+  statement (no round-trip per cohort or per period). So the `retention` method makes ONE `DbExecute`
+  call and normalizes ONE `DbExecuteResult`; do NOT build the per-call SQL-keyed resolver variant of the
+  fake — a single canned result per method call drives every adversarial case. The DENSE (zero-filled)
+  convention is pinned: emit every cell over `0 .. periods-1` including zeros (see Scope).
 - **Documented divergence, NOT byte-exact HogQL parity (user decision).** Greenfield consumer, no
   PostHog data to match. Ship correct, well-defined cohort-retention semantics with the period-0
   convention documented — no chase for HogQL's exact retention algorithm, no

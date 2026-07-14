@@ -38,6 +38,17 @@ flatten) and assert the produced neutral rows are IDENTICAL to the `expectedRows
     to the SAME `expectedRows`. The parity target is the `expectedRows` (the neutral output), which is
     already identical across both fixtures files. Keep the SQL-shaped inputs readable and co-located with
     the parity test.
+  - **`funnelEventPrecedence` — the parity is on the OUTPUT `event`, not the wire precedence walk
+    (story-refiner 2026-07-14).** That fixture's `wireResults` exercise the HTTP `custom_name → name →
+    action_id` precedence (its `expectedRows` carry `event: 'Renamed Step'`, `'order_placed'`, `'act_3'`).
+    The warehouse has NO such wire precedence — per S2, warehouse funnel `event` is the step's own
+    identity (from `spec.steps` / the SQL row's event column). So the SQL-shaped input for this case
+    supplies each step row already carrying the RESOLVED event identity the fixture's `expectedRows`
+    expect (`'Renamed Step'`/`'act_3'`), and the warehouse builder passes them through to the same rows.
+    The parity claim is that the OUTPUT `FunnelStepRow.event` values match — NOT that the warehouse
+    re-derives them via the HTTP precedence rule (it cannot, and does not need to; the row contract
+    fixes the output, not the derivation path). Include this case so the output parity is proven; note
+    in the test why the warehouse input is spec-sourced.
 - **Assert the byte-identical-by-construction claim concretely:** for at least the guard-critical cases,
   assert the warehouse rows equal the HTTP fixtures' `expectedRows` field-for-field — the computed
   `conversionRate` (guarded, count[0]===0 ⇒ 0) and `periodIndex=0`=cohort-period rules produce the same

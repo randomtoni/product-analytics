@@ -78,6 +78,11 @@ a dialect-keyed shape legitimately surfaces and is therefore **NOT provider-swap
 Builds on S1's shared assembler (reuse it) and the existing `zipRow`/`_zip_row` helper. S2/S3/S4 edit
 the same adapter file and run sequentially in practice.
 
+**Orchestrator sequencing (story-refiner 2026-07-14):** S2/S3/S4 are dependency-parallel off S1 but all
+edit the SAME adapter file in both trees — run them **serially S2 → S3 → S4** (not parallel) to avoid
+merge friction. S4 is the lightest of the three (no adversarial SQL — pass-through + zip + a doc note).
+Run-ordering recommendation only; the `depends_on` graph is correct as-is.
+
 **Pre-resolved decisions (locked by the epic Notes — do NOT re-litigate):**
 
 - **`rawQuery` is the deliberate dialect split (locked).** SQL dialect (warehouse) vs HogQL (HTTP).
@@ -89,6 +94,21 @@ the same adapter file and run sequentially in practice.
   exactly what `zipRow`/`_zip_row` (`http-query-adapter.ts:395`) already expects (E17-S3 pinned
   rows-as-arrays-of-arrays specifically so the raw path reuses the zip helper unchanged). Reuse the
   helper; do NOT reimplement zipping. — architect (E17-S3 review 2026-07-14)
+- **Column-type adapting at the zip call (code-shape pin, story-refiner 2026-07-14).** The two zip
+  helpers take DIFFERENT column arg shapes, and neither is `DbColumn`, so an adapt step is required at
+  the call site — do NOT change either helper's signature:
+  - **TS** `zipRow(row, columns: string[])` (`http-query-adapter.ts:395`) wants plain column-name
+    strings. `DbExecuteResult.columns` is `DbColumn[]` (`{ name, type? }`), so pass
+    `result.columns.map((c) => c.name)`.
+  - **Python** `_zip_row(row, columns: list[QueryColumn])` (`http_adapter.py:356`) wants neutral
+    `QueryColumn`s (it reads `column.name`). `DbExecuteResult.columns` is `list[DbColumn]`, a
+    DIFFERENT dataclass, so convert `[QueryColumn(name=c.name, type=c.type) for c in result.columns]`
+    (the same `DbColumn`→`QueryColumn` name/type carry-through the S1 assembler already does for the
+    neutral `columns` stamp — reuse that mapping, don't duplicate a second one).
+  This is the one place `_zip_row` is imported outside `http_adapter.py`; if the builder finds the
+  cross-module import awkward, a small warehouse-local `_zip_row` twin over `list[DbColumn]` is an
+  acceptable alternative — but keep the SAME positional-cell zip behavior (list → keyed by column
+  order; dict → passthrough; else `{}`), asserted against the fixtures in S5's rawQuery-adjacent test.
 - **Semantics = documented divergence, NOT byte-exact HogQL parity (user decision).** No PostHog data to
   match; no posthog-source-guide dependency. `rawQuery`'s divergence is the dialect itself, and that
   divergence is the documented, intended behavior.

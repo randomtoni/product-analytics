@@ -36,8 +36,19 @@ in SQL — so warehouse funnel rows are byte-identical to HTTP funnel rows by co
     later step's count is monotonically non-increasing.
   - `breakdown` when present: `GROUP BY (properties->>'<breakdown>')` (same JSONB-path posture as S1),
     with per-GROUP counts — each group's step-0 count is that group's base.
-  - The chosen approach (self-join per step vs a windowed/`lead()` walk over ordered events per actor)
-    settles at implement time — pick the one whose SQL is clearest to assert; document the choice.
+  - **Approach family PINNED (architect consult, story-refiner 2026-07-14): the per-actor
+    ordered-step window-function walk** — filter the view to the `spec.steps` events
+    (`WHERE event IN (...)`), tag each with its step index, anchor `t0` per actor via
+    `min(timestamp) FILTER (WHERE step = 0)`, then a window-function progress check enforcing
+    strictly-increasing step timestamps within `[t0, t0 + within]`; emit per-step distinct-actor
+    counts. Reason it is pinned over the alternative: `spec.steps` is arbitrary length, and the
+    window-walk keeps the emitted statement **structurally CONSTANT** regardless of step count (only
+    the step-set predicate varies) — friendlier to byte-reproducible SQL across both trees and the
+    Python parity port than the variadic N-way self-join. **Rejected alternative (name it so a reviewer
+    doesn't flag its absence): the self-join chain** (join step-0→step-1→… per `distinct_id` with the
+    t0-anchored window predicate) is correct but variadic-shape (join count = `spec.steps.length`),
+    so it is NOT chosen. If the builder finds a materially clearer single-statement walk, it may
+    diverge — but stay single-statement (see the fake note) and document the choice.
 - **`conversionRate` is COMPUTED in the flat-row builder, NEVER in SQL (locked).** The SQL yields per-
   step (and per-group) `count`s only. The funnel flat-row builder computes `conversionRate =
   count[step] / count[0]` **guarded** (count[0] === 0 ⇒ conversionRate 0 for every step, no
@@ -50,8 +61,11 @@ in SQL — so warehouse funnel rows are byte-identical to HTTP funnel rows by co
 - **Adversarial unit tests (required, against the E17-S3 fake `DbExecute`):**
   - **out-of-order events** — an actor firing step 2's event before step 1's does NOT count as completing
     the funnel (strict ordering enforced).
-  - **boundary-of-window** — an actor completing the last step exactly at `t0 + within` vs one tick past;
-    pin and assert the boundary rule (inclusive/exclusive) explicitly.
+  - **boundary-of-window** — an actor completing the last step exactly at `t0 + within` COUNTS; one
+    tick past does NOT. The boundary is **PINNED INCLUSIVE** (architect consult, story-refiner
+    2026-07-14): the window is the closed interval `[t0, t0 + within]`, upper-bound step predicate
+    `timestamp <= t0 + within` (NOT `<`). This is not an open decision — assert exactly-at-boundary
+    counts and one-tick-past does not.
   - **partial completion** — an actor reaching step 1 but not step 2 counts toward step 1's count, not
     step 2's; per-step monotonic non-increase holds.
   - the two `conversionRate` guard cases (normal ratios + count[0]===0 ⇒ all-zero).
@@ -82,7 +96,8 @@ in SQL — so warehouse funnel rows are byte-identical to HTTP funnel rows by co
       `converted_people_url`, `breakdown_value`) leaks onto a row.
 - [ ] With `spec.breakdown`, the SQL groups per breakdown value and conversionRate is per-group; the
       breakdown is stringified onto every row.
-- [ ] The window boundary rule (inclusive vs exclusive at `t0 + within`) is pinned and asserted.
+- [ ] The window boundary is INCLUSIVE (closed `[t0, t0 + within]`, predicate `<=`) — asserted:
+      completion exactly at `t0 + within` counts, one tick past does not.
 - [ ] TS/Python parity on SQL semantics, the guarded-conversionRate builder, and the adversarial cases;
       tests run against the E17-S3 fake (no real Postgres); both neutrality scans green; all gates green
       in both trees.
@@ -93,11 +108,26 @@ Builds directly on S1: reuse S1's SQL-gen module (add a `funnel` builder) and S1
 (the `normalizeResult` analog). S2, S3, S4 all edit the same adapter file + SQL-gen module, so they run
 sequentially in practice (all `depends_on` S1's pattern).
 
+**Orchestrator sequencing (story-refiner 2026-07-14):** the graph is `S1 → { S2, S3, S4 } → S5`, so
+S2/S3/S4 are dependency-parallel — but all three edit the SAME two files in both trees
+(`warehouse-query-adapter.ts`/`warehouse_adapter.py` + the S1 `warehouse-sql` module), each adding one
+method body + one builder. Run them **serially in the order S2 → S3 → S4**, NOT in parallel, to avoid
+merge friction on the shared adapter/SQL-gen files. This is a run-ordering recommendation only; the
+`depends_on` graph is correct as-is (each genuinely depends only on S1's pattern).
+
 **Pre-resolved decisions (locked by the epic Notes + user decision — do NOT re-litigate):**
 
 - **Window measured from step 0 (locked convention).** The within-window anchors on the actor's step-0
   timestamp — `[t0, t0 + spec.within]` — NOT a rolling per-adjacent-pair window. This is the chosen,
   documented convention (epic Notes; Success criteria). — architect (2026-07-13) + user decision
+- **Single SQL statement, one canned result (architect consult, story-refiner 2026-07-14).** The whole
+  funnel is expressible as ONE statement returning all per-step distinct-actor counts as `N` rows
+  (one per step; `(step_index, event, actor_count[, breakdown])`), so the `funnel` method makes ONE
+  `DbExecute` call and normalizes ONE `DbExecuteResult`. Do NOT split into a query-per-step or build the
+  per-call SQL-keyed resolver variant of the fake — a single canned `DbExecuteResult` per method call is
+  sufficient for every adversarial case (drive each case by handing the fake the step-count rows that
+  scenario's SQL would return). The row-builder receives the step-ordered count rows and computes
+  `conversionRate` across them.
 - **`conversionRate` COMPUTED in the normalizer, not SQL (locked).** SQL yields counts; the builder
   divides `count[step]/count[0]` guarded. This is what makes warehouse funnel rows byte-identical to HTTP
   rows — both compute conversionRate the same way from counts. Mirror the HTTP builder's guard
