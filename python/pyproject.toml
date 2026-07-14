@@ -60,5 +60,6 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [
     "artifact_scan: the CI-only neutrality wheel/sdist build-extract-scan (needs a build; deselected in the fast inner loop)",
+    "needs_postgres: opt-in tier that requires a real Postgres (>=16) via DATABASE_URL (deselected in the fast inner loop; run with -m needs_postgres)",
 ]
-addopts = "-m 'not artifact_scan'"
+addopts = "-m 'not artifact_scan and not needs_postgres'"

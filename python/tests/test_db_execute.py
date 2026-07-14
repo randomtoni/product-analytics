@@ -151,6 +151,7 @@ _skip_without_db = pytest.mark.skipif(
 )
 
 
+@pytest.mark.needs_postgres
 @_skip_without_db
 def test_default_driver_returns_empty_result_on_a_non_returning_write() -> None:
     db_execute = create_default_db_execute(_DATABASE_URL)  # type: ignore[arg-type]
@@ -179,6 +180,7 @@ def test_default_driver_returns_empty_result_on_a_non_returning_write() -> None:
 # A REAL (non-TEMP) table is mandatory: a TEMP table is connection-scoped and would vanish with
 # the per-call connection, so it can never prove cross-connection persistence. Uuid-suffixed to
 # avoid cross-run collisions, DROP TABLE in a finally for cleanup.
+@pytest.mark.needs_postgres
 @_skip_without_db
 def test_default_driver_persists_a_write_across_the_per_call_connection() -> None:
     db_execute = create_default_db_execute(_DATABASE_URL)  # type: ignore[arg-type]
@@ -203,5 +205,37 @@ def test_default_driver_persists_a_write_across_the_per_call_connection() -> Non
         )
         recount = db_execute.execute(f"SELECT count(*) FROM {table}")
         assert recount.rows == [(1,)]
+    finally:
+        db_execute.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+# E21-S3 driver-conformance: the builders (E18 warehouse SQL + the E19 receiver upsert) emit
+# driver-agnostic positional `$N` placeholders (Postgres-native, byte-identical to the TS tree), but
+# the DB-API driver behind this seam accepts ONLY `%s`. Without the driver-boundary `$N`->`%s`
+# rewrite, a real parameterized statement raises `ProgrammingError: the query has 0 placeholders but
+# N parameters were passed`. This pins the rewrite: a multi-row `$N` INSERT (the exact receiver form,
+# with a placeholder index >= 10 so a naive substring replace would mis-rewrite `$1` inside `$10`)
+# binds and persists correctly, and a `$N` SELECT reads back.
+@pytest.mark.needs_postgres
+@_skip_without_db
+def test_default_driver_rewrites_dollar_placeholders_for_the_db_api_driver() -> None:
+    db_execute = create_default_db_execute(_DATABASE_URL)  # type: ignore[arg-type]
+
+    table = f"akit_e21s3_ph_{uuid.uuid4().hex}"
+    u1, u2 = str(uuid.uuid4()), str(uuid.uuid4())
+    try:
+        db_execute.execute(f"CREATE TABLE {table} (a text, b text, uuid text UNIQUE)")
+        # A two-row insert with placeholders $1..$6 — $10-style indices appear at higher batch sizes;
+        # this exercises multi-placeholder positional binding through the rewrite.
+        db_execute.execute(
+            f"INSERT INTO {table} (a, b, uuid) VALUES ($1, $2, $3), ($4, $5, $6) "
+            "ON CONFLICT (uuid) DO NOTHING",
+            ["a1", "b1", u1, "a2", "b2", u2],
+        )
+        # A $N SELECT reads the rows back — positional bind order preserved.
+        result = db_execute.execute(f"SELECT count(*)::int FROM {table} WHERE a = $1", ["a1"])
+        assert result.rows == [(1,)]
+        total = db_execute.execute(f"SELECT count(*)::int FROM {table}")
+        assert total.rows == [(2,)]
     finally:
         db_execute.execute(f"DROP TABLE IF EXISTS {table}")

@@ -11,6 +11,7 @@ actually CONSTRUCTED. This mirrors the ``analytics-kit[django]``/``[fastapi]`` e
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 from typing import Protocol
 
@@ -28,6 +29,18 @@ _DRIVER_MISSING = (
     "analytics-kit: the default warehouse driver requires the `analytics-kit[warehouse]` "
     "extra — install it or supply your own DbExecute."
 )
+
+# The builders emit driver-agnostic positional `$N` placeholders (Postgres-native, byte-identical to
+# the TS tree). The DB-API driver behind this seam accepts only `%s` positional placeholders, so the
+# driver — the ONE layer that knows which paramstyle it speaks — rewrites `$N` to `%s` here, exactly
+# as it already adapts the cursor into the neutral DbExecuteResult. Full-token regex (never a substring
+# replace: `$1` is a prefix of `$10`); positional order is preserved because the builders generate
+# `$1..$N` in strict lockstep with the flat params. The emitted SQL the neutrality scan and the
+# parity fixtures assert on is UNCHANGED — only what crosses into the driver is adapted. No injection
+# surface: the `$N` tokens are builder-generated, never consumer input (raw_query takes no params, so
+# this is a no-op there). The builders emit no `%` literal today; if one is ever added it must be
+# `%%`-escaped at the builder — out of this seam's scope.
+_POSITIONAL_PLACEHOLDER = re.compile(r"\$\d+")
 
 
 class _CursorLike(Protocol):
@@ -75,7 +88,7 @@ class DefaultDbExecute:
         conn = psycopg.connect(self._dsn, autocommit=True)
         try:
             with conn.cursor() as cursor:
-                cursor.execute(sql, params)
+                cursor.execute(_POSITIONAL_PLACEHOLDER.sub("%s", sql), params)
                 return _result_from_cursor(cursor)
         finally:
             conn.close()

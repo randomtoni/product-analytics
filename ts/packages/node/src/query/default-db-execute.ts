@@ -27,8 +27,33 @@ interface DriverClient {
   end(): Promise<void>;
 }
 
+// A per-client type-parser override — instance-scoped, NOT the process-global `pg.types.setTypeParser`
+// (a library must never mutate a consumer's global driver registry). Keyed by Postgres type OID.
+interface DriverClientConfig {
+  connectionString: string;
+  types?: { getTypeParser(oid: number): (value: string) => unknown };
+}
+
 interface DriverModule {
-  Client: new (config: { connectionString: string }) => DriverClient;
+  Client: new (config: DriverClientConfig) => DriverClient;
+  // The driver's PROCESS-DEFAULT type-parser registry. Read (never mutated) so the instance-scoped
+  // override can delegate every non-bigint OID to the driver's own default parser.
+  types: { getTypeParser(oid: number): (value: string) => unknown };
+}
+
+// Postgres `int8`/bigint type OID. `pg` returns bigint as a STRING by default (an `int8` can exceed
+// JS `Number.MAX_SAFE_INTEGER`, so `pg` refuses a lossy cast), but the neutral `DbExecuteResult`
+// contract is that cells are neutral typed values — and the row builders (E18) read `count(...)`
+// aggregates (bigint) as numbers. A count / actor-count / distinct-count fits well inside the safe
+// range, so this instance-scoped parser coerces bigint → number, making the default driver HONEST to
+// the neutral cell contract without a builder edit and without touching global driver state. Keyed by
+// OID (the driver's own type identity), so it only coerces genuine bigint cells — a string breakdown
+// value is a different OID and is untouched.
+const PG_INT8_OID = 20;
+
+// Coerce bigint (as reported: a decimal string) to a JS number for the neutral cell.
+function parseBigIntAsNumber(value: string): number {
+  return Number(value);
 }
 
 const DRIVER_MISSING =
@@ -61,7 +86,16 @@ export interface DefaultDbExecuteConfig {
 export function createDefaultDbExecute(config: DefaultDbExecuteConfig): DbExecute {
   return async (sql, params) => {
     const driver = await loadDriver();
-    const client = new driver.Client({ connectionString: config.warehouseDsn });
+    // Instance-scoped type parser: coerce bigint (OID 20) to a JS number so `count(...)` aggregates
+    // reach the row builders AS NUMBERS (the neutral cell contract), delegating every other OID to
+    // the driver's own default. Scoped to THIS client — never the process-global registry.
+    const client = new driver.Client({
+      connectionString: config.warehouseDsn,
+      types: {
+        getTypeParser: (oid) =>
+          oid === PG_INT8_OID ? parseBigIntAsNumber : driver.types.getTypeParser(oid),
+      },
+    });
     await client.connect();
     try {
       const driverResult = await client.query(sql, params);

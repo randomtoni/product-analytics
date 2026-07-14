@@ -66,6 +66,50 @@ test('the default driver maps the driver result into the neutral DbExecuteResult
   expect(end).toHaveBeenCalledOnce();
 });
 
+// E21-S3 driver-conformance: `pg` returns Postgres bigint (`count(...)` aggregates, type OID 20) as
+// a STRING by default. The row builders (E18) require numeric cells, so the default driver installs
+// an INSTANCE-scoped type parser (never the process-global `setTypeParser`) coercing OID-20 → number,
+// delegating every other OID to the driver's own default. This pins that wiring: a stand-in `pg`
+// whose Client honors the configured `types.getTypeParser` yields a NUMBER for a bigint cell and
+// leaves a non-bigint OID to the default parser.
+test('the default driver installs an instance-scoped bigint→number parser (OID 20), delegating other OIDs', async () => {
+  const defaultTextParser = vi.fn((v: string) => v);
+  const seenConfig: { types?: { getTypeParser(oid: number): (v: string) => unknown } } = {};
+  class FakeClient {
+    connect = vi.fn(async () => undefined);
+    // Uses the CONFIGURED per-instance parser to decode each field's raw string by its dataTypeID —
+    // exactly what real `pg` does with a per-client `types` override.
+    query = vi.fn(async () => {
+      const parse = (oid: number, raw: string): unknown =>
+        seenConfig.types?.getTypeParser(oid)(raw) ?? raw;
+      return {
+        rows: [[parse(20, '7'), parse(1184, '2026-01-01')]],
+        fields: [
+          { name: 'n', dataTypeID: 20 },
+          { name: 'bucket', dataTypeID: 1184 },
+        ],
+      };
+    });
+    end = vi.fn(async () => undefined);
+    constructor(config: { connectionString: string; types?: { getTypeParser(oid: number): (v: string) => unknown } }) {
+      seenConfig.types = config.types;
+    }
+  }
+  // The module also exposes the process-DEFAULT `types.getTypeParser` the override delegates to.
+  vi.doMock('pg', () => ({
+    Client: FakeClient,
+    types: { getTypeParser: () => defaultTextParser },
+  }));
+
+  const exec = createDefaultDbExecute({ warehouseDsn: 'postgres://localhost/db' });
+  const result = await exec('SELECT count(*) AS n, bucket FROM t');
+
+  // The bigint cell is a NUMBER (coerced), not the raw string; the non-bigint OID went to the default.
+  expect(result.rows).toEqual([[7, '2026-01-01']]);
+  expect(typeof result.rows[0][0]).toBe('number');
+  expect(defaultTextParser).toHaveBeenCalledWith('2026-01-01');
+});
+
 test('the default driver closes the connection even when the query throws', async () => {
   const end = vi.fn(async () => undefined);
   class FakeClient {

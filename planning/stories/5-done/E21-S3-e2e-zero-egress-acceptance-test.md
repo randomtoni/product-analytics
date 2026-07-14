@@ -190,6 +190,22 @@ F). The full test-integration design is the architect consult below — pin it v
 - **Vendor-neutral scope.** This is test-infra + the S1 driver fix only; it exercises and asserts the
   already-frozen E17–E20 seams and changes nothing a consumer observes. — architect (2026-07-14)
 
+> Reviewer suggestions (2026-07-14) → E21 improvement pass (all comment-precision, non-blocking):
+> (1) Defect-1: narrow the `$N`→`%s` "raw_query no-op" comment — it's a no-op only when the raw SQL has
+> no `$digit` token (a `$N`-shaped token inside a raw_query literal WOULD be rewritten; unreached today —
+> the frozen SQL never puts `$N` in a literal + raw_query takes no params). (2) Defect-2: note that a
+> true-`int8` column in raw_query is lossy via `Number()` past `MAX_SAFE_INTEGER` (safe for count
+> aggregates; add a per-query opt-out if a real bigint column surfaces). (3) point the Defect-3 follow-up
+> back to the `warehouse_sql.py:11` docstring (which already knew breakdown reads raw `properties` yet
+> aimed it at the view that hides it). (4) clarify the E1 `raw_query count(*)::int` probe (OID 23) is a
+> provenance anchor, NOT the OID-20 bigint-parser exercise (the funnel/retention counts are that).
+
 ## Shipped
 
-<!-- Filled by /implement-epics on move to 5-done. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files changed (config, sanctioned):** `python/pyproject.toml` (`needs_postgres` marker + `addopts`), `ts/turbo.json` (`env: ["DATABASE_URL"]` on `test` — the cache-key fix). **Driver-conformance src (2 real-engine defects the capstone surfaced, architect-ruled S1-class, no SQL-gen/contract change):** `python/.../query/default_db_execute.py` (Defect 1: `$N`→`%s` at the DB-API boundary, emitted SQL byte-identity preserved), `ts/.../query/default-db-execute.ts` (Defect 2: **instance-scoped** `pg` bigint OID-20→number parser, NOT process-global). **Tests added:** `python/tests/test_e2e_zero_egress.py` + `ts/.../e2e-zero-egress.test.ts` (the E1 loop); `+needs_postgres` on S1's real-driver tests; driver-conformance pins in both trees
+- **New public API:** none — test-infra + driver-conformance behind the frozen `DbExecute` seam
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SOUND CAPSTONE, SHIP (no criticals) — both driver fixes layered at the right boundary (frozen SQL-gen + E18 byte-identity provably untouched; `pg` parser instance-scoped not global, pinned); E1 proves the loop two-sidedly on real PG16 (zero-egress by construction — HTTP adapters never built — + provenance count-faithfulness); throwaway-DATABASE isolation sound; Defect-3 descope disciplined + recorded. 4 comment-precision suggestions above
+- **Cross-story seams exposed:** **the self-host acceptance bar is MACHINE-PROVEN on real Postgres** — migrate → capture (E19 receiver, persisted via S1's `autocommit`) → query (E18 warehouse, funnel 4/3/1 + retention p0=1/p1=2/p2=1 count-faithful on real data) → flags (E20 local-only) with the recording transports EMPTY of `/api/projects/.../query/`, `/flags/`, `/batch/`. The needs-Postgres tier is CI-ready (marker/skipIf + turbo `env` cache-key); **authoring the CI workflow is a DEFERRED follow-up** (user decision). **NEW FOLLOW-UP — Defect 3 (contract-violating, needs its own story):** the E18 breakdown builders emit `properties ->> '<key>'` FROM `events_typed`, which the E17 view does NOT project → **every breakdown query fails on real Postgres** (`column "properties" does not exist`), contradicting `WAREHOUSE-SCHEMA-CONTRACT.md:72`. Needs an architect consult (runtime-arbitrary breakdown key vs taxonomy-fixed typed columns — undeclared-key behavior) + cross-tree SQL-gen change + E18 breakdown-fixture rewrite. Descoped from E1; the mandated non-breakdown coverage is fully proven. **S4** documents the working loop.
