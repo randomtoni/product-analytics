@@ -127,6 +127,24 @@ selection ladders and entry points confirmed against the shipped src.
   GET, no URL). The gate's job is to name and co-locate these three as one standing behavioral check,
   not to re-derive them. — story-refiner (2026-07-14)
 
+> Reviewer suggestion (2026-07-14) → E21 improvement pass (comment precision): the TS gate comment
+> ("still exercises the genuine lazy driver") overstates it — the `instanceof` proof holds because
+> construction is DRIVER-AGNOSTIC (the lazy driver is never invoked at build time), not because the real
+> driver runs. Soften the comment to state that invariant.
+> Reviewer suggestion (2026-07-14) → E21 improvement pass (parity bookkeeping): the flags-rung transport
+> double differs in strength (Python `_RecordingTransport` RAISES on any egress; TS spy asserts
+> `not.toHaveBeenCalled()`). Both valid; align if strict parity is wanted.
+> Reviewer suggestion (2026-07-14) → E21 improvement pass (cosmetic): TS precedence rung uses
+> `personalKey:'pk_read'`, Python `personal_key='phx_read'` — align the dummy token if strict cross-tree
+> string parity is a goal (no neutrality/correctness impact; both are never-reached dummies).
+
 ## Shipped
 
-<!-- Filled by /implement-epics on move to 5-done. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files added:** `ts/packages/node/src/self-host-selection.test.ts`, `python/tests/test_self_host_selection.py` (test-only — the named `self-host-selection` standing gate)
+- **New public API:** none — a standing behavioral-neutrality gate in the fast quality set
+- **Tests added:** 4 per tree — query warehouse-rung selection (`instanceof WarehouseQueryAdapter`, not HTTP/Noop) + precedence (DSN wins over a full HTTP config, `warn` never called), flags static-defs local-only + zero-egress (real `evaluate`, transport never called), receiver DSN-build-boundary target — all fast (fake seam, NO Postgres/network), run in the default `pnpm turbo run test` / `uv run pytest`
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP (no criticals) — assertions genuinely selection-level (never URL/AST); the TS-lazy/Python-eager driver asymmetry handled right (Python monkeypatches the driver-build boundary → asserts not errors; no mock leaks into the TS query `instanceof`); flags zero-egress proven behaviorally without touching privates; the three source tests left in place (consolidation, not duplication). 3 cosmetic suggestions above
+- **Cross-story seams exposed:** **the standing behavioral-neutrality gate is live** — the name scan proves observability neutrality; this proves BEHAVIORAL neutrality (a self-host config SELECTS the neutral backends: warehouse query adapter, local-only flags with no URL, DSN-built receiver — the HTTP adapters are never even constructed). Complements, doesn't replace, `neutrality-scan`. **S3** is the EXECUTING proof (the same selections driven end-to-end against real Postgres with a zero-egress log). `phx_read`/`pk_read` are test-only dummy HTTP credentials proving the warehouse rung wins even alongside a full HTTP config.
