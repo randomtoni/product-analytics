@@ -8,9 +8,16 @@ import type {
 } from '@randomtoni/analytics-kit';
 import type { DbExecute } from './db-execute';
 import { createDefaultDbExecute } from './default-db-execute';
-import type { AnalyticsQueryClient, TrendSpec, UniqueCountSpec } from './query-client';
+import type {
+  AnalyticsQueryClient,
+  FunnelSpec,
+  TrendSpec,
+  UniqueCountSpec,
+} from './query-client';
 import {
   assembleResult,
+  buildFunnelRows,
+  buildFunnelSql,
   buildTrendRows,
   buildTrendSql,
   buildUniqueCountSql,
@@ -62,8 +69,12 @@ export class WarehouseQueryAdapter<TX extends TaxonomyShape>
     this.dbExecute = options.dbExecute;
   }
 
-  async funnel(): Promise<QueryResult<FunnelStepRow>> {
-    throw new Error(NOT_IMPLEMENTED);
+  async funnel(spec: FunnelSpec<TX>): Promise<QueryResult<FunnelStepRow>> {
+    const { sql, params } = buildFunnelSql(spec);
+    const result = await this.dbExecute(sql, params);
+    // `event` + the per-group conversionRate base come from the spec, not the flat count rows —
+    // the builder is curried on `spec.steps`.
+    return assembleResult(result, buildFunnelRows(spec.steps));
   }
 
   async retention(): Promise<QueryResult<RetentionRow>> {

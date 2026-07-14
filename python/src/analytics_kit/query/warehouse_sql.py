@@ -26,6 +26,8 @@ from typing import Callable, TypeVar
 from .client import (
     Aggregation,
     Duration,
+    FunnelSpec,
+    FunnelStepRow,
     QueryColumn,
     QueryResult,
     TrendRow,
@@ -40,7 +42,9 @@ __all__ = [
     "WarehouseRowBuilder",
     "build_trend_sql",
     "build_unique_count_sql",
+    "build_funnel_sql",
     "build_trend_rows",
+    "build_funnel_rows",
     "assemble_result",
 ]
 
@@ -188,6 +192,127 @@ def build_unique_count_sql(spec: UniqueCountSpec) -> WarehouseQuery:
     )
 
 
+def _window_interval_literal(within: Duration) -> str:
+    """The funnel window as a canonical Postgres interval literal — the ONE serialization both
+    trees emit byte-identically. Reuses ``_INTERVAL_KEYWORD_FOR_WINDOW_UNIT`` (minute/hour collapse
+    to ``hour``), so ``Duration(7, "day")`` → ``interval '7 day'``.
+    """
+    keyword = _INTERVAL_KEYWORD_FOR_WINDOW_UNIT[within.unit]
+    return f"interval '{within.value} {keyword}'"
+
+
+def _funnel_walk_sql(step_count: int, within: Duration, breakdown: str | None) -> str:
+    """The per-actor ordered-step window walk as a SINGLE Postgres statement, structurally CONSTANT
+    regardless of ``step_count`` (only the VALUES rows + the recursion bound vary).
+
+    A recursive step-chase: ``anchor`` fixes each actor's ``t0 = min(timestamp)`` of the step-0
+    event; the recursive term advances one step at a time, taking the EARLIEST next-step event that
+    is STRICTLY after the prior step's ``reached_at`` (strict ordering) and within the CLOSED window
+    ``[t0, t0 + within]`` (INCLUSIVE upper bound, ``<=``). The aggregate lives in a scalar subquery,
+    not the recursive term's SELECT list — Postgres forbids the latter (architect-verified against
+    Postgres 18.4). The final SELECT LEFT JOINs the observed reaches back onto the step list so a
+    step no actor reached still emits a zero row; counts are ``count(distinct distinct_id)``.
+
+    ``run_max``-style window forms are deliberately NOT used: a running ``max(step_index)`` cannot
+    honor the STRICT step-to-step inequality (equal-timestamp rows leak across), so it miscounts
+    ties. The variadic N-way self-join is the other rejected alternative (join count grows with step
+    count). The emitted string is byte-identical to the TypeScript ``warehouse-sql.ts`` for the same
+    spec.
+    """
+    window_interval = _window_interval_literal(within)
+    values_rows = ", ".join(f"({i}, ${i + 1})" for i in range(step_count))
+    within_step = (
+        f"m.timestamp > w.reached_at AND m.timestamp <= w.t0 + {window_interval}"
+    )
+
+    if breakdown is None:
+        return "\n".join(
+            [
+                "WITH RECURSIVE steps(step_index, event_name) AS (",
+                f"  VALUES {values_rows}",
+                "),",
+                "matched AS (",
+                "  SELECT e.distinct_id, s.step_index, e.timestamp",
+                f"  FROM {EVENTS_VIEW} e",
+                "  JOIN steps s ON e.event = s.event_name",
+                "),",
+                "anchor AS (",
+                "  SELECT distinct_id, min(timestamp) AS t0",
+                "  FROM matched WHERE step_index = 0",
+                "  GROUP BY distinct_id",
+                "),",
+                "walk AS (",
+                "  SELECT a.distinct_id, 0 AS step_index, a.t0 AS reached_at, a.t0",
+                "  FROM anchor a",
+                "  UNION ALL",
+                "  SELECT w.distinct_id, w.step_index + 1,",
+                "    (SELECT min(m.timestamp) FROM matched m",
+                f"      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND {within_step}),",
+                "    w.t0",
+                "  FROM walk w",
+                f"  WHERE w.step_index + 1 < {step_count}",
+                "    AND EXISTS (SELECT 1 FROM matched m",
+                f"      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND {within_step})",
+                ")",
+                "SELECT s.step_index, s.event_name, count(DISTINCT w.distinct_id) AS actor_count",
+                "FROM steps s",
+                "  LEFT JOIN walk w ON w.step_index = s.step_index AND w.reached_at IS NOT NULL",
+                "GROUP BY s.step_index, s.event_name",
+                "ORDER BY s.step_index",
+            ]
+        )
+
+    breakdown_path = f"properties ->> {_quote_literal(breakdown)}"
+    return "\n".join(
+        [
+            "WITH RECURSIVE steps(step_index, event_name) AS (",
+            f"  VALUES {values_rows}",
+            "),",
+            "matched AS (",
+            f"  SELECT e.distinct_id, s.step_index, e.timestamp, {breakdown_path} AS bd",
+            f"  FROM {EVENTS_VIEW} e",
+            "  JOIN steps s ON e.event = s.event_name",
+            "),",
+            "anchor AS (",
+            "  SELECT distinct_id, min(timestamp) AS t0, (array_agg(bd ORDER BY timestamp))[1] AS bd",
+            "  FROM matched WHERE step_index = 0",
+            "  GROUP BY distinct_id",
+            "),",
+            "walk AS (",
+            "  SELECT a.distinct_id, 0 AS step_index, a.t0 AS reached_at, a.t0, a.bd",
+            "  FROM anchor a",
+            "  UNION ALL",
+            "  SELECT w.distinct_id, w.step_index + 1,",
+            "    (SELECT min(m.timestamp) FROM matched m",
+            f"      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND {within_step}),",
+            "    w.t0, w.bd",
+            "  FROM walk w",
+            f"  WHERE w.step_index + 1 < {step_count}",
+            "    AND EXISTS (SELECT 1 FROM matched m",
+            f"      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND {within_step})",
+            ")",
+            "SELECT s.step_index, s.event_name, w.bd AS breakdown, count(DISTINCT w.distinct_id) AS actor_count",
+            "FROM steps s",
+            "  LEFT JOIN walk w ON w.step_index = s.step_index AND w.reached_at IS NOT NULL",
+            "GROUP BY s.step_index, s.event_name, w.bd",
+            "ORDER BY w.bd, s.step_index",
+        ]
+    )
+
+
+def build_funnel_sql(spec: FunnelSpec) -> WarehouseQuery:
+    """The generated funnel SQL + params.
+
+    Each step's event name is bound as a positional param (``$1``..``$N`` in step order); ``within``
+    is inlined as a canonical interval literal; the breakdown key (when present) reaches the SQL as
+    an escaped JSONB path, exactly as the trend breakdown does.
+    """
+    return WarehouseQuery(
+        sql=_funnel_walk_sql(len(spec.steps), spec.within, spec.breakdown),
+        params=list(spec.steps),
+    )
+
+
 def _column_index(columns: list[DbColumn], name: str) -> int:
     for i, column in enumerate(columns):
         if column.name == name:
@@ -221,6 +346,80 @@ def build_trend_rows(result: DbExecuteResult) -> list[TrendRow]:
         breakdown = None if breakdown_cell is None else str(breakdown_cell)
         rows.append(TrendRow(bucket=bucket, value=value, breakdown=breakdown))
     return rows
+
+
+def build_funnel_rows(
+    steps: list[str],
+) -> Callable[[DbExecuteResult], list[FunnelStepRow]]:
+    """The funnel flat-row builder.
+
+    The SQL yields one row per step (per breakdown group when broken down):
+    ``(step_index, event_name, actor_count[, breakdown])``. This flattens those positional count
+    rows into neutral :class:`FunnelStepRow`\\ s — sourcing ``event`` from ``steps[step]`` (the spec
+    knows the neutral name; NOT the HTTP adapter's ``custom_name → name → action_id`` wire walk) and
+    COMPUTING ``conversion_rate = count[step] / count[0]`` per breakdown group, GUARDED so a zero
+    step-0 count yields ``0`` on every step (no NaN/inf leak). Identical guard rule to the HTTP
+    ``_build_funnel_rows`` / the ``funnel_zero_first_step`` fixture, so warehouse rows are
+    byte-identical.
+
+    Curried on ``steps`` because both the ``event`` label and the per-group step-0 base come from
+    data the flat count rows do not carry. Reads cells by column name so a benign column reorder or
+    the absence of the ``breakdown`` column never mis-maps.
+    """
+
+    def build(result: DbExecuteResult) -> list[FunnelStepRow]:
+        columns = list(result.columns)
+        step_idx = _column_index(columns, "step_index")
+        count_idx = _column_index(columns, "actor_count")
+        breakdown_idx = _column_index(columns, "breakdown")
+
+        count_by_group_step: dict[str | None, dict[int, int]] = {}
+        group_order: list[str | None] = []
+        for cells in result.rows:
+            cells_list = list(cells)
+            step = cells_list[step_idx] if 0 <= step_idx < len(cells_list) else None
+            count = cells_list[count_idx] if 0 <= count_idx < len(cells_list) else None
+            if (
+                not isinstance(step, int)
+                or isinstance(step, bool)
+                or not isinstance(count, int)
+                or isinstance(count, bool)
+            ):
+                continue
+            breakdown_cell = (
+                cells_list[breakdown_idx]
+                if 0 <= breakdown_idx < len(cells_list)
+                else None
+            )
+            group = None if breakdown_cell is None else str(breakdown_cell)
+            step_counts = count_by_group_step.get(group)
+            if step_counts is None:
+                step_counts = {}
+                count_by_group_step[group] = step_counts
+                group_order.append(group)
+            step_counts[step] = count
+
+        rows: list[FunnelStepRow] = []
+        for group in group_order:
+            step_counts = count_by_group_step[group]
+            first_count = step_counts.get(0, 0)
+            for step in sorted(step_counts):
+                if step >= len(steps):
+                    continue
+                count = step_counts[step]
+                conversion_rate = 0.0 if first_count == 0 else count / first_count
+                rows.append(
+                    FunnelStepRow(
+                        step=step,
+                        event=steps[step],
+                        count=count,
+                        conversion_rate=conversion_rate,
+                        breakdown=group,
+                    )
+                )
+        return rows
+
+    return build
 
 
 WarehouseRowBuilder = Callable[[DbExecuteResult], "list[_TRow]"]

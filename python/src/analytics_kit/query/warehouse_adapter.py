@@ -52,6 +52,8 @@ from .db_execute import DbExecute
 from .default_db_execute import create_default_db_execute
 from .warehouse_sql import (
     assemble_result,
+    build_funnel_rows,
+    build_funnel_sql,
     build_trend_rows,
     build_trend_sql,
     build_unique_count_sql,
@@ -78,7 +80,11 @@ class WarehouseQueryAdapter:
         self._db_execute = db_execute
 
     def funnel(self, spec: FunnelSpec) -> QueryResult[FunnelStepRow]:
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        query = build_funnel_sql(spec)
+        result = self._db_execute.execute(query.sql, query.params)
+        # ``event`` + the per-group conversion_rate base come from the spec, not the flat count
+        # rows — the builder is curried on ``spec.steps``.
+        return assemble_result(result, build_funnel_rows(spec.steps))
 
     def retention(self, spec: RetentionSpec) -> QueryResult[RetentionRow]:
         raise NotImplementedError(_NOT_IMPLEMENTED)

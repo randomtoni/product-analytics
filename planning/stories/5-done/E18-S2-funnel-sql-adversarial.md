@@ -157,4 +157,23 @@ merge friction on the shared adapter/SQL-gen files. This is a run-ordering recom
   (`query-contract.fixtures.ts`) — the exact conversionRate + guard behavior to match (S5 asserts it).
 - Assembler pattern to reuse from S1: the warehouse `normalizeResult` analog.
 
+> Reviewer suggestion (2026-07-14): NULL-breakdown row heterogeneity — when broken down by a key some
+> actors lack, those rows drop the `breakdown` field while siblings keep it (mirrors S1 trend null
+> handling exactly, so consistent). Worth a one-line "NULL breakdown → own bucket" decision when
+> breakdown edge behavior is formalized; no change here.
+> Reviewer suggestion (2026-07-14) → E21: the adversarial counts are asserted-by-fiat against the fake
+> (honest, NOT tautological — the byte-equal `CANONICAL_FUNNEL_SQL` + predicate-presence/absence tests
+> WOULD fail on a wrong predicate), but they don't prove the SQL COMPUTES the counts. The reviewer
+> closed that gap out-of-band against real Postgres 16.14; E21's real-Postgres acceptance test should
+> re-run these exact funnel scenarios so count-faithfulness is machine-checked, not reviewer-checked.
+
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files changed:** TS `warehouse-sql.ts` (+ `buildFunnelSql`, `buildFunnelRows`), `warehouse-query-adapter.ts` (+ `.test.ts`); Python `warehouse_sql.py` (+ `build_funnel_sql`, `build_funnel_rows`), `warehouse_adapter.py` (+ `tests/test_warehouse_query_adapter.py`)
+- **New public API:** none consumer-facing (adapter-internal SQL-gen; reached via `createQueryClient`)
+- **Tests added:** TS 14 + Python 14 funnel tests — SQL shape (t0 anchor, strict `>`, inclusive `<=`, `< …` absent, `count(DISTINCT …)`, `WITH RECURSIVE`, params), structural-constancy across step arity, byte-identical `CANONICAL_FUNNEL_SQL`, **adversarial** (out-of-order, boundary-inclusive at/one-past, partial-completion monotonicity), conversionRate guard (zero-first all-zero + normal), per-group breakdown, no-engine-field key seal — all against the E17-S3 fake
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP (no criticals) — funnel semantics independently confirmed against real Postgres 16.14 (strict-ordering tie-leak avoided, non-rolling window trap survived, greedy-optimal); 2 forward suggestions captured above
+- **Cross-story seams exposed:** funnel SQL is a single `WITH RECURSIVE` walk (structurally constant across step count) reusing S1's `assembleResult` + `WarehouseQuery`; `conversionRate` computed in the builder (guarded count[0]===0⇒0); `event` from `spec.steps`; breakdown anchored to each actor's step-0 value; step names bound as params. **S3 (retention) + S4 (raw_query) add their builders to the same `warehouse-sql` module** — run serially (shared files). **E21:** re-run funnel (+ retention) adversarial scenarios against real Postgres.

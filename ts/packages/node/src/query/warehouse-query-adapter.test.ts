@@ -3,7 +3,7 @@ import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { expect, expectTypeOf, test } from 'vitest';
 import type { DbExecuteResult } from './db-execute';
 import { createFakeDbExecute } from './db-execute.fixtures';
-import type { AnalyticsQueryClient } from './query-client';
+import type { AnalyticsQueryClient, FunnelSpec } from './query-client';
 import {
   WarehouseQueryAdapter,
   createWarehouseQueryAdapter,
@@ -86,15 +86,12 @@ test('the adapter never sees a DSN — its only injected field is the opaque DbE
 
 // Called through the AnalyticsQueryClient<TX> interface — the bar-A surface a consumer sees.
 
-// S1 fills `trend`/`uniqueCount`; `funnel`/`retention`/`rawQuery` remain S2–S4 fill-in seats and
-// still throw the neutral not-implemented error.
+// S1 fills `trend`/`uniqueCount`; S2 fills `funnel`; `retention`/`rawQuery` remain S3–S4 fill-in
+// seats and still throw the neutral not-implemented error.
 
 test('the still-unimplemented methods reject with the neutral not-implemented error (no vendor leak)', async () => {
   const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fakeExec() });
 
-  await expect(
-    client.funnel({ steps: ['signed_up', 'order_placed'], within: { value: 7, unit: 'day' } })
-  ).rejects.toThrow(NOT_IMPLEMENTED);
   await expect(
     client.retention({
       cohortEvent: 'signed_up',
@@ -109,7 +106,6 @@ test('the still-unimplemented methods reject with the neutral not-implemented er
 test('the not-implemented error message names no vendor', async () => {
   const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fakeExec() });
   for (const run of [
-    () => client.funnel({ steps: ['signed_up'], within: { value: 1, unit: 'day' } }),
     () => client.retention({ cohortEvent: 'signed_up', returnEvent: 'order_placed', periods: 1, granularity: 'day' }),
     () => client.rawQuery('SELECT 1'),
   ]) {
@@ -357,4 +353,342 @@ test('a breakdown key with an embedded single quote is SQL-escaped in the JSONB 
 
   // The single quote is doubled per the SQL standard — the same escaping the view generator uses.
   expect(fake.calls[0].sql).toContain("properties ->> 'o''brien'");
+});
+
+// --- S2: funnel COMPUTES through the injected DbExecute seam ---------------------------------
+
+// The funnel SQL returns N rows (one per step): `(step_index, event_name, actor_count)`. Each
+// adversarial scenario is driven by handing the fake the step-count rows THAT scenario's SQL
+// would return — the SQL's ordering/window/boundary logic is what produces those counts; the
+// adapter + flat-row builder are what this suite exercises directly (SQL shape is asserted
+// separately). The two-step signed_up → order_placed funnel is the running example.
+
+const twoStepFunnelSpec: FunnelSpec<TX> = {
+  steps: ['signed_up', 'order_placed'],
+  within: { value: 7, unit: 'day' },
+};
+
+// A many-event taxonomy shape for the multi-step funnel cases (the shared S1 taxonomy is two-event
+// and its key set is pinned by an S1 assertion, so it is not widened here). Only the type is
+// needed — no runtime taxonomy value — so it is expressed as a `ShapeOf` over a literal decl.
+type TX3 = ShapeOf<{
+  events: {
+    signed_up: Record<string, never>;
+    order_placed: { amount: 'number' };
+    document_uploaded: Record<string, never>;
+    a: Record<string, never>;
+    b: Record<string, never>;
+    c: Record<string, never>;
+  };
+}>;
+
+// step-0 count 1000, step-1 count 620 → conversionRate 1, 0.62 (matches funnelPlain contract).
+const funnelPlainResult: DbExecuteResult = {
+  columns: [
+    { name: 'step_index', type: 'int4' },
+    { name: 'event_name', type: 'text' },
+    { name: 'actor_count', type: 'int8' },
+  ],
+  rows: [
+    [0, 'signed_up', 1000],
+    [1, 'order_placed', 620],
+  ],
+};
+
+test('funnel COMPUTES: routes SQL through the seam, returns FunnelStepRows with spec-sourced event + computed conversionRate', async () => {
+  const fake = createFakeDbExecute(funnelPlainResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.funnel(twoStepFunnelSpec);
+
+  expect(result.rows).toEqual([
+    { step: 0, event: 'signed_up', count: 1000, conversionRate: 1 },
+    { step: 1, event: 'order_placed', count: 620, conversionRate: 0.62 },
+  ]);
+  // Each step's event name is a positional param, in step order.
+  expect(fake.calls).toHaveLength(1);
+  expect(fake.calls[0].params).toEqual(['signed_up', 'order_placed']);
+});
+
+test('funnel makes ONE DbExecute call with a SINGLE statement (not query-per-step)', async () => {
+  const fake = createFakeDbExecute(funnelPlainResult);
+  const client: AnalyticsQueryClient<TX3> = createWarehouseQueryAdapter<TX3>({ dbExecute: fake.execute });
+
+  await client.funnel({ steps: ['signed_up', 'order_placed', 'document_uploaded'], within: { value: 7, unit: 'day' } });
+
+  expect(fake.calls).toHaveLength(1);
+  // A single statement — no semicolon-joined batch of per-step queries.
+  expect(fake.calls[0].sql.split(';').filter((s) => s.trim().length > 0)).toHaveLength(1);
+});
+
+test('funnel SQL: per-actor ordered walk anchored at t0, strict ordering, INCLUSIVE window, distinct-actor counts', async () => {
+  const fake = createFakeDbExecute(funnelPlainResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  await client.funnel(twoStepFunnelSpec);
+
+  const sql = fake.calls[0].sql;
+  // t0 anchored at the step-0 event's earliest timestamp per actor.
+  expect(sql).toContain('min(timestamp) AS t0');
+  expect(sql).toContain('FROM matched WHERE step_index = 0');
+  // Strict step-to-step ordering: the next step must be STRICTLY after the prior reached_at.
+  expect(sql).toContain('m.timestamp > w.reached_at');
+  // Window measured from step 0 and INCLUSIVE upper bound (closed [t0, t0 + within], `<=`).
+  expect(sql).toContain("m.timestamp <= w.t0 + interval '7 day'");
+  // Distinct-actor counts (the S1 review's positive-assertion note: assert the intended shape,
+  // NOT a `not.toContain('count(*)')` negative — funnel legitimately uses count(distinct …)).
+  expect(sql).toContain('count(DISTINCT w.distinct_id) AS actor_count');
+  // Single recursive statement over the typed view, never the base events table.
+  expect(sql).toContain('WITH RECURSIVE');
+  expect(sql).toContain('FROM events_typed e');
+  expect(sql).not.toContain('FROM events ');
+  // Steps bound as positional params (never inlined event literals).
+  expect(sql).toContain('VALUES (0, $1), (1, $2)');
+});
+
+test('funnel SQL is structurally constant across step count (only VALUES rows + recursion bound vary)', async () => {
+  const fake = createFakeDbExecute(funnelPlainResult);
+  const client: AnalyticsQueryClient<TX3> = createWarehouseQueryAdapter<TX3>({ dbExecute: fake.execute });
+
+  await client.funnel({ steps: ['a', 'b'], within: { value: 7, unit: 'day' } });
+  await client.funnel({ steps: ['a', 'b', 'c'], within: { value: 7, unit: 'day' } });
+
+  const twoStep = fake.calls[0].sql;
+  const threeStep = fake.calls[1].sql;
+  // The step count only shifts the VALUES rows and the `< N` recursion bound; the CTE body is
+  // otherwise byte-identical between arities.
+  expect(twoStep).toContain('VALUES (0, $1), (1, $2)');
+  expect(twoStep).toContain('WHERE w.step_index + 1 < 2');
+  expect(threeStep).toContain('VALUES (0, $1), (1, $2), (2, $3)');
+  expect(threeStep).toContain('WHERE w.step_index + 1 < 3');
+  // The recursive-term chase line is identical regardless of arity.
+  expect(twoStep).toContain('    (SELECT min(m.timestamp) FROM matched m');
+  expect(threeStep).toContain('    (SELECT min(m.timestamp) FROM matched m');
+});
+
+// ADVERSARIAL — out-of-order: an actor firing step 2's event before step 1's does NOT complete
+// the funnel. The SQL's `m.timestamp > w.reached_at` strict clause excludes them from step 1's
+// reach; the fake returns the counts that SQL would produce (step-1 count reflects only in-order
+// actors). Here 1000 reached step 0, only 400 completed step 1 in order — the out-of-order actor
+// is NOT among the 400.
+test('funnel ADVERSARIAL out-of-order: step-2-before-step-1 does not count toward the funnel (strict ordering)', async () => {
+  const outOfOrderResult: DbExecuteResult = {
+    columns: [{ name: 'step_index' }, { name: 'event_name' }, { name: 'actor_count' }],
+    rows: [
+      [0, 'signed_up', 1000],
+      [1, 'order_placed', 400],
+    ],
+  };
+  const fake = createFakeDbExecute(outOfOrderResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.funnel(twoStepFunnelSpec);
+
+  expect(result.rows).toEqual([
+    { step: 0, event: 'signed_up', count: 1000, conversionRate: 1 },
+    { step: 1, event: 'order_placed', count: 400, conversionRate: 0.4 },
+  ]);
+  // The strict-ordering predicate is present in the emitted SQL (what excludes the out-of-order actor).
+  expect(fake.calls[0].sql).toContain('m.timestamp > w.reached_at');
+});
+
+// ADVERSARIAL — boundary INCLUSIVE: completion exactly at t0 + within COUNTS; one tick past does
+// NOT. The `<=` predicate is what includes the boundary actor. The two canned results model the
+// two SQL outcomes: at-boundary → the actor is counted (step-1 count includes them); one-tick-past
+// → excluded (step-1 count is one lower).
+test('funnel ADVERSARIAL boundary: completion exactly at t0 + within COUNTS (inclusive `<=` upper bound)', async () => {
+  const atBoundaryResult: DbExecuteResult = {
+    columns: [{ name: 'step_index' }, { name: 'event_name' }, { name: 'actor_count' }],
+    rows: [
+      [0, 'signed_up', 10],
+      [1, 'order_placed', 10],
+    ],
+  };
+  const fake = createFakeDbExecute(atBoundaryResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.funnel(twoStepFunnelSpec);
+
+  expect(result.rows[1]).toEqual({ step: 1, event: 'order_placed', count: 10, conversionRate: 1 });
+  // The upper bound is the closed interval `<=` (INCLUSIVE), not `<`.
+  expect(fake.calls[0].sql).toContain("m.timestamp <= w.t0 + interval '7 day'");
+  expect(fake.calls[0].sql).not.toContain("m.timestamp < w.t0 + interval '7 day'");
+});
+
+test('funnel ADVERSARIAL boundary: completion one tick past t0 + within does NOT count', async () => {
+  const oneTickPastResult: DbExecuteResult = {
+    columns: [{ name: 'step_index' }, { name: 'event_name' }, { name: 'actor_count' }],
+    rows: [
+      [0, 'signed_up', 10],
+      [1, 'order_placed', 9],
+    ],
+  };
+  const fake = createFakeDbExecute(oneTickPastResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.funnel(twoStepFunnelSpec);
+
+  // The one actor whose step 1 landed a tick past the window is excluded: 9, not 10.
+  expect(result.rows[1]).toEqual({ step: 1, event: 'order_placed', count: 9, conversionRate: 0.9 });
+});
+
+// ADVERSARIAL — partial completion: an actor reaching step 1 but not step 2 counts toward step 1,
+// not step 2; per-step counts are monotonically non-increasing.
+test('funnel ADVERSARIAL partial completion: reaching step 1 not step 2 counts toward step 1; counts non-increasing', async () => {
+  const partialResult: DbExecuteResult = {
+    columns: [{ name: 'step_index' }, { name: 'event_name' }, { name: 'actor_count' }],
+    rows: [
+      [0, 'signed_up', 1000],
+      [1, 'order_placed', 620],
+      [2, 'document_uploaded', 410],
+    ],
+  };
+  const fake = createFakeDbExecute(partialResult);
+  const client: AnalyticsQueryClient<TX3> = createWarehouseQueryAdapter<TX3>({ dbExecute: fake.execute });
+
+  const result = await client.funnel({
+    steps: ['signed_up', 'order_placed', 'document_uploaded'],
+    within: { value: 7, unit: 'day' },
+  });
+
+  expect(result.rows).toEqual([
+    { step: 0, event: 'signed_up', count: 1000, conversionRate: 1 },
+    { step: 1, event: 'order_placed', count: 620, conversionRate: 0.62 },
+    { step: 2, event: 'document_uploaded', count: 410, conversionRate: 0.41 },
+  ]);
+  // Per-step monotonic non-increase holds (an actor who dropped at step 1 is NOT in step 2's count).
+  const counts = result.rows.map((r) => r.count);
+  for (let i = 1; i < counts.length; i++) {
+    expect(counts[i]).toBeLessThanOrEqual(counts[i - 1]);
+  }
+});
+
+// ADVERSARIAL — conversionRate guard: count[0] === 0 ⇒ conversionRate 0 on EVERY step (no
+// NaN/Infinity leak). Mirrors the HTTP `funnelZeroFirstStep` fixture exactly.
+test('funnel conversionRate guard: count[0] === 0 ⇒ conversionRate 0 on every step', async () => {
+  const zeroFirstResult: DbExecuteResult = {
+    columns: [{ name: 'step_index' }, { name: 'event_name' }, { name: 'actor_count' }],
+    rows: [
+      [0, 'signed_up', 0],
+      [1, 'order_placed', 0],
+    ],
+  };
+  const fake = createFakeDbExecute(zeroFirstResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.funnel(twoStepFunnelSpec);
+
+  expect(result.rows).toEqual([
+    { step: 0, event: 'signed_up', count: 0, conversionRate: 0 },
+    { step: 1, event: 'order_placed', count: 0, conversionRate: 0 },
+  ]);
+  // No NaN/Infinity leaked through the guard.
+  for (const row of result.rows) {
+    expect(Number.isFinite(row.conversionRate)).toBe(true);
+  }
+});
+
+test('funnel conversionRate: normal ratios are count[step] / count[0]', async () => {
+  const fake = createFakeDbExecute(funnelPlainResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.funnel(twoStepFunnelSpec);
+
+  expect(result.rows[0].conversionRate).toBe(1);
+  expect(result.rows[1].conversionRate).toBeCloseTo(0.62, 10);
+});
+
+// With a breakdown: SQL groups per breakdown value, conversionRate is PER-GROUP, and the breakdown
+// is stringified onto every row. Each group's step-0 count is that group's base.
+test('funnel with a breakdown: per-group conversionRate, breakdown on every row, JSONB-path GROUP BY', async () => {
+  const breakdownResult: DbExecuteResult = {
+    columns: [
+      { name: 'step_index' },
+      { name: 'event_name' },
+      { name: 'breakdown' },
+      { name: 'actor_count' },
+    ],
+    rows: [
+      [0, 'signed_up', 'pro', 800],
+      [1, 'order_placed', 'pro', 400],
+      [0, 'signed_up', 'free', 200],
+      [1, 'order_placed', 'free', 50],
+    ],
+  };
+  const fake = createFakeDbExecute(breakdownResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.funnel({ ...twoStepFunnelSpec, breakdown: 'plan' });
+
+  expect(result.rows).toEqual([
+    { step: 0, event: 'signed_up', count: 800, conversionRate: 1, breakdown: 'pro' },
+    { step: 1, event: 'order_placed', count: 400, conversionRate: 0.5, breakdown: 'pro' },
+    { step: 0, event: 'signed_up', count: 200, conversionRate: 1, breakdown: 'free' },
+    { step: 1, event: 'order_placed', count: 50, conversionRate: 0.25, breakdown: 'free' },
+  ]);
+  const sql = fake.calls[0].sql;
+  expect(sql).toContain("properties ->> 'plan' AS bd");
+  expect(sql).toContain('GROUP BY s.step_index, s.event_name, w.bd');
+  // The breakdown value is anchored at each actor's step-0 event (one bucket per actor).
+  expect(sql).toContain('(array_agg(bd ORDER BY timestamp))[1] AS bd');
+});
+
+test('funnel rows carry no engine wire field (no average_conversion_time / converted_people_url / breakdown_value)', async () => {
+  const fake = createFakeDbExecute(funnelPlainResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.funnel(twoStepFunnelSpec);
+
+  for (const row of result.rows) {
+    const keys = new Set(Object.keys(row));
+    expect(keys).toEqual(new Set(['step', 'event', 'count', 'conversionRate']));
+    for (const engineField of ['average_conversion_time', 'converted_people_url', 'breakdown_value']) {
+      expect(row).not.toHaveProperty(engineField);
+    }
+  }
+});
+
+// The exact canonical funnel SQL string for the plain two-step case. MIRRORED byte-for-byte in the
+// Python warehouse adapter test — the two assertions together pin cross-tree funnel SQL parity.
+const CANONICAL_FUNNEL_SQL = [
+  'WITH RECURSIVE steps(step_index, event_name) AS (',
+  '  VALUES (0, $1), (1, $2)',
+  '),',
+  'matched AS (',
+  '  SELECT e.distinct_id, s.step_index, e.timestamp',
+  '  FROM events_typed e',
+  '  JOIN steps s ON e.event = s.event_name',
+  '),',
+  'anchor AS (',
+  '  SELECT distinct_id, min(timestamp) AS t0',
+  '  FROM matched WHERE step_index = 0',
+  '  GROUP BY distinct_id',
+  '),',
+  'walk AS (',
+  '  SELECT a.distinct_id, 0 AS step_index, a.t0 AS reached_at, a.t0',
+  '  FROM anchor a',
+  '  UNION ALL',
+  '  SELECT w.distinct_id, w.step_index + 1,',
+  '    (SELECT min(m.timestamp) FROM matched m',
+  "      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND m.timestamp > w.reached_at AND m.timestamp <= w.t0 + interval '7 day'),",
+  '    w.t0',
+  '  FROM walk w',
+  '  WHERE w.step_index + 1 < 2',
+  '    AND EXISTS (SELECT 1 FROM matched m',
+  "      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND m.timestamp > w.reached_at AND m.timestamp <= w.t0 + interval '7 day')",
+  ')',
+  'SELECT s.step_index, s.event_name, count(DISTINCT w.distinct_id) AS actor_count',
+  'FROM steps s',
+  '  LEFT JOIN walk w ON w.step_index = s.step_index AND w.reached_at IS NOT NULL',
+  'GROUP BY s.step_index, s.event_name',
+  'ORDER BY s.step_index',
+].join('\n');
+
+test('the generated funnel SQL matches the canonical cross-tree string (byte-identical to Python)', async () => {
+  const fake = createFakeDbExecute(funnelPlainResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  await client.funnel(twoStepFunnelSpec);
+
+  expect(fake.calls[0].sql).toBe(CANONICAL_FUNNEL_SQL);
 });

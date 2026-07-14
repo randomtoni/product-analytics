@@ -67,10 +67,8 @@ def test_both_query_adapters_satisfy_one_protocol_unchanged() -> None:
 
 
 def test_the_still_unimplemented_primitives_raise_a_neutral_not_implemented_error() -> None:
-    # S1 fills trend/unique_count; funnel/retention/raw_query remain S2–S4 fill-in seats.
+    # S1 fills trend/unique_count; S2 fills funnel; retention/raw_query remain S3–S4 fill-in seats.
     adapter = WarehouseQueryAdapter(db_execute=_FAKE_EXEC)
-    with pytest.raises(NotImplementedError, match="warehouse query adapter is not yet implemented"):
-        adapter.funnel(FunnelSpec(steps=["a", "b"], within=Duration(1, "day")))
     with pytest.raises(NotImplementedError, match="warehouse query adapter is not yet implemented"):
         adapter.retention(
             RetentionSpec(cohort_event="a", return_event="b", periods=3, granularity="day")
@@ -414,3 +412,294 @@ def test_warehouse_result_omits_from_cache_matching_the_ts_absent_key() -> None:
     assert result.from_cache is None
     # And it is not spuriously serialized as a set value when the model is dumped by field-set.
     assert "from_cache" not in result.model_dump(exclude_none=True)
+
+
+# --- S2: funnel COMPUTES through the injected DbExecute seam ---------------------------------
+
+# The funnel SQL returns N rows (one per step): (step_index, event_name, actor_count). Each
+# adversarial scenario is driven by handing the fake the step-count rows THAT scenario's SQL would
+# return — the SQL's ordering/window/boundary logic is what produces those counts; the adapter +
+# flat-row builder are what this suite exercises directly (SQL shape is asserted separately).
+
+from analytics_kit import FunnelStepRow  # noqa: E402 — grouped with the S2 block it belongs to
+
+_TWO_STEP_FUNNEL_SPEC = FunnelSpec(steps=["signed_up", "order_placed"], within=Duration(7, "day"))
+
+# step-0 count 1000, step-1 count 620 → conversion_rate 1, 0.62 (matches funnel_plain contract).
+_FUNNEL_PLAIN_RESULT = DbExecuteResult(
+    columns=[
+        DbColumn(name="step_index", type="int4"),
+        DbColumn(name="event_name", type="text"),
+        DbColumn(name="actor_count", type="int8"),
+    ],
+    rows=[(0, "signed_up", 1000), (1, "order_placed", 620)],
+)
+
+
+def test_funnel_computes_routes_sql_through_seam_returns_rows_with_spec_event_and_computed_rate() -> None:
+    fake = FakeDbExecute(_FUNNEL_PLAIN_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.funnel(_TWO_STEP_FUNNEL_SPEC)
+
+    assert result.rows == [
+        FunnelStepRow(step=0, event="signed_up", count=1000, conversion_rate=1.0),
+        FunnelStepRow(step=1, event="order_placed", count=620, conversion_rate=0.62),
+    ]
+    # Each step's event name is a positional param, in step order.
+    assert len(fake.calls) == 1
+    assert fake.calls[0].params == ["signed_up", "order_placed"]
+
+
+def test_funnel_makes_one_db_execute_call_with_a_single_statement() -> None:
+    fake = FakeDbExecute(_FUNNEL_PLAIN_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    adapter.funnel(
+        FunnelSpec(steps=["signed_up", "order_placed", "document_uploaded"], within=Duration(7, "day"))
+    )
+
+    assert len(fake.calls) == 1
+    # A single statement — no semicolon-joined batch of per-step queries.
+    assert len([s for s in fake.calls[0].sql.split(";") if s.strip()]) == 1
+
+
+def test_funnel_sql_anchors_t0_enforces_strict_ordering_inclusive_window_distinct_counts() -> None:
+    fake = FakeDbExecute(_FUNNEL_PLAIN_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    adapter.funnel(_TWO_STEP_FUNNEL_SPEC)
+
+    sql = fake.calls[0].sql
+    # t0 anchored at the step-0 event's earliest timestamp per actor.
+    assert "min(timestamp) AS t0" in sql
+    assert "FROM matched WHERE step_index = 0" in sql
+    # Strict step-to-step ordering: the next step must be STRICTLY after the prior reached_at.
+    assert "m.timestamp > w.reached_at" in sql
+    # Window measured from step 0 and INCLUSIVE upper bound (closed [t0, t0 + within], `<=`).
+    assert "m.timestamp <= w.t0 + interval '7 day'" in sql
+    # Distinct-actor counts (assert the intended shape positively — funnel legitimately uses
+    # count(distinct …), so no negative `count(*)` assertion).
+    assert "count(DISTINCT w.distinct_id) AS actor_count" in sql
+    # Single recursive statement over the typed view, never the base events table.
+    assert "WITH RECURSIVE" in sql
+    assert "FROM events_typed e" in sql
+    assert "FROM events\n" not in sql
+    # Steps bound as positional params (never inlined event literals).
+    assert "VALUES (0, $1), (1, $2)" in sql
+
+
+def test_funnel_sql_is_structurally_constant_across_step_count() -> None:
+    fake = FakeDbExecute(_FUNNEL_PLAIN_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    adapter.funnel(FunnelSpec(steps=["a", "b"], within=Duration(7, "day")))
+    adapter.funnel(FunnelSpec(steps=["a", "b", "c"], within=Duration(7, "day")))
+
+    two_step = fake.calls[0].sql
+    three_step = fake.calls[1].sql
+    # The step count only shifts the VALUES rows and the `< N` recursion bound; the CTE body is
+    # otherwise byte-identical between arities.
+    assert "VALUES (0, $1), (1, $2)" in two_step
+    assert "WHERE w.step_index + 1 < 2" in two_step
+    assert "VALUES (0, $1), (1, $2), (2, $3)" in three_step
+    assert "WHERE w.step_index + 1 < 3" in three_step
+    # The recursive-term chase line is identical regardless of arity.
+    assert "    (SELECT min(m.timestamp) FROM matched m" in two_step
+    assert "    (SELECT min(m.timestamp) FROM matched m" in three_step
+
+
+def test_funnel_adversarial_out_of_order_does_not_count_toward_the_funnel() -> None:
+    # An actor firing step 2's event before step 1's does NOT complete the funnel. The SQL's strict
+    # `m.timestamp > w.reached_at` clause excludes them; the fake returns the counts that SQL would
+    # produce — 1000 reached step 0, only 400 completed step 1 in order.
+    out_of_order = DbExecuteResult(
+        columns=[DbColumn(name="step_index"), DbColumn(name="event_name"), DbColumn(name="actor_count")],
+        rows=[(0, "signed_up", 1000), (1, "order_placed", 400)],
+    )
+    fake = FakeDbExecute(out_of_order)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.funnel(_TWO_STEP_FUNNEL_SPEC)
+
+    assert result.rows == [
+        FunnelStepRow(step=0, event="signed_up", count=1000, conversion_rate=1.0),
+        FunnelStepRow(step=1, event="order_placed", count=400, conversion_rate=0.4),
+    ]
+    assert "m.timestamp > w.reached_at" in fake.calls[0].sql
+
+
+def test_funnel_adversarial_boundary_completion_exactly_at_t0_plus_within_counts() -> None:
+    at_boundary = DbExecuteResult(
+        columns=[DbColumn(name="step_index"), DbColumn(name="event_name"), DbColumn(name="actor_count")],
+        rows=[(0, "signed_up", 10), (1, "order_placed", 10)],
+    )
+    fake = FakeDbExecute(at_boundary)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.funnel(_TWO_STEP_FUNNEL_SPEC)
+
+    assert result.rows[1] == FunnelStepRow(step=1, event="order_placed", count=10, conversion_rate=1.0)
+    # The upper bound is the closed interval `<=` (INCLUSIVE), not `<`.
+    assert "m.timestamp <= w.t0 + interval '7 day'" in fake.calls[0].sql
+    assert "m.timestamp < w.t0 + interval '7 day'" not in fake.calls[0].sql
+
+
+def test_funnel_adversarial_boundary_completion_one_tick_past_does_not_count() -> None:
+    one_tick_past = DbExecuteResult(
+        columns=[DbColumn(name="step_index"), DbColumn(name="event_name"), DbColumn(name="actor_count")],
+        rows=[(0, "signed_up", 10), (1, "order_placed", 9)],
+    )
+    fake = FakeDbExecute(one_tick_past)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.funnel(_TWO_STEP_FUNNEL_SPEC)
+
+    # The one actor whose step 1 landed a tick past the window is excluded: 9, not 10.
+    assert result.rows[1] == FunnelStepRow(step=1, event="order_placed", count=9, conversion_rate=0.9)
+
+
+def test_funnel_adversarial_partial_completion_counts_toward_step_1_and_stays_non_increasing() -> None:
+    partial = DbExecuteResult(
+        columns=[DbColumn(name="step_index"), DbColumn(name="event_name"), DbColumn(name="actor_count")],
+        rows=[(0, "signed_up", 1000), (1, "order_placed", 620), (2, "document_uploaded", 410)],
+    )
+    fake = FakeDbExecute(partial)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.funnel(
+        FunnelSpec(steps=["signed_up", "order_placed", "document_uploaded"], within=Duration(7, "day"))
+    )
+
+    assert result.rows == [
+        FunnelStepRow(step=0, event="signed_up", count=1000, conversion_rate=1.0),
+        FunnelStepRow(step=1, event="order_placed", count=620, conversion_rate=0.62),
+        FunnelStepRow(step=2, event="document_uploaded", count=410, conversion_rate=0.41),
+    ]
+    # Per-step monotonic non-increase holds.
+    counts = [row.count for row in result.rows]
+    assert all(counts[i] <= counts[i - 1] for i in range(1, len(counts)))
+
+
+def test_funnel_conversion_rate_guard_zero_first_step_yields_zero_on_every_step() -> None:
+    zero_first = DbExecuteResult(
+        columns=[DbColumn(name="step_index"), DbColumn(name="event_name"), DbColumn(name="actor_count")],
+        rows=[(0, "signed_up", 0), (1, "order_placed", 0)],
+    )
+    fake = FakeDbExecute(zero_first)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.funnel(_TWO_STEP_FUNNEL_SPEC)
+
+    assert result.rows == [
+        FunnelStepRow(step=0, event="signed_up", count=0, conversion_rate=0.0),
+        FunnelStepRow(step=1, event="order_placed", count=0, conversion_rate=0.0),
+    ]
+    # No NaN/inf leaked through the guard.
+    import math
+
+    for row in result.rows:
+        assert math.isfinite(row.conversion_rate)
+
+
+def test_funnel_conversion_rate_normal_ratios_are_count_step_over_count_zero() -> None:
+    fake = FakeDbExecute(_FUNNEL_PLAIN_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.funnel(_TWO_STEP_FUNNEL_SPEC)
+
+    assert result.rows[0].conversion_rate == 1.0
+    assert result.rows[1].conversion_rate == pytest.approx(0.62)
+
+
+def test_funnel_with_a_breakdown_per_group_rate_breakdown_on_every_row_jsonb_group_by() -> None:
+    breakdown_result = DbExecuteResult(
+        columns=[
+            DbColumn(name="step_index"),
+            DbColumn(name="event_name"),
+            DbColumn(name="breakdown"),
+            DbColumn(name="actor_count"),
+        ],
+        rows=[
+            (0, "signed_up", "pro", 800),
+            (1, "order_placed", "pro", 400),
+            (0, "signed_up", "free", 200),
+            (1, "order_placed", "free", 50),
+        ],
+    )
+    fake = FakeDbExecute(breakdown_result)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.funnel(
+        FunnelSpec(steps=["signed_up", "order_placed"], within=Duration(7, "day"), breakdown="plan")
+    )
+
+    assert result.rows == [
+        FunnelStepRow(step=0, event="signed_up", count=800, conversion_rate=1.0, breakdown="pro"),
+        FunnelStepRow(step=1, event="order_placed", count=400, conversion_rate=0.5, breakdown="pro"),
+        FunnelStepRow(step=0, event="signed_up", count=200, conversion_rate=1.0, breakdown="free"),
+        FunnelStepRow(step=1, event="order_placed", count=50, conversion_rate=0.25, breakdown="free"),
+    ]
+    sql = fake.calls[0].sql
+    assert "properties ->> 'plan' AS bd" in sql
+    assert "GROUP BY s.step_index, s.event_name, w.bd" in sql
+    # The breakdown value is anchored at each actor's step-0 event (one bucket per actor).
+    assert "(array_agg(bd ORDER BY timestamp))[1] AS bd" in sql
+
+
+def test_funnel_rows_carry_no_engine_wire_field() -> None:
+    fake = FakeDbExecute(_FUNNEL_PLAIN_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.funnel(_TWO_STEP_FUNNEL_SPEC)
+
+    # The frozen FunnelStepRow dataclass admits only step/event/count/conversion_rate/breakdown —
+    # no engine wire field can attach.
+    for row in result.rows:
+        assert set(vars(row).keys()) == {"step", "event", "count", "conversion_rate", "breakdown"}
+        for engine_field in ("average_conversion_time", "converted_people_url", "breakdown_value"):
+            assert not hasattr(row, engine_field)
+
+
+# The exact canonical funnel SQL string for the plain two-step case. MIRRORED byte-for-byte in the
+# TS warehouse adapter test — the two assertions together pin cross-tree funnel SQL parity.
+_CANONICAL_FUNNEL_SQL = (
+    "WITH RECURSIVE steps(step_index, event_name) AS (\n"
+    "  VALUES (0, $1), (1, $2)\n"
+    "),\n"
+    "matched AS (\n"
+    "  SELECT e.distinct_id, s.step_index, e.timestamp\n"
+    "  FROM events_typed e\n"
+    "  JOIN steps s ON e.event = s.event_name\n"
+    "),\n"
+    "anchor AS (\n"
+    "  SELECT distinct_id, min(timestamp) AS t0\n"
+    "  FROM matched WHERE step_index = 0\n"
+    "  GROUP BY distinct_id\n"
+    "),\n"
+    "walk AS (\n"
+    "  SELECT a.distinct_id, 0 AS step_index, a.t0 AS reached_at, a.t0\n"
+    "  FROM anchor a\n"
+    "  UNION ALL\n"
+    "  SELECT w.distinct_id, w.step_index + 1,\n"
+    "    (SELECT min(m.timestamp) FROM matched m\n"
+    "      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND m.timestamp > w.reached_at AND m.timestamp <= w.t0 + interval '7 day'),\n"
+    "    w.t0\n"
+    "  FROM walk w\n"
+    "  WHERE w.step_index + 1 < 2\n"
+    "    AND EXISTS (SELECT 1 FROM matched m\n"
+    "      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND m.timestamp > w.reached_at AND m.timestamp <= w.t0 + interval '7 day')\n"
+    ")\n"
+    "SELECT s.step_index, s.event_name, count(DISTINCT w.distinct_id) AS actor_count\n"
+    "FROM steps s\n"
+    "  LEFT JOIN walk w ON w.step_index = s.step_index AND w.reached_at IS NOT NULL\n"
+    "GROUP BY s.step_index, s.event_name\n"
+    "ORDER BY s.step_index"
+)
+
+
+def test_the_generated_funnel_sql_matches_the_canonical_cross_tree_string() -> None:
+    from analytics_kit.query.warehouse_sql import build_funnel_sql
+
+    query = build_funnel_sql(_TWO_STEP_FUNNEL_SPEC)
+    assert query.sql == _CANONICAL_FUNNEL_SQL

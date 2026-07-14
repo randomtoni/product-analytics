@@ -1,7 +1,19 @@
-import type { QueryColumn, QueryResult, TaxonomyShape, TrendRow } from '@randomtoni/analytics-kit';
+import type {
+  FunnelStepRow,
+  QueryColumn,
+  QueryResult,
+  TaxonomyShape,
+  TrendRow,
+} from '@randomtoni/analytics-kit';
 import type { DbColumn, DbExecuteResult } from './db-execute';
 import { EVENTS_VIEW } from './warehouse-schema';
-import type { Aggregation, Duration, TrendSpec, UniqueCountSpec } from './query-client';
+import type {
+  Aggregation,
+  Duration,
+  FunnelSpec,
+  TrendSpec,
+  UniqueCountSpec,
+} from './query-client';
 
 // The warehouse SQL-generation module: pure builder functions that emit Postgres SQL over the
 // E17 taxonomy-generated typed VIEW (`EVENTS_VIEW`), plus the shared assembler that normalizes a
@@ -145,6 +157,115 @@ export function buildUniqueCountSql<TX extends TaxonomyShape>(
   };
 }
 
+// The funnel window as a canonical Postgres interval literal — the ONE serialization both trees
+// emit byte-identically. Reuses S1's `INTERVAL_KEYWORD_FOR_WINDOW_UNIT` (minute/hour collapse to
+// `hour`), so `{ value: 7, unit: 'day' }` → `interval '7 day'`. This is the sole determinism risk
+// the architect flagged; pinning it to the same table trend uses removes it.
+function windowIntervalLiteral(within: Duration): string {
+  const keyword = INTERVAL_KEYWORD_FOR_WINDOW_UNIT[within.unit];
+  return `interval '${within.value} ${keyword}'`;
+}
+
+// The per-actor ordered-step window walk as a SINGLE Postgres statement, structurally CONSTANT
+// regardless of `steps.length` (only the VALUES rows + the recursion bound vary). It is a
+// recursive step-chase: `anchor` fixes each actor's `t0 = min(timestamp)` of the step-0 event;
+// the recursive term advances one step at a time, taking the EARLIEST next-step event that is
+// STRICTLY after the prior step's `reached_at` (strict ordering) and within the CLOSED window
+// `[t0, t0 + within]` (INCLUSIVE upper bound, `<=`). The aggregate lives in a scalar subquery,
+// not the recursive term's SELECT list — Postgres forbids the latter (architect-verified against
+// Postgres 18.4). The final SELECT LEFT JOINs the observed reaches back onto the step list so a
+// step no actor reached still emits a zero row; counts are `count(distinct distinct_id)`.
+//
+// `run_max`-style window forms are deliberately NOT used: a running `max(step_index)` cannot honor
+// the STRICT step-to-step inequality (equal-timestamp rows leak across), so it miscounts ties. The
+// variadic N-way self-join is the other rejected alternative (join count grows with step count).
+function funnelWalkSql(stepCount: number, within: Duration, breakdown: string | undefined): string {
+  const windowInterval = windowIntervalLiteral(within);
+  const valuesRows = Array.from({ length: stepCount }, (_, i) => `(${i}, $${i + 1})`).join(', ');
+  const withinStep = `m.timestamp > w.reached_at AND m.timestamp <= w.t0 + ${windowInterval}`;
+
+  if (breakdown === undefined) {
+    return [
+      'WITH RECURSIVE steps(step_index, event_name) AS (',
+      `  VALUES ${valuesRows}`,
+      '),',
+      'matched AS (',
+      '  SELECT e.distinct_id, s.step_index, e.timestamp',
+      `  FROM ${EVENTS_VIEW} e`,
+      '  JOIN steps s ON e.event = s.event_name',
+      '),',
+      'anchor AS (',
+      '  SELECT distinct_id, min(timestamp) AS t0',
+      '  FROM matched WHERE step_index = 0',
+      '  GROUP BY distinct_id',
+      '),',
+      'walk AS (',
+      '  SELECT a.distinct_id, 0 AS step_index, a.t0 AS reached_at, a.t0',
+      '  FROM anchor a',
+      '  UNION ALL',
+      '  SELECT w.distinct_id, w.step_index + 1,',
+      '    (SELECT min(m.timestamp) FROM matched m',
+      `      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND ${withinStep}),`,
+      '    w.t0',
+      '  FROM walk w',
+      `  WHERE w.step_index + 1 < ${stepCount}`,
+      '    AND EXISTS (SELECT 1 FROM matched m',
+      `      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND ${withinStep})`,
+      ')',
+      'SELECT s.step_index, s.event_name, count(DISTINCT w.distinct_id) AS actor_count',
+      'FROM steps s',
+      '  LEFT JOIN walk w ON w.step_index = s.step_index AND w.reached_at IS NOT NULL',
+      'GROUP BY s.step_index, s.event_name',
+      'ORDER BY s.step_index',
+    ].join('\n');
+  }
+
+  const breakdownPath = `properties ->> ${quoteLiteral(breakdown)}`;
+  return [
+    'WITH RECURSIVE steps(step_index, event_name) AS (',
+    `  VALUES ${valuesRows}`,
+    '),',
+    'matched AS (',
+    `  SELECT e.distinct_id, s.step_index, e.timestamp, ${breakdownPath} AS bd`,
+    `  FROM ${EVENTS_VIEW} e`,
+    '  JOIN steps s ON e.event = s.event_name',
+    '),',
+    'anchor AS (',
+    '  SELECT distinct_id, min(timestamp) AS t0, (array_agg(bd ORDER BY timestamp))[1] AS bd',
+    '  FROM matched WHERE step_index = 0',
+    '  GROUP BY distinct_id',
+    '),',
+    'walk AS (',
+    '  SELECT a.distinct_id, 0 AS step_index, a.t0 AS reached_at, a.t0, a.bd',
+    '  FROM anchor a',
+    '  UNION ALL',
+    '  SELECT w.distinct_id, w.step_index + 1,',
+    '    (SELECT min(m.timestamp) FROM matched m',
+    `      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND ${withinStep}),`,
+    '    w.t0, w.bd',
+    '  FROM walk w',
+    `  WHERE w.step_index + 1 < ${stepCount}`,
+    '    AND EXISTS (SELECT 1 FROM matched m',
+    `      WHERE m.distinct_id = w.distinct_id AND m.step_index = w.step_index + 1 AND ${withinStep})`,
+    ')',
+    'SELECT s.step_index, s.event_name, w.bd AS breakdown, count(DISTINCT w.distinct_id) AS actor_count',
+    'FROM steps s',
+    '  LEFT JOIN walk w ON w.step_index = s.step_index AND w.reached_at IS NOT NULL',
+    'GROUP BY s.step_index, s.event_name, w.bd',
+    'ORDER BY w.bd, s.step_index',
+  ].join('\n');
+}
+
+// The generated funnel SQL + positional params. Each step's event name is bound as a positional
+// param ($1..$N in step order); `within` is inlined as a canonical interval literal; the breakdown
+// key (when present) reaches the SQL as an escaped JSONB path, exactly as S1's trend breakdown does.
+export function buildFunnelSql<TX extends TaxonomyShape>(spec: FunnelSpec<TX>): WarehouseQuery {
+  return {
+    sql: funnelWalkSql(spec.steps.length, spec.within, spec.breakdown),
+    params: [...spec.steps],
+  };
+}
+
 // The index of each named column in a `DbExecuteResult` row, so a flat-row builder reads
 // positional cells by name once rather than hard-coding offsets. The warehouse SELECT names its
 // columns (`bucket`, `value`, optional `breakdown`), so the driver reports them in `columns`.
@@ -174,6 +295,71 @@ export function buildTrendRows(result: DbExecuteResult): ReadonlyArray<TrendRow>
     rows.push(breakdown === undefined ? { bucket, value } : { bucket, value, breakdown });
   }
   return rows;
+}
+
+// The funnel flat-row builder. The SQL yields one row per step (per breakdown group when broken
+// down): `(step_index, event_name, actor_count[, breakdown])`. This flattens those positional
+// count rows into neutral `FunnelStepRow`s — sourcing `event` from `spec.steps[step]` (the spec
+// knows the neutral name; NOT the HTTP adapter's `custom_name → name → action_id` wire walk) and
+// COMPUTING `conversionRate = count[step] / count[0]` per breakdown group, GUARDED so a zero
+// step-0 count yields `0` on every step (no NaN/Infinity leak). Identical guard rule to the HTTP
+// `buildFunnelRows` / the `funnelZeroFirstStep` fixture, so warehouse rows are byte-identical.
+//
+// Curried on `spec.steps` because both the `event` label and the per-group step-0 base come from
+// data the flat count rows do not carry (the event name column echoes the step name, but the
+// neutral source of truth is the spec). Reads cells by column name so a benign column reorder or
+// the absence of the `breakdown` column never mis-maps.
+export function buildFunnelRows(
+  steps: ReadonlyArray<string>
+): (result: DbExecuteResult) => ReadonlyArray<FunnelStepRow> {
+  return (result) => {
+    const stepIdx = columnIndex(result.columns, 'step_index');
+    const countIdx = columnIndex(result.columns, 'actor_count');
+    const breakdownIdx = columnIndex(result.columns, 'breakdown');
+
+    // Collect the count per (breakdown-group, step) so conversionRate divides within its group.
+    const countByGroupStep = new Map<string | undefined, Map<number, number>>();
+    const groupOrder: Array<string | undefined> = [];
+    for (const cells of result.rows) {
+      const step = cells[stepIdx];
+      const count = cells[countIdx];
+      if (typeof step !== 'number' || typeof count !== 'number') {
+        continue;
+      }
+      const breakdownCell = breakdownIdx === -1 ? undefined : cells[breakdownIdx];
+      const group =
+        breakdownCell === undefined || breakdownCell === null ? undefined : String(breakdownCell);
+      let stepCounts = countByGroupStep.get(group);
+      if (stepCounts === undefined) {
+        stepCounts = new Map<number, number>();
+        countByGroupStep.set(group, stepCounts);
+        groupOrder.push(group);
+      }
+      stepCounts.set(step, count);
+    }
+
+    const rows: FunnelStepRow[] = [];
+    for (const group of groupOrder) {
+      const stepCounts = countByGroupStep.get(group);
+      if (stepCounts === undefined) {
+        continue;
+      }
+      const firstCount = stepCounts.get(0) ?? 0;
+      for (const [step, count] of [...stepCounts.entries()].sort(([a], [b]) => a - b)) {
+        const event = steps[step];
+        if (event === undefined) {
+          continue;
+        }
+        const conversionRate = firstCount === 0 ? 0 : count / firstCount;
+        rows.push(
+          group === undefined
+            ? { step, event, count, conversionRate }
+            : { step, event, count, conversionRate, breakdown: group }
+        );
+      }
+    }
+    return rows;
+  };
 }
 
 // A flat-row builder: a `DbExecuteResult` in, the primitive's neutral rows out. Sibling of the
