@@ -138,6 +138,26 @@ independently of S2 (different tree), but after S1.
 from the neutral outcome. No real Django/FastAPI server spun up, no real Postgres (the S1 fake seam
 covers the write). Mirror how the middleware tests exercise `new_context` without a real request cycle.
 
+> Reviewer suggestion (2026-07-14) → follow-up (seam-level, bundle with the E21 driver-conformance work):
+> the mount's `except Exception` around the core call is broad because the `DbExecute` seam raises raw
+> driver exceptions unwrapped. Acceptable this slice (scoped to the one `receive()` call, logged, driver
+> message proven absent from the response). The clean fix is normalizing driver failures into a neutral
+> `DbExecuteError` AT THE SEAM (E17/E18-adjacent) so the mount catches a named type — same seam area as
+> E21's Python-driver `fetchall()` write-raise must-fix; do both together when the real driver lands.
+> Reviewer note (2026-07-14): `_flatten_headers` is last-wins on a repeated header name — not
+> load-bearing (the core reads only single-valued `Content-Encoding`); a conscious assumption for S3/S4.
+> Reviewer note (2026-07-14): no FastAPI-specific route factory ships — story-sanctioned (the pure-ASGI
+> app IS the FastAPI mount, proven via a real Starlette `Mount` E2E); S3's from-config factory is the
+> natural home for a FastAPI convenience wrapper if wanted.
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this on move to stories/5-done/. Do not hand-edit. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files added:** `python/src/analytics_kit/receiver/mount.py` (shared `translate`), `django_mount.py`, `asgi_mount.py`, `python/tests/test_receiver_mounts.py` (22 tests)
+- **Files changed:** `python/src/analytics_kit/receiver/__init__.py` (lazy `__getattr__` re-export)
+- **New public API:** `make_receiver_view(receiver) → Callable[[HttpRequest], HttpResponse]` (Django, behind `[django]`); `ReceiverASGIApp(receiver)` (terminal ASGI-3 app, framework-free) — both lazily re-exported from `analytics_kit.receiver`, role-named
+- **Tests added:** 22 — thin-wrapper (core decompresses, mount forwards `Content-Encoding`), Django lazy-`[django]` guard + neutral error, ASGI chunked-body drain + multi-valued-header flatten, 2xx/4xx/5xx mapping with driver-message-absent proof (fake DSN not in body), subprocess `MetaPathFinder` proofs that a bare import pulls no framework + ASGI serves with frameworks blocked, real Starlette `Mount` E2E
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP (no criticals) — genuinely thin, real (non-vacuous) lazy-import proofs, ASGI headers flattened + chunks drained, driver messages neutralized. 3 forward/non-blocking suggestions above
+- **Cross-story seams exposed:** **S3 layers its from-config factory onto the same `receiver/__init__` `_LAZY_EXPORTS` surface** (additive) and composes the DSN→driver→`Receiver`→mount chain. Mounts take an injected `Receiver` (holds the `DbExecute`); the shared `translate` helper (`mount.py`, internal) guarantees byte-identical status mapping across frameworks. **S4** mirrors this for the TS ecosystem (Express/Next/plain-handler). **E21/follow-up:** normalize driver failures into a neutral `DbExecuteError` at the seam alongside the `fetchall()` write-raise fix.
