@@ -21,7 +21,8 @@ now-working loop (S3) documents — the human-facing complement to the machine g
 ### In
 
 - A **self-host recipe doc** (the provider-swap walkthrough) covering the full stand-up, at TS/Python
-  parity:
+  parity — authored as a **new section in `ts/README.md` + a parity section in `python/README.md`**
+  (the shipped E11-S2 README-section convention; see the Technical note "Where the doc lives"):
   - Run the E17 migration (the shipped `events`-table + typed-view DDL) against the consumer's Neon.
   - Supply `warehouse_dsn` / `warehouseDsn` (the DSN config field) — the single self-host signal that
     selects the warehouse query adapter + the DSN-backed receiver.
@@ -52,7 +53,11 @@ now-working loop (S3) documents — the human-facing complement to the machine g
 ## Acceptance criteria
 
 - [ ] The recipe walks the full self-host stand-up: migration → `warehouse_dsn` → driver extra →
-      static flags → receiver mount, at TS/Python parity.
+      static flags → receiver mount, at TS/Python parity — as a section in `ts/README.md` and a
+      parity section in `python/README.md`.
+- [ ] The TS recipe section passes `pnpm neutrality-scan` (the README is a scanned doc target):
+      PostHog named only by neutral role, zero vendor/hostname/`$`-literal tokens; the Python parity
+      section is equally clean under the Python scan analog.
 - [ ] External prerequisites are named honestly (provisioning/config, not "config-only"), including
       the **PG ≥16 floor**.
 - [ ] PostHog is framed as one selectable backend, not the default and not the only one.
@@ -87,9 +92,26 @@ prerequisites + PG ≥16 floor + cast caveat), and `## Notes` (F — honest exte
   error/defect); the retention breakdown groups per `(distinct_id, cohort_bucket, value)`, so an actor
   with two breakdown values in a cohort week lands in two breakdown cohorts. — epic Development
   prerequisites + E18 follow-ups
-- **Where the doc lives.** Follow the existing recipe/doc convention in the repo (parity across `ts/`
-  and `python/`); consult architect on placement if the convention is ambiguous. This is documentation
-  only — no src/tests change.
+- **Where the doc lives — PINNED to the README-section precedent (verified 2026-07-14).** The repo's
+  recipe/guide convention is a **README section**, not a `planning/` doc: the shipped
+  `E11-S2-adopt-in-new-app-guide` landed its "Adopt in a new app" walkthrough as an appended section
+  in the README (see its `## Shipped`). So the self-host recipe is a **new section in `ts/README.md`
+  and a parity section in `python/README.md`** (both exist today: `ts/README.md`, `python/README.md`).
+  Do NOT put it in a `planning/` doc — that breaks the established convention and the reader's
+  expected home.
+- **The README recipe IS neutrality-scanned — it MUST read vendor-clean, not merely "should"
+  (correction, verified 2026-07-14).** The TS neutrality scan reads the README as a doc target:
+  `scanRepo` (`ts/scripts/neutrality-scan.ts:424`) runs `scanDoc` over `readmePath` (+ any
+  `extraDocPaths`), and the real gate wires `readmePath = ts/README.md`
+  (`ts/scripts/neutrality-scan.test.ts:20`). So the TS recipe section landing in `ts/README.md` is
+  scanned by `pnpm neutrality-scan` — zero `posthog`/vendor-hostname/`$`-literal tokens, PostHog
+  named ONLY by neutral role. (Python has its own scan analog, `python/scripts/neutrality_scan.py` —
+  the Python recipe in `python/README.md` must be equally clean.) IF the recipe is instead authored
+  as a SEPARATE README-adjacent file rather than folded into `ts/README.md`, it MUST be registered in
+  the scan's `extraDocPaths` (the code at `neutrality-scan.ts:405` anticipates exactly this: "Extra
+  shipped docs … land as more README-adjacent files; add them here and they pass the SAME doc gate")
+  — otherwise it silently escapes the neutrality gate. This is a documentation-only story (no
+  src/tests change), but the doc IS gated. — story-refiner (2026-07-14)
 
 ## Shipped
 

@@ -87,6 +87,21 @@ verbatim by the architect against the shipped src.
   `needs_postgres` tier (Python: `@pytest.mark.needs_postgres` + `skipif(DATABASE_URL is None)`). If
   S1 lands ahead of S3, gate it with `skipif` alone and let S3 register the marker in
   `python/pyproject.toml`. Postgres provisioning (Docker `postgres:16`) is S3's setup. — architect (2026-07-14)
+- **Refinement verification (2026-07-14, story-refiner).** Every claim in this story was checked
+  against the shipped src and confirmed VERBATIM: (1) `_result_from_cursor`
+  (`default_db_execute.py:43-49`) does call `cursor.fetchall()` unconditionally at line 48 with only
+  `cursor.description or []` guarded at line 47 — the guard is genuinely absent on the row line;
+  (2) the write reaches it via `Receiver.receive` → `self._db_execute.execute(sql, params)`
+  (`receiver/receiver.py:222`, whose own comment already ASSUMES "a non-RETURNING write resolves to
+  an empty DbExecuteResult" — i.e. the receiver is already written to the post-fix contract, so S1
+  makes the assumption TRUE rather than changing the receiver); (3) the receiver's write is the
+  `INSERT INTO … ON CONFLICT (uuid) DO NOTHING` non-RETURNING statement (`receiver.py:157`);
+  (4) TS `toResult` (`default-db-execute.ts:46-52`) already maps `{ rows: [], fields: [] }` →
+  `{ rows: [], columns: [] }` with no cursor-description branch to get wrong — NO TS change;
+  (5) the TS `EMPTY_RESULT` fixture (`db-execute.fixtures.ts:23`) and the Python `FakeCursor`
+  default (`tests/db_execute_fakes.py:56`, `description=None`) both match the post-fix empty shape.
+  Sizing is genuinely SMALL: a one-line guard + one gated real-driver unit test, no seam change.
+  — story-refiner (2026-07-14)
 
 ## Shipped
 

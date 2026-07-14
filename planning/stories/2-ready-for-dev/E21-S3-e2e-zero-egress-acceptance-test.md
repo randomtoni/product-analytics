@@ -93,6 +93,24 @@ F). The full test-integration design is the architect consult below — pin it v
   `ts/vitest.config.ts` deliberately defines no `projects`/`workspace`; each package owns a flat
   `packages/*/vitest.config.ts`) and NOT a new turbo task. Both reach the same end state: deselected
   locally, runs in CI. — architect (2026-07-14)
+- **REQUIRED TS cache-key fix — `describe.skipIf` alone is NOT enough (verified 2026-07-14).** The
+  `test` turbo task (`ts/turbo.json:18-20`) currently declares only `dependsOn: ["^build"]` — no
+  `env`, and `DATABASE_URL` is in no `globalDependencies`/`globalEnv`. Two consequences the builder
+  MUST fix or the tier silently false-greens: (1) turbo runs tasks in a sanitized env, so
+  `DATABASE_URL` is not even passed through to the vitest child unless declared; (2) `DATABASE_URL`
+  is not in the cache key, so an inner-loop run (unset ⇒ suite skipped ⇒ green result CACHED) is
+  served STALE to a CI run (set ⇒ same package inputs ⇒ turbo replays the skipped cache and the
+  Postgres suite NEVER runs). The one-line fix, in `ts/turbo.json`, is to give the `test` task
+  `env: ["DATABASE_URL"]` — this both passes the var through AND cache-keys on it, so unset-run and
+  set-run hash to different entries. Prefer this over `--force` (which defeats the whole fast loop's
+  cache) or a new turbo task (unnecessary). NOTE: `ts/turbo.json` is a repo config file, so this edit
+  is the BUILDER's to make in-code — called out here as a required implementation step. — architect
+  (2026-07-14) + story-refiner
+- **Python needs-Postgres tier is symmetric and clean (verified).** The `python/pyproject.toml`
+  `[tool.pytest.ini_options]` marker/`addopts` precedent (`artifact_scan` at lines 61-64) extends
+  exactly as drafted: add `needs_postgres` to the `markers` list, extend `addopts` to
+  `-m 'not artifact_scan and not needs_postgres'`, CI runs `uv run pytest -m needs_postgres`. No
+  toolchain wrinkle on the Python side. — story-refiner (2026-07-14)
 - **End-to-end loop wiring — the seams each step drives (both trees).**
   (a) migration: `build_migration_sql(taxonomy)` (`python/src/analytics_kit/query/warehouse_schema.py:138`) /
   `buildMigrationSql(taxonomy)` (`ts/packages/node/src/query/warehouse-schema.ts:125`) — a string; the
@@ -133,8 +151,21 @@ F). The full test-integration design is the architect consult below — pin it v
   (`CREATE SCHEMA e21_<runid>` or `CREATE DATABASE`), migrate into it, drop at teardown — the `events`
   DDL is `CREATE TABLE IF NOT EXISTS`, so a fresh namespace avoids cross-run row bleed into count
   assertions. CI: GitHub Actions `services: postgres:16` with `--health-cmd pg_isready`, `DATABASE_URL`
-  in the job env; mirrors the existing `.github/workflows/release-ts.yml` conventions. Pin
-  `postgres:16` (the floor); no multi-version matrix. — architect (2026-07-14)
+  in the job env (and, TS-side, exported into the `turbo run test` step so the `env: ["DATABASE_URL"]`
+  cache-key sees it). Pin `postgres:16` (the floor); no multi-version matrix. — architect (2026-07-14)
+- **CI-workflow packaging is BIGGER than "a builder call" — there is no test-gate workflow today
+  (verified 2026-07-14).** `.github/workflows/` contains ONLY `release-ts.yml`, a tag-triggered
+  (`ts-v*`) publisher with `working-directory: ts` — NOT a push/PR gate, and there is NO Python CI
+  workflow at all. So "add the Postgres job to an existing gate workflow" is not a real option: the
+  only homes are (a) author the project's FIRST push/PR test-gate workflow (pnpm/turbo setup + the
+  four TS gates + `uv run pytest`, then the `services: postgres:16` needs-Postgres job on top), or
+  (b) bolt Postgres onto the release publisher — which is wrong (release runs on tag, not on the PR
+  that would introduce the regression this tier catches). The needs-Postgres TIER MECHANISM (marker
+  + addopts; `skipIf` + `env` cache-key) is self-contained and builder-implementable as scoped here.
+  But "runs in CI" presumes a test-gate workflow that does not exist — standing that up is net-new CI
+  infrastructure. This crosses the refine/redesign line, so it is FLAGGED for user input (see the
+  epic-level Concern), not silently absorbed into the builder's discretion. — architect (2026-07-14)
+  + story-refiner
 - **PG ≥16 floor + cast caveat (carry-over notes).** The generated `events_typed` view uses
   `pg_input_is_valid` (PG16) — a PG15 consumer gets a view that errors at creation, so E1 provisions
   ≥16 (and the S4 recipe states the floor). Carry a note that `text→timestamptz` casts are
@@ -142,6 +173,13 @@ F). The full test-integration design is the architect consult below — pin it v
   defect. The retention breakdown groups per `(distinct_id, cohort_bucket, value)` (an actor with two
   breakdown values in a cohort week lands in two breakdown cohorts) — assert accordingly in the
   retention scenario. — epic Development prerequisites + E18 follow-ups
+- **Cross-story marker handoff (S1 ↔ S3).** S1's real-driver write test is DECORATED with
+  `@pytest.mark.needs_postgres` but S3 REGISTERS that marker in `python/pyproject.toml` and extends
+  `addopts`. Sequence: `(S1 ∥ S2) → S3 → S4`. If S1 lands ahead of S3, S1 gates its test with
+  `skipif(DATABASE_URL is None)` alone (inert until S3 wires the marker), and S3 finalizes the marker
+  registration + provisions the Postgres both tests need. S3 does NOT depend on S2 (S2 is the fast
+  standing selection gate — orthogonal, no shared artifact). Confirmed sound: S1 `depends_on: []`,
+  S2 `depends_on: []`, S3 `depends_on: [E21-S1]`, S4 `depends_on: [E21-S3]`. — story-refiner (2026-07-14)
 - **Vendor-neutral scope.** This is test-infra + the S1 driver fix only; it exercises and asserts the
   already-frozen E17–E20 seams and changes nothing a consumer observes. — architect (2026-07-14)
 

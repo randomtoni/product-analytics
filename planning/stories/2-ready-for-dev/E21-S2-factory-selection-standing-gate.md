@@ -35,6 +35,15 @@ in the quality set in both trees.
   fake transport) so no real Postgres and no network are needed.
 - Wire it into the quality set so it runs in the fast inner loop (it is fast — no DB, no net).
 
+**What this story actually IS (refinement, 2026-07-14).** The three selection assertions this gate
+makes ALREADY EXIST as green per-capability tests in both trees (see the "existing coverage" note
+below). S2 is therefore a **consolidation**, not a from-scratch build: gather the three postures into
+ONE named `self-host-selection` gate that runs together as a standing behavioral unit in the quality
+set, so a future regression in ANY rung fails one clearly-named gate rather than being spread across
+three per-capability suites. Reuse the existing assertion mechanics; do NOT duplicate the existing
+per-capability tests wholesale. Sizing is SMALL-to-MEDIUM — mostly assembly + naming, not new proof
+mechanics. Parity: TS and Python each get the same consolidated gate.
+
 ### Out
 
 - The end-to-end zero-egress loop against a real Postgres — E21-S3 (this gate is the fast selection
@@ -90,6 +99,33 @@ selection ladders and entry points confirmed against the shipped src.
 - **Injectable seam.** No real Postgres, no network — use the fake `DbExecute` / fake transport
   already used across the trees (Python `python/tests/db_execute_fakes.py`; TS the `defaultDbExecuteMock`
   pattern in the existing receiver-from-config test). — architect (2026-07-14)
+- **LOAD-BEARING: the TS↔Python driver-import asymmetry — the query rung is NOT symmetric to build.**
+  Verified against src (story-refiner, 2026-07-14). The two trees differ in WHEN the default driver
+  loads its dependency, and the Python selection test MUST account for it or it will raise, not assert:
+  - **TS is LAZY.** `createDefaultDbExecute` (`default-db-execute.ts:61-73`) returns an async closure;
+    the `pg` peer is imported only on first `execute` call. So `createQueryClient({ warehouseDsn })`
+    CONSTRUCTS the `WarehouseQueryAdapter` clean with NO `pg` installed. The TS query selection assert
+    is trivially `expect(client).toBeInstanceOf(WarehouseQueryAdapter)` with a fake DSN and NO mock —
+    exactly as `create-query-client.test.ts:189,208` already does.
+  - **Python is EAGER.** `DefaultDbExecute.__init__` (`default_db_execute.py:61-64`) checks
+    `_WAREHOUSE_DRIVER_AVAILABLE` and **raises `RuntimeError(_DRIVER_MISSING)` at construction** if
+    `psycopg` is absent — and the dev env has NO `warehouse` extra (`_WAREHOUSE_DRIVER_AVAILABLE is
+    False`, asserted by `test_receiver_from_config.py:177`). So `create_query_client(config_with_
+    warehouse_dsn)` will RAISE unless the test **monkeypatches `create_default_db_execute` at the
+    driver-build boundary**: `monkeypatch.setattr("analytics_kit.query.warehouse_adapter.create_default_db_execute", lambda _dsn: fake)`
+    for the query rung, and `"analytics_kit.receiver.factory.create_default_db_execute"` for the
+    receiver. This is the exact pattern the shipped tests use (`test_query_client.py:404-410`,
+    `test_receiver_from_config.py:27-33`). Without this monkeypatch the Python gate does not assert —
+    it errors. Pin it so the builder does not write the raising form. — story-refiner (2026-07-14)
+- **Existing coverage the gate consolidates (all green today, verified 2026-07-14).** (1) Query
+  warehouse rung: `test_query_client.py:413` `test_warehouse_dsn_present_selects_the_warehouse_adapter_first_rung`
+  / `create-query-client.test.ts:189`. (2) Receiver DSN target: `test_receiver_from_config.py:89`
+  `test_from_config_reads_the_dsn_and_builds_the_default_driver` / `create-receiver-from-config.test.ts:60`
+  (`defaultDbExecuteMock` called with `{ warehouseDsn }`). (3) Flag static-defs local-only + zero
+  fetch: `test_flag_static_definitions.py:134` `test_zero_egress_transport_is_never_called` /
+  `static-definitions.test.ts:97` (the injected fetch is NEVER called — no `/flags/`, no definitions
+  GET, no URL). The gate's job is to name and co-locate these three as one standing behavioral check,
+  not to re-derive them. — story-refiner (2026-07-14)
 
 ## Shipped
 
