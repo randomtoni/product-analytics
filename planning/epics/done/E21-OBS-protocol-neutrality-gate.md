@@ -1,6 +1,6 @@
 ---
 id: E21-OBS-protocol-neutrality-gate
-status: active
+status: done
 area: observability
 touches: [adapters, query, node, feature-flags]
 api_impact: additive
@@ -68,11 +68,11 @@ it validates E17–E20 end to end.
 
 ## Stories
 
-- **[E21-S1](../stories/2-ready-for-dev/E21-S1-python-driver-write-path-fix.md)** *(additive, no deps)* — the recorded MUST-FIX: guard `_result_from_cursor` to return an empty `DbExecuteResult` when `cursor.description is None` (before `fetchall()`), plus a real-driver write unit test; TS already conforms. Unblocks the Python side of the E1 loop.
-- **[E21-S2](../stories/2-ready-for-dev/E21-S2-factory-selection-standing-gate.md)** *(additive, no deps)* — the E2 standing factory-selection gate: given a self-host config, assert the warehouse query adapter (not HTTP), a local-only flag client with no flag URL, and a DSN-targeted receiver are selected — fast, no real Postgres, in the quality set at TS/Python parity.
-- **[E21-S3](../stories/2-ready-for-dev/E21-S3-e2e-zero-egress-acceptance-test.md)** *(additive, depends on E21-S1)* — the E1 capstone: the full self-host loop against a real Postgres ≥16 behind a per-tree needs-Postgres test tier, asserting zero HTTP egress (recording-transport log empty of `/api/projects/.../query/`, `/flags/`, `/batch/`) and counts provably from Neon.
-- **[E21-S5](../stories/2-ready-for-dev/E21-S5-warehouse-breakdown-fix.md)** *(additive, depends on E21-S3)* — Defect 3 fix (surfaced by the E1 capstone): the warehouse breakdown builders (trend/funnel/retention, both trees) group on `("<key>")::text` over the typed view instead of the non-existent raw `properties`, undeclared keys error at SQL-gen time, `WAREHOUSE-SCHEMA-CONTRACT.md` reconciled, + a real-PG breakdown scenario re-adding what S3 descoped.
-- **[E21-S4](../stories/2-ready-for-dev/E21-S4-self-host-recipe-doc.md)** *(additive, depends on E21-S3 + E21-S5)* — the self-host recipe doc: the provider-swap walkthrough (migration, DSN, driver extra, static flags, receiver mount) with the external prerequisites named honestly and the PG ≥16 floor stated; PostHog framed as one selectable backend. Sequenced AFTER S5 so it documents WORKING breakdown, not a known limitation.
+- **[E21-S1](../stories/5-done/E21-S1-python-driver-write-path-fix.md)** *(done — `e0d1036`)* — the recorded MUST-FIX: guard `_result_from_cursor` to return an empty `DbExecuteResult` when `cursor.description is None` (before `fetchall()`), plus a real-driver write unit test; TS already conforms. Review also caught a write-persistence CRITICAL (`autocommit=False`, no commit → writes rolled back) fixed on retry with `autocommit=True` + a cross-call persistence test on live PG16. Unblocks the Python side of the E1 loop.
+- **[E21-S2](../stories/5-done/E21-S2-factory-selection-standing-gate.md)** *(done — `6d5fc8e`)* — the E2 standing factory-selection gate: given a self-host config, assert the warehouse query adapter (not HTTP), a local-only flag client with no flag URL, and a DSN-targeted receiver are selected — fast, no real Postgres, in the quality set at TS/Python parity.
+- **[E21-S3](../stories/5-done/E21-S3-e2e-zero-egress-acceptance-test.md)** *(done — `ca6f526`)* — the E1 capstone: the full self-host loop against a real Postgres ≥16 behind a per-tree needs-Postgres test tier, asserting zero HTTP egress (recording-transport log empty of `/api/projects/.../query/`, `/flags/`, `/batch/`) and counts provably from Neon. Surfaced 3 real-engine defects invisible to the fake-backed tests: Defect 1 (`$N`→`%s` at the psycopg boundary) + Defect 2 (instance-scoped `pg` bigint OID-20 parser) fixed in-scope; Defect 3 (breakdown) descoped to S5.
+- **[E21-S5](../stories/5-done/E21-S5-warehouse-breakdown-fix.md)** *(done — `41f8bd1`)* — Defect 3 fix (surfaced by the E1 capstone): the warehouse breakdown builders (trend/funnel/retention, both trees) group on `("<key>")::text` over the typed view instead of the non-existent raw `properties`, undeclared keys error at SQL-gen time, `WAREHOUSE-SCHEMA-CONTRACT.md` reconciled, + a real-PG breakdown scenario re-adding what S3 descoped.
+- **[E21-S4](../stories/5-done/E21-S4-self-host-recipe-doc.md)** *(done — `f7b9a56`)* — the self-host recipe doc: the provider-swap walkthrough (migration, DSN, driver extra, static flags, receiver mount) with the external prerequisites named honestly and the PG ≥16 floor stated; PostHog framed as one selectable backend. Sequenced AFTER S5 so it documents WORKING breakdown, not a known limitation.
 
 ## Out of scope
 

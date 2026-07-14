@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-14 — Self-host cycle (E17–E21) in flight; **E17–E20 shipped** (full capture→store→query loop on Neon + fully-local flags, zero remote calls); only **E21 (acceptance gate + recipe)** remains
+Last updated: 2026-07-14 — Self-host cycle (E17–E21) **COMPLETE** — all five epics shipped; the full capture→store→query+flags loop runs on the consumer's own Neon with zero PostHog egress, machine-proven end-to-end on live Postgres at TS/Python parity. Ready for `/roadmap promote`.
 
 ## Status
 
@@ -58,9 +58,12 @@ concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python par
   shape) + consumer-supplied static definitions seeding the snapshot via a structurally-no-fetch seeded
   poller (evaluator byte-unchanged). **Last remote flag dependency closed — self-host flag eval makes
   provably zero remote calls.** Neon `flag_definitions` table is a deferred additive follow-up.
-- **[E21-OBS-protocol-neutrality-gate](epics/E21-OBS-protocol-neutrality-gate.md)** *(active)* — the capstone: a
+- **[E21-OBS-protocol-neutrality-gate](epics/done/E21-OBS-protocol-neutrality-gate.md)** *(done)* — the capstone: a
   second, orthogonal (behavioral) neutrality gate — standing factory-selection assertion + end-to-end
-  zero-egress acceptance test against real/local Postgres — plus the honest self-host recipe doc.
+  zero-egress acceptance test against real/local Postgres — plus the honest self-host recipe doc. The
+  E1 capstone caught 3 real-engine defects the fake-backed tests couldn't (2 driver-conformance + the
+  breakdown contract violation), all fixed and re-proven on live PG16. The acceptance bar is now
+  machine-proven at TS/Python parity.
 
 **Dependency graph:** `E17 → (E18 ∥ E19 once the schema lands) → E20 → E21`. E17 is the one-way-door
 foundation; E18 (read) and E19 (write) parallelize once E17's schema contract is frozen; E20 is
