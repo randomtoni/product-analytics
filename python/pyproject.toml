@@ -12,9 +12,11 @@ dependencies = [
 [project.optional-dependencies]
 django = ["django>=4.2"]
 fastapi = ["fastapi>=0.100"]
+warehouse = ["psycopg[binary]>=3.1,<4"]
 all = [
     "django>=4.2",
     "fastapi>=0.100",
+    "psycopg[binary]>=3.1,<4",
 ]
 
 [dependency-groups]
@@ -45,6 +47,13 @@ python_version = "3.10"
 strict = true
 files = ["src", "tests", "scripts"]
 mypy_path = ["scripts"]
+
+# The default warehouse driver is an OPTIONAL extra (`analytics-kit[warehouse]`), lazily
+# imported, so it is absent from the base typecheck env. Treat its import as missing-ok so the
+# lazy guard typechecks whether or not the extra is installed.
+[[tool.mypy.overrides]]
+module = ["psycopg", "psycopg.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

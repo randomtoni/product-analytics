@@ -24,6 +24,8 @@ from .client import (
     UniqueCountSpec,
 )
 from .config import QueryClientConfig
+from .db_execute import DbColumn, DbExecute, DbExecuteResult
+from .default_db_execute import DefaultDbExecute, create_default_db_execute
 from .factory import create_query_client
 from .noop import QueryNoop
 from .warehouse_adapter import WarehouseQueryAdapter, create_warehouse_query_adapter
@@ -52,6 +54,11 @@ __all__ = [
     "QueryResult",
     "QueryTransport",
     "QueryClientConfig",
+    "DbColumn",
+    "DbExecute",
+    "DbExecuteResult",
+    "DefaultDbExecute",
+    "create_default_db_execute",
     "create_query_client",
     "QueryNoop",
     "WarehouseQueryAdapter",

@@ -173,6 +173,28 @@ status/body role." Both are the WRONG analogue and the architect ruled against e
 executes SQL. They meet in S4 (which constructs the driver from `warehouse_dsn`) and E18 (which
 writes the SQL that routes through the seam).
 
+> Reviewer suggestion (2026-07-14): TS lazy-import is proven compile-side (authoritative — no static
+> `pg` import survives in the built bundle; only `var DRIVER_MODULE="pg"` + `await import(DRIVER_MODULE)`).
+> Residual gap: nothing stops a future edit re-adding a static top-level `import 'pg'`. Optional
+> hardening → E17 improvement pass: a CI grep of built `dist/index.{js,mjs}` for a static `pg` import
+> form (precedent: the `js-bundle` scan in `neutrality-scan.ts`), so a regression to eager resolution
+> fails a gate.
+> Reviewer suggestion (2026-07-14): the `"pg"` string in the bundle is NOT a vendor leak (generic
+> node-postgres specifier behind a role-named seam, the analog of `import psycopg`) — on record, no
+> action. A machine-enforced driver-token boundary (driver names confined to `default-db-execute.*`,
+> never the `.d.ts` surface) would be a separate future gate, out of scope here.
+> Reviewer suggestion (2026-07-14): doc nit in `python/tests/db_execute_fakes.py:5` — "tests is on
+> pythonpath" is inaccurate; the import works via pytest's `prepend` import mode. DEFER to the E17
+> improvement pass (one-line docstring fix).
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this once the story moves to stories/5-done/. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files added:** TS `ts/packages/node/src/query/db-execute.ts`, `default-db-execute.ts`, `db-execute.fixtures.ts`, `db-execute.test.ts`, `default-db-execute.test.ts`; Python `python/src/analytics_kit/query/db_execute.py`, `default_db_execute.py`, `python/tests/db_execute_fakes.py`, `python/tests/test_db_execute.py`
+- **Files changed:** TS `ts/packages/node/src/index.ts`, `package.json` (+ `pnpm-lock.yaml`); Python `query/__init__.py`, `__init__.py`, `pyproject.toml` (+ `uv.lock`)
+- **New public API:** `DbExecute`, `DbExecuteResult`, `DbColumn`, `createDefaultDbExecute`/`create_default_db_execute`, `DefaultDbExecuteConfig` (both trees, role-named — NO driver type on the surface, verified against built `.d.ts`)
+- **Tests added:** TS `db-execute.test.ts` (6) + `default-db-execute.test.ts` (5); Python `test_db_execute.py` (14) — assert the neutral-seam invariant, the lazy-import guard, and the neutral error path (not smoke)
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** verdict SOUND, no criticals; 3 suggestions (see above) — #1 (dist static-import grep) + #3 (docstring nit) deferred to the E17 improvement pass; #2 on-record, no action
+- **Cross-story seams exposed:** the reusable fake — TS `import { createFakeDbExecute } from '../query/db-execute.fixtures'`; Python `from db_execute_fakes import FakeDbExecute, RecordedExec, FakeCursor` (in `python/tests/`). **S4 injects this fake** for its selection tests; **E18** routes SQL through `DbExecute` and normalizes `DbExecuteResult` (rows = positional cells, reuse `zipRow`/`_zip_row`; columns carry `{name, type?}`) into `QueryResult` with its OWN flat-row builders. Default driver constructs from a DSN (S4 wires that); extra slug `warehouse` (Python `[warehouse]`=`psycopg[binary]>=3.1,<4`; TS optional peer-dep `pg@^8.11.0`), lazily imported.
