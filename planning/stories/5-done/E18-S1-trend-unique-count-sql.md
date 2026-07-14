@@ -181,4 +181,26 @@ projections). Route SQL through the injected seam; the adapter already holds it 
   `warehouse_schema.py`.
 - `normalizeResult`/`zipRow` pattern to analog: `http-query-adapter.ts:221`, `:395`.
 
+> Reviewer suggestion (2026-07-14): `INTERVAL_KEYWORD_FOR_WINDOW_UNIT` and `BUCKET_UNIT_FOR_WINDOW_UNIT`
+> are byte-identical today — a latent parity trap (a future edit to one desyncs the spine step from the
+> bucket grain; the canonical-SQL pin only covers the day case). DEFER to the E18 improvement pass:
+> collapse to one table with a comment, or add a sub-day (`hour`) canonical-SQL pin so a divergence trips.
+> Reviewer suggestion (2026-07-14): the assembler stamps `QueryColumn.type` from `DbColumn.type`
+> verbatim (inert today — the real driver never sets `type`). When a real driver lands, decide whether
+> `type` should be normalized/whitelisted. Carried to E21 (real-Postgres); on `columns` not rows, so no
+> contract violation.
+> Reviewer note (2026-07-14): the `not.toContain('count(*)')` negative-assertion style won't reuse for
+> S2–S4 queries that legitimately carry both `count(*)` and `count(distinct …)` — a heads-up for those
+> stories' test authors, no S1 change.
+
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files added:** `ts/packages/node/src/query/warehouse-sql.ts`, `python/src/analytics_kit/query/warehouse_sql.py` (the pinned SQL-gen module: `buildTrendSql`/`buildUniqueCountSql`, the flat-row builder `buildTrendRows`, the shared `assembleResult` assembler + the `WarehouseRowBuilder`/`WarehouseQuery` extension types)
+- **Files changed:** `ts/.../query/warehouse-query-adapter.ts` (+ `.test.ts`), `python/.../query/warehouse_adapter.py` (+ `tests/test_warehouse_query_adapter.py`) — filled `trend`/`unique_count` bodies
+- **New public API:** none consumer-facing — the SQL-gen module + assembler are adapter-internal (not exported from `index.ts`, like the HTTP `normalizeResult`); the warehouse adapter is reached only via `createQueryClient`
+- **Tests added:** TS 12 + Python compute suite — SQL-shape assertions (`date_trunc`/`count`/`generate_series`/`LEFT JOIN`/breakdown JSONB path), the byte-identical `CANONICAL_TREND_SQL` cross-tree pin, embedded-quote injection safety, `columns`/`generatedAt` stamping + `fromCache` omission, sync-not-coroutine, row-key seal — all against the E17-S3 fake `DbExecute` (no real Postgres)
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SOLID, no criticals — "S2/S3/S4 should build directly on this pattern"; 3 suggestions captured above (all deferred/forward)
+- **Cross-story seams exposed:** **S2/S3/S4 import** `assembleResult`/`assemble_result` + `WarehouseRowBuilder`/`WarehouseQuery` from `warehouse-sql` and add their per-primitive flat-row builder there — the assembler is generic over `TRow` and needs no fork. Event/step names bind as SQL **params** (`$1`, …), never inlined; the breakdown key is `quoteLiteral`-escaped. Sync/async posture stays per-tree (TS `async`/`await`, Python plain `def`). `columns` is stamped from the driver SELECT schema (neutral aliases) — do NOT "fix" it to `columns:[]`.

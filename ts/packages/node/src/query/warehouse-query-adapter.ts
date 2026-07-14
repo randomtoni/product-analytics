@@ -8,7 +8,13 @@ import type {
 } from '@randomtoni/analytics-kit';
 import type { DbExecute } from './db-execute';
 import { createDefaultDbExecute } from './default-db-execute';
-import type { AnalyticsQueryClient } from './query-client';
+import type { AnalyticsQueryClient, TrendSpec, UniqueCountSpec } from './query-client';
+import {
+  assembleResult,
+  buildTrendRows,
+  buildTrendSql,
+  buildUniqueCountSql,
+} from './warehouse-sql';
 
 const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implemented';
 
@@ -64,12 +70,17 @@ export class WarehouseQueryAdapter<TX extends TaxonomyShape>
     throw new Error(NOT_IMPLEMENTED);
   }
 
-  async trend(): Promise<QueryResult<TrendRow>> {
-    throw new Error(NOT_IMPLEMENTED);
+  async trend(spec: TrendSpec<TX>): Promise<QueryResult<TrendRow>> {
+    const { sql, params } = buildTrendSql(spec);
+    const result = await this.dbExecute(sql, params);
+    return assembleResult(result, buildTrendRows);
   }
 
-  async uniqueCount(): Promise<QueryResult<UniqueCountRow>> {
-    throw new Error(NOT_IMPLEMENTED);
+  async uniqueCount(spec: UniqueCountSpec<TX>): Promise<QueryResult<UniqueCountRow>> {
+    const { sql, params } = buildUniqueCountSql(spec);
+    const result = await this.dbExecute(sql, params);
+    // `UniqueCountRow` is a type alias of `TrendRow`; the same flat-row builder produces both.
+    return assembleResult(result, buildTrendRows);
   }
 
   async rawQuery(): Promise<QueryResult> {

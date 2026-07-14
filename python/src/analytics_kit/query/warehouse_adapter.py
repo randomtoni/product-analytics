@@ -50,6 +50,12 @@ from .client import (
 from .config import QueryClientConfig
 from .db_execute import DbExecute
 from .default_db_execute import create_default_db_execute
+from .warehouse_sql import (
+    assemble_result,
+    build_trend_rows,
+    build_trend_sql,
+    build_unique_count_sql,
+)
 
 _NOT_IMPLEMENTED = "analytics-kit: warehouse query adapter is not yet implemented"
 
@@ -78,10 +84,22 @@ class WarehouseQueryAdapter:
         raise NotImplementedError(_NOT_IMPLEMENTED)
 
     def trend(self, spec: TrendSpec) -> QueryResult[TrendRow]:
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        query = build_trend_sql(spec)
+        result = self._db_execute.execute(query.sql, query.params)
+        return assemble_result(result, build_trend_rows)
 
     def unique_count(self, spec: UniqueCountSpec) -> QueryResult[UniqueCountRow]:
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        query = build_unique_count_sql(spec)
+        result = self._db_execute.execute(query.sql, query.params)
+        # ``unique_count`` shares ``TrendRow``'s field set; the same flat-row builder produces both,
+        # then the neutral rows are re-typed to the own-named ``UniqueCountRow`` at the boundary.
+        return assemble_result(
+            result,
+            lambda r: [
+                UniqueCountRow(bucket=row.bucket, value=row.value, breakdown=row.breakdown)
+                for row in build_trend_rows(r)
+            ],
+        )
 
     def raw_query(self, expr: str) -> QueryResult:
         raise NotImplementedError(_NOT_IMPLEMENTED)
