@@ -4,7 +4,7 @@ import {
   EVENTS_TABLE,
   EVENTS_TABLE_DDL,
   EVENTS_VIEW,
-  TRAIT_GROUP_NESTED_KEYS,
+  _TRAIT_GROUP_NESTED_KEYS,
   buildMigrationSql,
   buildTypedViewSql,
 } from './warehouse-schema';
@@ -136,7 +136,7 @@ describe('typed view generator', () => {
 
   test('names no view column after a trait/group nested key (the S1 guard)', () => {
     const sql = buildTypedViewSql(representative);
-    for (const key of TRAIT_GROUP_NESTED_KEYS) {
+    for (const key of _TRAIT_GROUP_NESTED_KEYS) {
       expect(sql).not.toContain(`AS "${key}"`);
     }
     // `set` was declared under `traits` and `group_key` under `groups`; neither surfaces.

@@ -23,7 +23,8 @@ export interface Violation {
     | 'package-name'
     | 'file-name'
     | 'doc'
-    | 'wire-confinement';
+    | 'wire-confinement'
+    | 'driver-static-import';
   file: string;
   detail: string;
 }
@@ -217,6 +218,60 @@ export function scanJsBundles(packagesDir: string): Violation[] {
   return violations;
 }
 
+// The optional Postgres driver the node package's default `DbExecute` loads. It is a peer dep,
+// NOT a hard dependency: importing the node package WITHOUT it installed must not throw, so the
+// driver is loaded LAZILY via variable-indirection (`var DRIVER_MODULE = 'pg'` +
+// `await import(DRIVER_MODULE)`) — esbuild cannot statically resolve the specifier, so it ships
+// as a runtime `import(DRIVER_MODULE)` with NO literal `pg` inside the call. This constant names
+// the driver here so the guard is a one-line edit if the default driver ever changes.
+const NODE_LAZY_DRIVER = 'pg';
+
+// A static top-level import/require of the driver with a STRING-LITERAL specifier — the exact
+// forms esbuild emits for `import ... from 'pg'` / `require('pg')` / `import('pg')` in the built
+// bundle. Anchored on the call/keyword so it matches ONLY a literal-specifier form: the shipped
+// lazy `await import(DRIVER_MODULE)` (variable) has no `pg` literal inside the call and PASSES,
+// and the bare `var DRIVER_MODULE = "pg"` assignment + the `pg_input_is_valid` SQL token both
+// lack the `require(`/`from`/`import(` anchor so neither false-fails.
+function staticDriverImportRegex(driver: string): RegExp {
+  const d = driver.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:\\bfrom|\\brequire\\s*\\(|\\bimport\\s*\\()\\s*['"]${d}['"]`);
+}
+
+// Fail the gate if the node package's BUILT bundle statically imports the optional driver. This
+// guards the import-without-peer invariant: a future edit re-adding a top-level `import ... from
+// 'pg'` would make `require('@randomtoni/analytics-kit-node')` throw when the peer is absent, and
+// nothing else catches it. Scans the SHIPPED `dist/index.{js,mjs}` (the CJS + ESM entries) — the
+// artifact a consumer actually loads — mirroring the `scanJsBundles` dual-file loop. Comments are
+// stripped first so a `// … 'pg' …` provenance note can't trip it; the shipped lazy
+// variable-indirection form carries no literal-specifier call and PASSES for free.
+export function scanNodeDriverStaticImport(packagesDir: string): Violation[] {
+  const violations: Violation[] = [];
+  const distDir = join(packagesDir, 'node', 'dist');
+  const pattern = staticDriverImportRegex(NODE_LAZY_DRIVER);
+  for (const ext of ['index.js', 'index.mjs']) {
+    const file = join(distDir, ext);
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch {
+      violations.push({
+        dimension: 'driver-static-import',
+        file,
+        detail: `node bundle missing — build must run before the scan`,
+      });
+      continue;
+    }
+    if (pattern.test(stripComments(content))) {
+      violations.push({
+        dimension: 'driver-static-import',
+        file,
+        detail: `static "${NODE_LAZY_DRIVER}" import in node bundle — the optional driver must load lazily via await import(DRIVER_MODULE), never a top-level import/require`,
+      });
+    }
+  }
+  return violations;
+}
+
 export function scanPackageAndFileNames(packagesDir: string): Violation[] {
   const violations: Violation[] = [];
   for (const pkg of readdirSync(packagesDir)) {
@@ -362,6 +417,7 @@ export function scanRepo(paths: RepoScanPaths): Violation[] {
   const violations: Violation[] = [];
   violations.push(...scanDeclarationBundles(paths.packagesDir));
   violations.push(...scanJsBundles(paths.packagesDir));
+  violations.push(...scanNodeDriverStaticImport(paths.packagesDir));
   violations.push(...scanPackageAndFileNames(paths.packagesDir));
   violations.push(...scanWireConfinement(paths.packagesDir));
 

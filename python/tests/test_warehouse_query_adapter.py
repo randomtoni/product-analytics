@@ -21,10 +21,12 @@ from analytics_kit import (
     RetentionSpec,
     TrendSpec,
     UniqueCountSpec,
+)
+from analytics_kit.query.http_adapter import HttpQueryAdapter
+from analytics_kit.query.warehouse_adapter import (
     WarehouseQueryAdapter,
     create_warehouse_query_adapter,
 )
-from analytics_kit.query.http_adapter import HttpQueryAdapter
 from test_query_client import _conforms
 
 # The injected DB-execute seam — the S3 reusable fake. In S4 the stub methods still raise before
@@ -107,7 +109,8 @@ def test_from_config_builds_the_adapter_and_reads_the_dsn_at_the_boundary(
     # The config-reading twin: it reads warehouse_dsn, builds the default driver from it, injects
     # it — proven here with the S3 fake at the driver-build boundary (no real Postgres/extra).
     import analytics_kit.query.warehouse_adapter as wh
-    from analytics_kit import QueryClientConfig, create_warehouse_query_adapter_from_config
+    from analytics_kit import QueryClientConfig
+    from analytics_kit.query.warehouse_adapter import create_warehouse_query_adapter_from_config
 
     seen: list[str] = []
 

@@ -152,3 +152,9 @@ it builds/tests with zero warehouse extra installed.
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** verdict SOUND, no criticals; 3 suggestions (see Technical notes) — #1 addressed (E21 PG16 note), #2 deferred to the E17 improvement pass, #3 carried forward to E18/E21
 - **Cross-story seams exposed:** the typed view is `EVENTS_VIEW` over `EVENTS_TABLE`; E18's query SQL targets `EVENTS_VIEW` columns (base cols + safe-cast projections), never `properties` directly. E19's receiver writes rows into `EVENTS_TABLE`. **Operational floor: the generated view requires Postgres ≥16** (`pg_input_is_valid`) — E21's acceptance test + recipe must provision/state ≥16. Column order is base-first then event-prop keys stable-sorted (code-point) — the frozen parity rule.
+
+## Follow-up
+
+> E17 improvement pass (2026-07-14) — verified clean by architect-reviewer.
+
+- Privatized the trait/group guard constant `TRAIT_GROUP_NESTED_KEYS` → `_TRAIT_GROUP_NESTED_KEYS` in both trees (test-facing guard, not consumer surface): removed from Python `__all__`, was never in TS `index.ts`; tests reach the module-internal name and still assert the guard. (reviewer suggestion #2)

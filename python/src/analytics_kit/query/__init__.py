@@ -28,11 +28,6 @@ from .db_execute import DbColumn, DbExecute, DbExecuteResult
 from .default_db_execute import DefaultDbExecute, create_default_db_execute
 from .factory import create_query_client
 from .noop import QueryNoop
-from .warehouse_adapter import (
-    WarehouseQueryAdapter,
-    create_warehouse_query_adapter,
-    create_warehouse_query_adapter_from_config,
-)
 from .warehouse_schema import (
     EVENTS_TABLE,
     EVENTS_TABLE_DDL,
@@ -65,9 +60,6 @@ __all__ = [
     "create_default_db_execute",
     "create_query_client",
     "QueryNoop",
-    "WarehouseQueryAdapter",
-    "create_warehouse_query_adapter",
-    "create_warehouse_query_adapter_from_config",
     "EVENTS_TABLE",
     "EVENTS_TABLE_DDL",
     "EVENTS_VIEW",

@@ -38,8 +38,10 @@ const BASE_COLUMNS = ['distinct_id', 'event', 'timestamp', 'uuid'] as const;
 // no view column is ever named after one of these. They are projection-source-excluded by
 // construction (the generator reads only `decl.events`, never `traits`/`groups`), so this set
 // exists as an explicit belt-and-braces assertion the parity tests pin, not as a filter the
-// generator needs to apply.
-export const TRAIT_GROUP_NESTED_KEYS = [
+// generator needs to apply. Module-internal (`_`-prefixed): the parity test imports it from this
+// module directly; it is deliberately NOT re-exported from the package `index.ts` — not consumer
+// surface.
+export const _TRAIT_GROUP_NESTED_KEYS = [
   'set',
   'set_once',
   'group_type',

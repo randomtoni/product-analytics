@@ -7,6 +7,7 @@ import {
   scanDoc,
   scanDeclarationBundles,
   scanJsBundles,
+  scanNodeDriverStaticImport,
   stripComments,
   scanWireConfinementInSource,
   scanWireConfinement,
@@ -73,6 +74,15 @@ describe('neutrality scan — current shipped tree PASSES', () => {
     // stripped before scanning; the confined query-kind values carry no vendor name → clean.
     const jsViolations = scanJsBundles(PACKAGES_DIR);
     expect(jsViolations, JSON.stringify(jsViolations, null, 2)).toEqual([]);
+  });
+
+  it('driver-static-import: the real node bundle loads the optional driver LAZILY (no static import) → PASSES', () => {
+    // The shipped node bundle uses `var DRIVER_MODULE = 'pg'` + `await import(DRIVER_MODULE)`
+    // (variable indirection), so there is NO literal-specifier `import ... from 'pg'` /
+    // `require('pg')` / `import('pg')` in `dist/index.{js,mjs}`. That is the import-without-peer
+    // invariant, now guarded: this asserts the real bundle passes.
+    const driverViolations = scanNodeDriverStaticImport(PACKAGES_DIR);
+    expect(driverViolations, JSON.stringify(driverViolations, null, 2)).toEqual([]);
   });
 });
 
@@ -164,6 +174,75 @@ describe('neutrality scan — planted violations FAIL', () => {
     const mtsHits = violations.filter((v) => v.file.endsWith('.d.mts'));
     expect(mtsHits).toHaveLength(1);
     expect(mtsHits[0].detail).toContain('posthog');
+  });
+
+  it('driver-static-import: FAILS on an ESM static `import ... from "pg"` in the node bundle', () => {
+    const root = synthPackages({
+      'packages/node/dist/index.js': 'const ok = 1;\nmodule.exports = { ok };\n',
+      'packages/node/dist/index.mjs':
+        'import * as __pg from "pg";\nexport const ok = __pg;\n',
+      'packages/node/package.json': '{"name":"@x/node"}',
+    });
+    const violations = scanNodeDriverStaticImport(join(root, 'packages'));
+    const mjsHits = violations.filter((v) => v.file.endsWith('index.mjs'));
+    expect(mjsHits).toHaveLength(1);
+    expect(mjsHits[0].dimension).toBe('driver-static-import');
+    expect(mjsHits[0].detail).toMatch(/static "pg" import/);
+  });
+
+  it('driver-static-import: FAILS on a CJS static `require("pg")` in the node bundle', () => {
+    const root = synthPackages({
+      'packages/node/dist/index.js':
+        'const __pg = require("pg");\nmodule.exports = { __pg };\n',
+      'packages/node/dist/index.mjs': 'export const ok = 1;\n',
+      'packages/node/package.json': '{"name":"@x/node"}',
+    });
+    const violations = scanNodeDriverStaticImport(join(root, 'packages'));
+    const jsHits = violations.filter((v) => v.file.endsWith('index.js'));
+    expect(jsHits).toHaveLength(1);
+    expect(jsHits[0].detail).toMatch(/static "pg" import/);
+  });
+
+  it('driver-static-import: FAILS on a static `import("pg")` with a literal specifier', () => {
+    const root = synthPackages({
+      'packages/node/dist/index.js': 'const p = import("pg");\nmodule.exports = { p };\n',
+      'packages/node/dist/index.mjs': "const p = import('pg');\nexport { p };\n",
+      'packages/node/package.json': '{"name":"@x/node"}',
+    });
+    const violations = scanNodeDriverStaticImport(join(root, 'packages'));
+    expect(violations).toHaveLength(2);
+    expect(violations.every((v) => v.dimension === 'driver-static-import')).toBe(true);
+  });
+
+  it('driver-static-import: the lazy `await import(DRIVER_MODULE)` variable form PASSES', () => {
+    // The shipped form: the specifier is a VARIABLE, not a literal, so esbuild cannot resolve it
+    // statically and no literal-specifier import/require lands in the bundle. The bare
+    // `var DRIVER_MODULE = "pg"` assignment and the `pg_input_is_valid` SQL token also carry no
+    // `import(`/`require(`/`from` anchor, so neither false-fails.
+    const lazy =
+      'var DRIVER_MODULE = "pg";\n' +
+      'async function loadDriver() { return await import(DRIVER_MODULE); }\n' +
+      'const sql = "pg_input_is_valid(x, \'numeric\')";\n';
+    const root = synthPackages({
+      'packages/node/dist/index.js': lazy + 'module.exports = { loadDriver };\n',
+      'packages/node/dist/index.mjs': lazy + 'export { loadDriver };\n',
+      'packages/node/package.json': '{"name":"@x/node"}',
+    });
+    expect(scanNodeDriverStaticImport(join(root, 'packages'))).toEqual([]);
+  });
+
+  it('driver-static-import: a static import inside a stripped `//` comment does NOT trip the guard', () => {
+    // A provenance/example comment mentioning the static form must not false-fail — comments are
+    // stripped before the pattern runs, exactly like the js-bundle dimension.
+    const commented =
+      '// historically this was `import pg from "pg"` — now loaded lazily\n' +
+      'var DRIVER_MODULE = "pg";\n';
+    const root = synthPackages({
+      'packages/node/dist/index.js': commented + 'module.exports = {};\n',
+      'packages/node/dist/index.mjs': commented + 'export {};\n',
+      'packages/node/package.json': '{"name":"@x/node"}',
+    });
+    expect(scanNodeDriverStaticImport(join(root, 'packages'))).toEqual([]);
   });
 
   it('flags a planted `fernly` in the README prose', () => {

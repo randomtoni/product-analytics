@@ -38,10 +38,10 @@ from analytics_kit import (
     TrendSpec,
     UniqueCountRow,
     UniqueCountSpec,
-    WarehouseQueryAdapter,
     create_query_client,
     define_taxonomy,
 )
+from analytics_kit.query.warehouse_adapter import WarehouseQueryAdapter
 
 
 def _conforms(client: AnalyticsQueryClient) -> None:

@@ -198,3 +198,10 @@ writes the SQL that routes through the seam).
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** verdict SOUND, no criticals; 3 suggestions (see above) — #1 (dist static-import grep) + #3 (docstring nit) deferred to the E17 improvement pass; #2 on-record, no action
 - **Cross-story seams exposed:** the reusable fake — TS `import { createFakeDbExecute } from '../query/db-execute.fixtures'`; Python `from db_execute_fakes import FakeDbExecute, RecordedExec, FakeCursor` (in `python/tests/`). **S4 injects this fake** for its selection tests; **E18** routes SQL through `DbExecute` and normalizes `DbExecuteResult` (rows = positional cells, reuse `zipRow`/`_zip_row`; columns carry `{name, type?}`) into `QueryResult` with its OWN flat-row builders. Default driver constructs from a DSN (S4 wires that); extra slug `warehouse` (Python `[warehouse]`=`psycopg[binary]>=3.1,<4`; TS optional peer-dep `pg@^8.11.0`), lazily imported.
+
+## Follow-up
+
+> E17 improvement pass (2026-07-14) — verified clean by architect-reviewer.
+
+- Added a `driver-static-import` dimension to `ts/scripts/neutrality-scan.ts`: a gate that FAILS if the built node `dist/index.{js,mjs}` carries a static `pg` import (`from 'pg'` / `require('pg')` / `import('pg')`) while the lazy `await import(DRIVER_MODULE)` form PASSES — guards the import-without-peer invariant against a future regression. Proven fail-on-static/pass-on-lazy against the real bundle; +6 scan tests (now 36/36), no false positives on `pg-promise`/`pg_input_is_valid`. (reviewer suggestion #1)
+- Fixed the `python/tests/db_execute_fakes.py` docstring: the import resolves via pytest's default `prepend` mode (test dir on `sys.path`), not a `pythonpath` entry. (reviewer suggestion #3)

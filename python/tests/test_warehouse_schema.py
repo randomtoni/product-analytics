@@ -17,7 +17,7 @@ from analytics_kit import (
     build_typed_view_sql,
     define_taxonomy,
 )
-from analytics_kit.query.warehouse_schema import TRAIT_GROUP_NESTED_KEYS
+from analytics_kit.query.warehouse_schema import _TRAIT_GROUP_NESTED_KEYS
 
 # The SAME representative taxonomy the TS test uses: all four PropTypes; a key (`plan`) on two
 # events; mixed-case keys (`Referrer`) proving byte-wise sort; trait/group slots whose keys must
@@ -144,7 +144,7 @@ def test_columns_sorted_by_key_byte_wise_not_locale() -> None:
 
 def test_names_no_view_column_after_a_trait_or_group_key() -> None:
     sql = build_typed_view_sql(_representative)
-    for key in TRAIT_GROUP_NESTED_KEYS:
+    for key in _TRAIT_GROUP_NESTED_KEYS:
         assert f'AS "{key}"' not in sql
     # `set` (a trait) and `group_key` (a group prop) never surface as columns
     assert 'AS "set"' not in sql

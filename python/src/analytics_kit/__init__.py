@@ -64,13 +64,10 @@ from .query import (
     TrendSpec,
     UniqueCountRow,
     UniqueCountSpec,
-    WarehouseQueryAdapter,
     build_migration_sql,
     build_typed_view_sql,
     create_default_db_execute,
     create_query_client,
-    create_warehouse_query_adapter,
-    create_warehouse_query_adapter_from_config,
 )
 from .server import (
     BatchConsumer,
@@ -157,9 +154,6 @@ __all__ = [
     "create_default_db_execute",
     "create_query_client",
     "QueryNoop",
-    "WarehouseQueryAdapter",
-    "create_warehouse_query_adapter",
-    "create_warehouse_query_adapter_from_config",
     "EVENTS_TABLE",
     "EVENTS_TABLE_DDL",
     "EVENTS_VIEW",

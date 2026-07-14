@@ -2,7 +2,10 @@
 ``query_contract_fixtures`` convention) that S3, S4, and E18 tests import so none of them needs a
 real Postgres. It is the concrete proof the seam is injectable.
 
-Importable as ``from db_execute_fakes import FakeDbExecute`` (``tests`` is on ``pythonpath``).
+Importable as ``from db_execute_fakes import FakeDbExecute`` — the same top-level import the
+``query_contract_fixtures`` helper uses. ``pyproject.toml`` sets ``pythonpath = ["src"]`` only; the
+bare import works because pytest's default ``prepend`` import mode puts this test directory on
+``sys.path``, not because ``tests`` is on ``pythonpath``.
 """
 
 from __future__ import annotations

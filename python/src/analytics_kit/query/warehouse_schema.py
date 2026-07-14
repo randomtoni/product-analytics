@@ -19,7 +19,6 @@ __all__ = [
     "EVENTS_TABLE",
     "EVENTS_TABLE_DDL",
     "EVENTS_VIEW",
-    "TRAIT_GROUP_NESTED_KEYS",
     "build_typed_view_sql",
     "build_migration_sql",
 ]
@@ -52,12 +51,14 @@ EVENTS_VIEW = "events_typed"
 # from `events` unchanged, before any event-property projection.
 _BASE_COLUMNS = ("distinct_id", "event", "timestamp", "uuid")
 
-TRAIT_GROUP_NESTED_KEYS = ("set", "set_once", "group_type", "group_key", "group_set")
+_TRAIT_GROUP_NESTED_KEYS = ("set", "set_once", "group_type", "group_key", "group_set")
 """The trait/group [WIRE] keys that nest INSIDE ``properties`` (see the node wire-mapper).
 
 The guard: no view column is ever named after one of these. They are projection-source-excluded
 by construction (the generator reads only ``decl['events']``), so this tuple is a belt-and-braces
-assertion the parity tests pin, not a filter the generator applies.
+assertion the parity tests pin, not a filter the generator applies. Module-internal
+(``_``-prefixed): the parity test imports it from this module directly; it is deliberately absent
+from ``__all__`` and never re-exported — not consumer surface.
 """
 
 # The Postgres type each declared PropType casts to in the typed view.

@@ -162,3 +162,9 @@ if the builder finds one is needed.
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** verdict SOUND, no criticals; 2 suggestions — the test-fidelity divergence is on-record (no action), the export-parity gap deferred to the E17 improvement pass
 - **Cross-story seams exposed:** the warehouse path is now **config-selectable** — `warehouse_dsn` present ⇒ `WarehouseQueryAdapter` (first rung, wins over HTTP), constructed via the from-config factory that builds the S3 `DbExecute` from the DSN and injects it; the adapter holds only the `DbExecute` (never a DSN/handle). **E18** fills the adapter's stub method bodies against `this.dbExecute`/`self._db_execute` — no seam/factory change needed. **E19** mirrors the pinned `warehouse_dsn` field shape onto the receiver config.
+
+## Follow-up
+
+> E17 improvement pass (2026-07-14) — verified clean by architect-reviewer.
+
+- Aligned the warehouse-adapter export posture to the HTTP-adapter precedent (config-only in both trees): narrowed Python's public `__init__` to stop exporting `WarehouseQueryAdapter`/`create_warehouse_query_adapter`/`create_warehouse_query_adapter_from_config` (submodule-only now); TS already matched. Both trees now reach the warehouse adapter only via `createQueryClient`/`create_query_client`. **Bar B verified intact** — a `warehouse_dsn` config still resolves to the warehouse adapter. (reviewer suggestion — export-parity gap)
