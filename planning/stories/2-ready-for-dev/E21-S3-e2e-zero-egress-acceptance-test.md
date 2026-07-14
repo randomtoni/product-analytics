@@ -48,11 +48,12 @@ counts get verified against a real SQL engine, not a fake.
      never even constructed) — AND that the queried rows are the ones the receiver wrote
      (results-provably-from-Neon).
 - **Provision the throwaway Postgres** for the test: dev — `docker run --rm postgres:16` (fresh
-  schema/DB per run); CI — a GitHub Actions `services: postgres:16` block with a `pg_isready`
-  health-check and `DATABASE_URL` in the job env. PG **≥16** floor (the E17-S2 `pg_input_is_valid`
-  view). Whether the CI Postgres tier is a new standalone `ci.yml` or a job added to an existing gate
-  workflow is a packaging call for the builder — the `services: postgres:16` mechanism is the same
-  either way.
+  schema/DB per run). PG **≥16** floor (the E17-S2 `pg_input_is_valid` view). **The E1 test is PROVEN
+  in this story against a local Docker `postgres:16`**, and left CI-ready via the needs-Postgres tier
+  (the marker / `skipIf` + the turbo `env` cache-key). **Do NOT author a CI workflow in this story** —
+  RESOLVED (user, 2026-07-14): option (a), proven-locally + marker-gated, no new CI pipeline this cycle.
+  Authoring the project's first push/PR test-gate workflow (with a `services: postgres:16` job) is a
+  DEFERRED follow-up — recorded, not built here.
 
 ### Out
 
@@ -65,8 +66,11 @@ counts get verified against a real SQL engine, not a fake.
 ## Acceptance criteria
 
 - [ ] The needs-Postgres tier is deselected in the fast inner loop (`cd python && uv run pytest`;
-      `cd ts && pnpm turbo run test`) with `DATABASE_URL` unset, and RUNS in CI with Postgres
-      provisioned — in both trees, symmetrically.
+      `cd ts && pnpm turbo run test`) with `DATABASE_URL` unset, and RUNS when opted into
+      (`uv run pytest -m needs_postgres` / a `DATABASE_URL`-set `turbo run test`) — **PROVEN in this
+      story against a local Docker `postgres:16`**, in both trees, symmetrically. (Authoring a CI
+      workflow to run it on push/PR is a DEFERRED follow-up per the user decision — the tier is
+      CI-ready; the pipeline is not built here.)
 - [ ] The E1 test runs the full loop end-to-end against a real Postgres ≥16: migrate → capture via
       the receiver → query → evaluate flags — with no manual steps.
 - [ ] The recording-transport log is asserted EMPTY of `/api/projects/.../query/`, `/flags/`,
@@ -163,9 +167,12 @@ F). The full test-integration design is the architect consult below — pin it v
   that would introduce the regression this tier catches). The needs-Postgres TIER MECHANISM (marker
   + addopts; `skipIf` + `env` cache-key) is self-contained and builder-implementable as scoped here.
   But "runs in CI" presumes a test-gate workflow that does not exist — standing that up is net-new CI
-  infrastructure. This crosses the refine/redesign line, so it is FLAGGED for user input (see the
-  epic-level Concern), not silently absorbed into the builder's discretion. — architect (2026-07-14)
-  + story-refiner
+  infrastructure. This crosses the refine/redesign line, so it was FLAGGED for user input. **RESOLVED
+  (user, 2026-07-14): option (a) — proven-locally + marker-gated. S3 does NOT author a CI workflow; the
+  needs-Postgres tier is left CI-ready and the E1 test is PROVEN against a local Docker `postgres:16`.
+  Standing up the project's first push/PR test-gate CI workflow (with a `services: postgres:16` job) is
+  a DEFERRED follow-up — recorded, not this cycle — consistent with the zero-extra-infra posture.** —
+  architect (2026-07-14) + story-refiner; user-resolved 2026-07-14
 - **PG ≥16 floor + cast caveat (carry-over notes).** The generated `events_typed` view uses
   `pg_input_is_valid` (PG16) — a PG15 consumer gets a view that errors at creation, so E1 provisions
   ≥16 (and the S4 recipe states the floor). Carry a note that `text→timestamptz` casts are
