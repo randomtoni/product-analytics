@@ -1,6 +1,6 @@
 ---
 id: E20-FF-fully-local-flags
-status: active
+status: done
 area: feature-flags
 touches: [feature-flags, node, adapters]
 api_impact: additive
@@ -51,8 +51,8 @@ consumer config.
 
 ## Stories
 
-- **[E20-S1](../stories/2-ready-for-dev/E20-S1-neutral-flag-definition-type.md)** *(additive, no deps)* — a purpose-designed NEUTRAL consumer-facing `FeatureFlagDefinition` type (TS interface + parity Python TypedDict, neutral vocabulary) + a pure lowering to the wire `DefinitionSnapshot` the evaluator reads, with seed-time Zod/Pydantic validation; the versioned additive contract the consumer authors instead of the raw wire shape.
-- **[E20-S2](../stories/2-ready-for-dev/E20-S2-static-definitions-config-seeding.md)** *(additive, depends on E20-S1)* — a config field taking the neutral definition set and seeding the `DefinitionSnapshot` directly (via S1's lowering), bypassing the poller fetch; the zero-infra self-host default; evaluator unchanged; zero `/flags/` calls; local-only posture documented.
+- **[E20-S1](../stories/5-done/E20-S1-neutral-flag-definition-type.md)** *(done — `6c1b986`)* — a purpose-designed NEUTRAL consumer-facing `FeatureFlagDefinition` type (TS interface + parity Python TypedDict, neutral vocabulary) + a pure lowering to the wire `DefinitionSnapshot` the evaluator reads, with seed-time validation (TS `Error` / Python Pydantic). **Public surface verified structurally neutral in the built `.d.ts`** (zero wire tokens); the closed 23-token operator union is the versioned additive contract the consumer authors instead of the raw wire shape.
+- **[E20-S2](../stories/5-done/E20-S2-static-definitions-config-seeding.md)** *(done — `7e5c8a6`)* — a config field taking the neutral definition set + a **SEEDED `DefinitionPoller` mode** (structurally no-fetch: no URL/credential/transport) seeding the `DefinitionSnapshot` directly (via S1's lowering); the adapter resolve path + evaluator **byte-unchanged**; **zero `/flags/` calls, structurally**; the zero-infra self-host default.
 
 **Deferred / future follow-up (NOT built this cycle):** a Neon `flag_definitions` table + a
 warehouse-backed definition source (for consumers who prefer definitions in Neon over static config).

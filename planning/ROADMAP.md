@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-14 — Self-host cycle (E17–E21) in flight; **E17 substrate + E18 query + E19 ingest receiver shipped** (full capture→store→query loop on Neon); E20 (local flags) + E21 (acceptance gate) remain
+Last updated: 2026-07-14 — Self-host cycle (E17–E21) in flight; **E17–E20 shipped** (full capture→store→query loop on Neon + fully-local flags, zero remote calls); only **E21 (acceptance gate + recipe)** remains
 
 ## Status
 
@@ -53,11 +53,11 @@ concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python par
   FastAPI / ASGI + TS Express / Next-route / plain-handler mounts, all over one neutral core + a
   C-symmetric `warehouse_dsn` from-config factory. **Write side complete — capture→store→query runs on
   the consumer's own Neon.**
-- **[E20-FF-fully-local-flags](epics/E20-FF-fully-local-flags.md)** *(active)* — consumer-supplied static flag
-  definitions seeding the snapshot directly (zero-infra self-host default, evaluator unchanged), closing
-  the last remote flag dependency; Neon `flag_definitions` table is an additive deferrable follow-up.
-  Concern 1 RESOLVED (user, 2026-07-14): a **neutral consumer-facing definition type + internal mapping**
-  (Bar-A-clean) — the consumer never authors the raw wire shape (adds one story).
+- **[E20-FF-fully-local-flags](epics/done/E20-FF-fully-local-flags.md)** *(done)* — a **neutral consumer-facing
+  `FeatureFlagDefinition` type** (public, structurally neutral — the consumer never authors the raw wire
+  shape) + consumer-supplied static definitions seeding the snapshot via a structurally-no-fetch seeded
+  poller (evaluator byte-unchanged). **Last remote flag dependency closed — self-host flag eval makes
+  provably zero remote calls.** Neon `flag_definitions` table is a deferred additive follow-up.
 - **[E21-OBS-protocol-neutrality-gate](epics/E21-OBS-protocol-neutrality-gate.md)** — the capstone: a
   second, orthogonal (behavioral) neutrality gate — standing factory-selection assertion + end-to-end
   zero-egress acceptance test against real/local Postgres — plus the honest self-host recipe doc.
