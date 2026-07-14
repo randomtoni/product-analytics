@@ -390,6 +390,162 @@ flow through the identical `createAnalytics(config, adapter, deps)` call. The sw
 
 Consumer code is byte-identical across the swap — only which adapter the seam selected differs.
 
+## Self-host recipe: run the loop on your own Neon
+
+The library ships **two selectable backends behind the same seam**, and neither is privileged in the
+code:
+
+- **the default HTTP backend** — an ingest host + project key write the batch wire and a query
+  endpoint serves the reads (the `ingestHost` / `queryEndpoint` config above);
+- **the self-host warehouse backend** — capture → store → query runs entirely against **your own
+  Neon Postgres**, with **zero HTTP calls to any hosted analytics service**.
+
+This section is the provider-swap walkthrough for the self-host backend: the full stand-up, the
+config levers, and — stated honestly — the external prerequisites. It is **provisioning and
+configuration, not config-only magic**: you provision a database, run a migration, install a driver,
+author your flag definitions, and mount a handler. None of it edits the library; all of it is
+your own code and config.
+
+### What you provision (the honest prerequisites)
+
+The self-host loop has real external prerequisites. Named plainly:
+
+1. **A Neon Postgres database and its DSN.** You create the database; the library never provisions
+   infrastructure.
+2. **The migration, run once against that database.** The library generates the DDL; you execute it.
+3. **The optional warehouse driver, installed.** The Postgres driver ships as an **optional peer
+   dependency** so importing the node package without a warehouse never requires it — the self-host
+   path needs it present.
+4. **Your static flag definitions, authored.** The zero-infra flag posture evaluates in-process from
+   definitions you write; you supply them.
+5. **A mounted receiver handler.** The write endpoint is a handler you mount on your own server.
+
+**Postgres ≥16 is required.** The generated typed view uses `pg_input_is_valid`, a Postgres-16
+function, for its safe casts — a Postgres-15 database gets a view that **errors at creation**. Neon
+runs 16/17/18, so a fresh Neon database satisfies the floor. State this to your operator before you
+provision.
+
+### 1. Run the migration against your Neon
+
+`buildMigrationSql(taxonomy)` (from `@randomtoni/analytics-kit-node`) returns the idempotent
+migration for **your** taxonomy: the fixed `events` table DDL followed by a generated typed view
+(one safe-cast column per declared event property). It emits a SQL string and executes nothing — you
+run it against your Neon DSN with whatever migration tooling you already use. Re-running is safe
+(`CREATE TABLE IF NOT EXISTS` + `CREATE OR REPLACE VIEW`).
+
+```ts
+import { buildMigrationSql } from "@randomtoni/analytics-kit-node";
+
+const sql = buildMigrationSql(taxonomy); // run this string against your Neon database once
+```
+
+The typed view is generated **from the same taxonomy** you already declared for capture — one
+vocabulary, both the write shape and the queryable columns.
+
+### 2. Install the warehouse driver
+
+The default warehouse driver is an **optional peer dependency** — install `pg` (node-postgres)
+alongside the node target. The node package imports clean without it (the driver loads lazily on
+first execution), so only a self-host consumer takes the dependency:
+
+```sh
+npm install @randomtoni/analytics-kit-node pg
+```
+
+### 3. Supply `warehouseDsn` — the single self-host signal
+
+Selection is **by field presence, not a `backend:` enum**. Supplying `warehouseDsn` is the one
+signal that selects the warehouse query adapter and the DSN-backed receiver; absent it, the same
+factories select the HTTP backend or a silent no-op. `createQueryClient`
+(`packages/node/src/query/create-query-client.ts`) routes to the `WarehouseQueryAdapter` the moment a
+`warehouseDsn` is present:
+
+```ts
+import { createQueryClient } from "@randomtoni/analytics-kit-node";
+
+const queries = createQueryClient({
+  taxonomy,
+  warehouseDsn: process.env.WAREHOUSE_DSN, // presence selects the warehouse read path
+});
+```
+
+The same `taxonomy`, identity mapping, allowlist, and event names you use for the default backend
+carry over **unchanged** — only this one config field differs.
+
+### 4. Author your static flag definitions (zero-infra, local-only)
+
+The self-host flag posture evaluates flags **in-process** from definitions you author — no flag
+service, no flag-definitions endpoint, no network round-trip. Supply your neutral
+`FeatureFlagDefinition[]` on `staticDefinitions` and set `onlyEvaluateLocally: true`; the client polls
+nothing and evaluates every flag against the `FlagContext` locally
+(`packages/node/src/flags/create-flag-client.ts`):
+
+```ts
+import { createFlagClient } from "@randomtoni/analytics-kit-node";
+
+const flags = createFlagClient({
+  taxonomy,
+  key: process.env.ANALYTICS_KEY!,
+  staticDefinitions: myFlagDefinitions, // FeatureFlagDefinition[] you author
+  onlyEvaluateLocally: true,            // in-process only; zero flag-service calls
+});
+```
+
+An empty `staticDefinitions` set seeds an empty, flags-off client (a dev-time warning fires) — supply
+at least one definition. A malformed set throws at client construction, not lazily at first eval.
+
+### 5. Mount the receiver
+
+The write endpoint is a **receiver** you mount on your own server.
+`createReceiverFromConfig({ warehouseDsn })`
+(`packages/node/src/receiver/create-receiver-from-config.ts`) reads the DSN, builds the default driver
+from it, and returns a framework-agnostic `Receiver`. Hand that `Receiver` to the mount for your
+framework — Express (`createExpressReceiver`), Next route or API
+(`createNextRouteReceiver` / `createNextApiReceiver`), or a plain handler (`createReceiverHandler`):
+
+```ts
+import { createReceiverFromConfig, createExpressReceiver } from "@randomtoni/analytics-kit-node";
+
+const receiver = createReceiverFromConfig({ warehouseDsn: process.env.WAREHOUSE_DSN });
+app.post("/ingest", createExpressReceiver(receiver)); // your route, your server
+```
+
+A receiver with **no** `warehouseDsn` throws a clear neutral error at construction rather than
+silently accepting and dropping events — a write with nowhere to go is a misconfiguration, not an
+empty-success.
+
+### Same app code, only the config differs (Bar A + Bar B)
+
+The self-host config uses the **same taxonomy, identity mapping, allowlist, and event names** as the
+default-backend config. **No consumer code changes** — the call sites (`track` / `identify` / `group`
+/ the query primitives) are byte-identical across the swap. Only the configuration and the mounted
+handler differ:
+
+- **Bar A** (provider-swap = one adapter, zero consumer change): the warehouse adapter and the
+  DSN-backed receiver are the "one adapter"; every call site stays put.
+- **Bar B** (new-app adoption = config only, zero library change): a new app stands up self-host by
+  **config + migration + mount** — nothing under `packages/**` is edited.
+
+The default backend stays **one selectable backend among two** — not the default-by-privilege, not
+the only one. Self-host is selected purely by supplying `warehouseDsn`.
+
+### Query-time expectations (self-host reads)
+
+Two behaviors are inherent to running SQL over your own Postgres — expectations to know, not
+defects:
+
+- **`text → timestamptz` casts are session-dependent for ambiguous inputs.** A timestamp string with
+  an ambiguous field order is resolved against the session's `DateStyle` / `TimeZone` settings. This
+  is inherent to the cast, not an error — pin those session settings if your ingested timestamps are
+  ambiguous.
+- **The retention breakdown groups per `(distinct_id, cohort_bucket, value)`.** An actor with two
+  breakdown values in one cohort week lands in **both** breakdown cohorts — one row per distinct
+  breakdown value, by design.
+- **Breakdown keys must be declared event properties.** A breakdown groups on the taxonomy-declared
+  typed-view column; an **undeclared breakdown key raises at query-build time**, before any SQL runs.
+  Declare the property in your taxonomy (so the migration projects its column) and the breakdown works
+  end to end.
+
 ### The query-side precedent (already met)
 
 Bar A is **already met on the query side**, shipped. Two adapters sit behind ONE

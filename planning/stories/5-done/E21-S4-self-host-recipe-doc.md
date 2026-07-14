@@ -122,6 +122,20 @@ prerequisites + PG ≥16 floor + cast caveat), and `## Notes` (F — honest exte
   — otherwise it silently escapes the neutrality gate. This is a documentation-only story (no
   src/tests change), but the doc IS gated. — story-refiner (2026-07-14)
 
+> Reviewer suggestion (2026-07-14) → E21 improvement pass (cosmetic): the Python recipe snippets use
+> `os.environ[...]` without showing `import os` (TS uses the global `process.env`); add `import os` so
+> each Python block is copy-paste self-contained.
+> Reviewer suggestion (2026-07-14) → E21 improvement pass (cosmetic): the `text→timestamptz` caveat is
+> about the typed view's `date`-column cast specifically — add a ~5-word qualifier so a reader doesn't
+> conflate it with the deliberately session-immune bucket labels (`to_char`).
+
 ## Shipped
 
-<!-- Filled by /implement-epics on move to 5-done. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files changed:** `ts/README.md` (new "Self-host recipe" section), `python/README.md` (parity section) — documentation only
+- **New public API:** none — a consumer-facing recipe
+- **Tests added:** none (doc-only); verified against the standing neutrality gates (the README IS a scanned doc target)
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP (no criticals) — the recipe is genuinely NEUTRAL (role-named backends "the default HTTP backend" / "the self-host warehouse backend", "neither privileged in the code"; PostHog named nowhere; zero vendor/hostname/`$`-token), ACCURATE (every cited symbol + behavior cross-checked against shipped TS + Python source), and HONEST (all 5 prerequisites named as provisioning/config + the PG≥16 floor grounded in `pg_input_is_valid`; no "config-only" over-claim). Bar A/B + the three query-time caveats (timestamptz session-dependence, retention breakdown grouping, declared-breakdown-keys) all match reality. 2 cosmetic suggestions above
+- **Cross-story seams exposed:** **the self-host cycle's consumer-facing capstone.** A consumer follows the recipe (migration → `warehouse_dsn` → driver extra → static flags → receiver mount) to run capture→store→query+flags on their own Neon with zero PostHog calls and zero call-site change (Bar A/B). Neutrality is now enforced on the most consumer-visible surface (the README passes `pnpm neutrality-scan` + the Python analog). **E21 (and the whole self-host cycle) closes with this.**
