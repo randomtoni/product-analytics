@@ -27,13 +27,21 @@ vendor-neutral, versioned contract.
   `ensure_experience_continuity` / `multivariate` / index-based tokens), at TS/Python parity:
   - **TS** (`ts/packages/node/src/flags/local/neutral-definition.ts`): `FeatureFlagDefinition`
     interface + supporting `FlagCondition`, `PropertyFilter`, `FlagVariant`, `FlagFilterValue`, and the
-    closed `FlagFilterOperator` union. Type re-exported from the node package's public surface (the new
-    consumer-INPUT surface, distinct from the frozen `FeatureFlagPort`/`FlagSet`/`FlagContext` eval
-    surface — do NOT re-open those).
+    closed `FlagFilterOperator` union. Re-exported from the node package's PUBLIC barrel
+    `ts/packages/node/src/index.ts` (add an `export type { FeatureFlagDefinition, FlagCondition,
+    PropertyFilter, FlagVariant, FlagFilterValue, FlagFilterOperator } from './flags/local/neutral-definition'`,
+    alongside the existing `FlagClientConfig` / eval-surface re-exports) — the new consumer-INPUT
+    surface, distinct from the frozen `FeatureFlagPort`/`FlagSet`/`FlagContext` eval surface (do NOT
+    re-open those). Do NOT export it from the `local/index.ts` sub-barrel, which is the
+    adapter-internal wire barrel ("NOT from the node package's own index.ts").
   - **Python** (`python/src/analytics_kit/flags/local/neutral_definition.py`): parity `TypedDict`s
     (`FeatureFlagDefinition`, `FlagCondition`, `PropertyFilter`, `FlagVariant`) + the `Literal`
     `FlagFilterOperator` union. snake_case field names (`property_filters`, `rollout_percentage`,
-    `variant_override`) vs TS camelCase — identical concept, idiomatic expression.
+    `variant_override`) vs TS camelCase — identical concept, idiomatic expression. Re-export for parity
+    the same way `FlagClientConfig` flows: surface it from the `analytics_kit.flags` barrel
+    (`python/src/analytics_kit/flags/__init__.py`) and then from the top-level
+    `python/src/analytics_kit/__init__.py` + its `__all__` — NOT from the internal `flags/local/__init__.py`
+    barrel (that one is explicitly "not re-exported from the public package").
 - A pure lowering function (`lowerDefinitions` / `lower_definitions`) mapping
   `FeatureFlagDefinition[]` → the wire `DefinitionSnapshot` the evaluator consumes, at TS/Python parity.
   `group_type_mapping` and `cohorts` are EMPTY by design in v1 (no group-aggregation, no cohort refs).
@@ -61,8 +69,10 @@ vendor-neutral, versioned contract.
 - [ ] `FeatureFlagDefinition` (+ supporting types) exist at TS/Python parity, named in neutral
       vocabulary — zero `filters.groups` / `ensure_experience_continuity` / `aggregation_group_type_index`
       / `multivariate`-style tokens on the consumer-facing type. Both neutrality scans stay green.
-- [ ] The neutral type is exported from the node package's public surface as a consumer-INPUT type,
-      distinct from the frozen eval surface (`FeatureFlagPort`/`FlagSet`/`FlagContext` unchanged).
+- [ ] The neutral type is exported from the node package's PUBLIC barrel as a consumer-INPUT type
+      (TS: `ts/packages/node/src/index.ts`; Python: `analytics_kit.flags` → top-level `analytics_kit`
+      `__init__`/`__all__`), NOT from the adapter-internal `local` sub-barrel; distinct from the frozen
+      eval surface (`FeatureFlagPort`/`FlagSet`/`FlagContext` unchanged).
 - [ ] `lowerDefinitions` / `lower_definitions` maps a neutral definition set to a `DefinitionSnapshot`
       losslessly for every in-scope capability; `group_type_mapping` and `cohorts` are empty.
 - [ ] A neutral definition set lowered through the mapping evaluates identically (same `FlagValue`,
@@ -87,7 +97,12 @@ Ground the wire target in `ts/packages/node/src/flags/local/definition-types.ts`
 `rollout_percentage` → `rolloutPercentage` / `rollout_percentage`; condition `variant` →
 `variantOverride`; `filters.multivariate.variants` → flat `variants[]` (presence ⇒ multivariate,
 absence ⇒ boolean); `active` → `enabled`; `FlagProperty.key` → `property`; `.negation` → `negated`;
-`filters.payloads` → `payloads` (keyed by RESOLVED value: a variant key, or `'true'`/`'false'`).
+`filters.payloads` → `payloads` (keyed by RESOLVED value: a variant key, or `'true'`). NOTE: a
+`'false'` key is UNREACHABLE under local eval — the resolver returns early on a `false`-resolved flag
+BEFORE any payload lookup (`resolveLocalPayload` `if (value === false) return undefined` /
+`_resolve_local_payload` `if value is False: return None`), so an off-state payload never fires. The
+reachable key set is variant-key | `'true'` only; see the validation note for the dead-`'false'`-key
+stance.
 
 TS shape (mirror idiomatically in Python `TypedDict`s + a Pydantic validation layer):
 ```ts
@@ -96,7 +111,7 @@ export interface FeatureFlagDefinition {
   enabled: boolean;                  // wire: active. false ⇒ always resolves to false.
   conditions?: FlagCondition[];      // OR-ed. omitted/empty ⇒ nothing matches ⇒ false.
   variants?: FlagVariant[];          // present ⇒ multivariate; absent ⇒ boolean.
-  payloads?: Record<string, unknown>;// keyed by resolved value (variant key | 'true' | 'false')
+  payloads?: Record<string, unknown>;// keyed by resolved value (variant key | 'true'; 'false' is dead — see below)
 }
 export interface FlagCondition {
   propertyFilters?: PropertyFilter[];// AND together
@@ -119,6 +134,17 @@ semver_gte | semver_lt | semver_lte | semver_tilde | semver_caret | semver_wildc
 place we diverge from the wire's open `operator?: string` — a closed union IS the consumer contract
 and what the validator checks. Keep it additive-only (adding an operator = non-breaking; renaming =
 breaking). — architect (2026-07-14)
+
+**Operator union — VERIFIED COMPLETE against the real evaluator (refinement, 2026-07-14).** The 23
+tokens above are EXACTLY the property-comparison operators `match_property` / `matchProperty` handles
+(`ts/.../flags/local/match-property.ts` `switch` cases + the `is_not_set` branch handled before the
+switch; `python/.../flags/local/match_property.py` string comparisons + the `_SEMVER_COMPARISON_OPERATORS`
+/ `_SEMVER_RANGE_OPERATORS` tuples). No operator the engine supports is missing; none is listed that
+it doesn't handle. `match_property` is the SOLE operator-switching site — the evaluator only feeds
+plain-property filters to it. The cohort-membership operators (`in` / `not_in`) and the flag-dependency
+`type: 'flag'` are handled in `_is_condition_match` / `match_cohort`, NOT in `match_property`, and their
+capabilities (cohort refs, flag-deps) are scoped OUT of neutral v1 — so they correctly do NOT appear
+in this property-filter operator union. — refinement (2026-07-14)
 
 **The mapping (pure lowering, neutral → wire `FlagDefinition` → snapshot).** Per-flag:
 `key`→`key`; `enabled`→`active`; `conditions[]`→`filters.groups[]`;
@@ -158,6 +184,19 @@ string-folds, so over-strict `value` typing would diverge from eval semantics; r
 broken. Throw the same error type the config layer already throws for a bad `FlagClientConfig`. —
 architect (2026-07-14)
 
+**Dead `'false'` payload key — WARN, never reject; deadness stays adapter-side (architect,
+2026-07-14).** A `'false'` key in a definition's `payloads` map is UNREACHABLE (the local resolver
+returns early on a `false`-resolved flag before any payload lookup — see the vocabulary-map note), but
+it is harmless (it just sits unread). Do NOT hard-reject it: a definition carrying a `'false'` payload
+round-trips fine from a remote source, so rejecting at seed time would introduce a static-vs-remote
+asymmetry. Do NOT silently swallow it either — an off-state payload is almost always a consumer
+mistake. So: accept the definition and emit a DEV-TIME WARNING naming the dead key. Scope the
+deadness to the local static-seed validator ONLY — do NOT encode "false is dead" into the neutral
+`FeatureFlagDefinition` TYPE (e.g. a keyed union excluding `'false'`): the type is the consumer seam
+and a future non-PostHog adapter might resolve off-state payloads differently. Keep the type's
+`payloads?: Record<string, unknown>` permissive; the reachability warning is an adapter-internal
+mechanic of THIS resolver's early-return, not a neutral-contract invariant. — architect (2026-07-14)
+
 **Versioned additive contract (architect rider 2 — CONFIRMED).** The neutral type shares no structural
 identity with the wire shape (different names, flat vs nested, closed vs open operator, no `filters`
 wrapper); the mapping is the ONLY thing that knows both. A future adapter negotiating a different
@@ -167,10 +206,23 @@ breaking-change risks to keep deliberate: the operator union (keep additive-only
 contract (document it; it couples to the `FlagValue = string|boolean` resolution scheme), and the
 keep-disabled-flags-in-snapshot decision (pin in v1). — architect (2026-07-14)
 
+**S1 → S2 handoff (coordination — refinement, 2026-07-14).** `lowerDefinitions` / `lower_definitions`
+must return a COMPLETE `DefinitionSnapshot` (the wire type in `definition-types.ts` /
+`definition_types.py`) — `flags` (the lowered array), `flagsByKey`/`flags_by_key` (indexed by key,
+keeping DISABLED flags in), `groupTypeMapping`/`group_type_mapping` = {}, `cohorts` = {} — so S2 can
+wrap it directly in a seeded `DefinitionPoller` with NO further transformation. S2 relies on this being
+the exact shape the poller's `_parse_definitions`/`fetchDefinitions` builds (verified against both
+trees) so the UNCHANGED adapter reads it identically. Keep the readiness contract in mind: the lowered
+snapshot must have non-empty `flags` for a non-empty authored set (S2's seeded poller reports ready via
+the same `is_ready()` gate: `loadedSuccessfullyOnce && flags.length > 0`). — refinement (2026-07-14)
+
 **Parity.** The neutral type, the lowering, and the validator must be identical in concept across
 `ts/` and `python/`; only field-name casing and the schema tech (Zod vs Pydantic, interface vs
 TypedDict) differ. A parity test asserts the two lowerings produce equivalent snapshots for the same
-authored set (mirror the existing `local-parity.test.ts` posture).
+authored set (mirror the existing `local-parity.test.ts` posture — which uses `filters.groups` /
+`filters.multivariate.variants` / `filters.payloads` fixtures keyed by stringified value `true` /
+variant-key, NEVER a `false` key: the values-known-correct external contract the lowering output must
+match).
 
 ## Shipped
 

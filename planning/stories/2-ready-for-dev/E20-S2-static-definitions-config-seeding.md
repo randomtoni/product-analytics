@@ -31,9 +31,15 @@ unchanged.
   `lower_definitions` and seed the `DefinitionSnapshot` DIRECTLY into the local-eval path — the poller
   fetch is NOT started for the definition source. Validation runs loudly at seed time (S1's validator);
   malformed definitions fail at client construction.
-- The static path selects a local-capable adapter (as `definitionsEndpoint` + `definitionsKey` do
-  today), but with a config-sourced snapshot and NO definitions URL / NO fetch. With static definitions
-  + local-only eval the flag client makes ZERO `/flags/` calls and has no flag/definitions URL.
+- The static path selects a local-capable adapter with a config-sourced snapshot and NO definitions
+  URL / NO fetch. IMPORTANT: today the local-capable selector (`_build_local_capability` /
+  `buildLocalCapability`) gates on BOTH `definitions_endpoint` AND `definitions_key` being present — a
+  self-host consumer supplying static definitions supplies NEITHER. So the presence-based selection
+  ladder must gain a NEW branch: `static_definitions` present ⇒ build the local capability with a
+  SEEDED poller (no endpoint, no credential — see Technical notes), WITHOUT falling through to the
+  no-op the `key`-but-no-route path yields today. Keep the existing endpoint+credential branch intact
+  (the poller path is untouched). With static definitions + local-only eval the flag client makes ZERO
+  `/flags/` calls and has no flag/definitions URL.
 - Document the local-only-by-default self-host posture: static definitions are the recommended
   zero-infra default; local-only-by-default; how it satisfies zero-`/flags/`-egress.
 - Tests (both trees): a client configured with static definitions + local-only makes zero definition
@@ -79,22 +85,51 @@ fallback — `python/src/analytics_kit/flags/adapter.py`, TS `ts/packages/node/s
 only relocates the DEFINITION SOURCE from the poller fetch to config; the evaluator is unchanged and the
 poller path is untouched (static seeding is ADDED alongside it).
 
-**Seed the same snapshot shape the poller holds.** Study how the poller builds/holds the snapshot so
-the seed path produces the identical shape the evaluator reads:
-- Python: `python/src/analytics_kit/flags/local/definition_poller.py` `_parse_definitions` builds a
-  `DefinitionSnapshot(flags, flags_by_key, group_type_mapping, cohorts)` and swaps it in atomically;
-  the adapter's local path reads `poller.get_snapshot()` and gates on `is_ready()`. The static path must
-  produce an equivalent ready snapshot without the fetch — reuse S1's `lower_definitions` for the
-  `flags` / `flags_by_key`; `group_type_mapping` and `cohorts` are empty in v1 (S1).
-- TS: parity via `ts/packages/node/src/flags/local/definition-poller.ts` +
-  `create-flag-client.ts` / `http-flag-adapter.ts`.
-- Match the poller's readiness contract: a seeded snapshot must be treated as READY (non-empty flags)
-  so local eval runs immediately without waiting on `wait_for_first_load` — there is no fetch to wait on.
+**Seed via a SEEDED POLLER — the confirmed seam (architect, 2026-07-14).** The adapter reads ALL
+local eval through `local.poller` — the `is_ready()`/`isReady()` gate + `get_snapshot()`/`getSnapshot()`
+read — and drives lifecycle through `poller.start()` (called unconditionally in the adapter
+constructor) + `poller.stop()`. `is_ready()` is `loadedSuccessfullyOnce && snapshot.flags.length > 0`,
+a flag flipped ONLY inside the poller's `fetchDefinitions`/`_fetch_definitions`. The static seed has no
+fetch to flip it. So DO NOT fork the adapter's resolve path with a separate static-snapshot field —
+instead construct a SEEDED `DefinitionPoller` (a seeded MODE of the same `DefinitionPoller` type, so
+the `local.poller` field type is unchanged and the adapter can't tell the difference):
+- It is constructed with the pre-lowered `DefinitionSnapshot` from S1's `lower_definitions` /
+  `lowerDefinitions` and reports `is_ready()` TRUE from construction (snapshot seeded, the
+  `loaded-successfully-once` flag set true, `flags.length > 0` holding via the lowered seed).
+- Its `start()` is a REAL no-op — no thread, no URL resolution, no fetch (the adapter's constructor
+  calls `start()` unconditionally; a seeded poller that started a thread or touched a URL would
+  reintroduce the very fetch this story bypasses).
+- Its `stop()` is an idempotent no-op that returns cleanly (no thread to join, no timer to cancel) —
+  the adapter's lifecycle calls `poller.stop()` and must pass straight through.
+- STRUCTURAL guardrail: the factory constructs the seeded poller WITHOUT the definitions endpoint /
+  privileged credential the fetching poller needs — so "no fetch, no URL, no thread" is structural (it
+  literally lacks what it would need to fetch), not merely dependent on the `start()` no-op holding.
+This keeps the adapter's `_resolve` / `resolveLocalFirst` / `stop` / `start` code path BYTE-FOR-BYTE
+unchanged (evaluator untouched, resolve branch untouched); the only new code is the seeded-poller
+construction + the factory selection. — architect (2026-07-14)
+- Python target: `python/src/analytics_kit/flags/local/definition_poller.py` (the seeded mode) +
+  `factory.py` (`_build_local_capability` selects it). TS parity:
+  `ts/packages/node/src/flags/local/definition-poller.ts` + `create-flag-client.ts` (`buildLocalCapability`).
 
-**Config-field precedent.** `FlagClientConfig` (`ts/packages/node/src/flags/config.ts`) already carries
-`definitionsEndpoint` + `definitionsKey` (poller path) + `onlyEvaluateLocally`. The static field is a
-peer selector: presence ⇒ seed the snapshot from config + skip the fetch. Follow the existing
-presence-based adapter selection ladder. — architect (via config.ts docstring)
+**Config-field precedent + the new selection branch.** `FlagClientConfig`
+(`ts/packages/node/src/flags/config.ts`, `python/.../flags/config.py`) already carries
+`definitionsEndpoint`/`definitions_endpoint` + `definitionsKey`/`definitions_key` (poller path) +
+`onlyEvaluateLocally`/`only_evaluate_locally`. Add `staticDefinitions?: FeatureFlagDefinition[]` /
+`static_definitions` as a peer field (Pydantic `extra="forbid"` means it must be a real declared field
+in the Python config, else a valid static-defs config raises loudly). The static field is a peer
+LOCAL-CAPABLE selector, but note the current ladder: `_build_local_capability` / `buildLocalCapability`
+returns `None`/`undefined` unless BOTH `definitions_endpoint` and `definitions_key` are set, and the
+factory then falls to the no-op when there's no other route. So add a branch that returns a
+local capability with a SEEDED poller when `static_definitions` is present (endpoint/credential NOT
+required), and ensure the "keyed but no route ⇒ no-op" guard treats a static-defs config as a real
+route. Do NOT build a static+poller merge/precedence layer (out of scope — static-only is the
+self-host default). — architect (via config.ts docstring; refinement 2026-07-14)
+
+**`key` requirement.** The factory's no-op branch triggers on `key is None` / `config.key === ''`.
+A local-only static-defs client still needs a `key` (the poller's `token` project scope, and the
+factory's non-no-op gate). Confirm the docs/example show a static-defs config supplying `key` +
+`staticDefinitions` + `onlyEvaluateLocally: true` (and NO `definitionsEndpoint` / `definitionsKey` /
+`flagEndpoint`) — that is the canonical zero-`/flags/` self-host shape. — refinement (2026-07-14)
 
 **Validation at the input boundary (architect rider 1).** Reuse S1's seed-time validator — this story
 calls it when reading the config field, so malformed definitions fail at client construction with the
