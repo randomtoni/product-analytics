@@ -25,6 +25,8 @@ export {
 export type { DbExecute, DbExecuteResult, DbColumn } from './query/db-execute';
 export { createDefaultDbExecute } from './query/default-db-execute';
 export type { DefaultDbExecuteConfig } from './query/default-db-execute';
+export { createReceiver } from './receiver';
+export type { Receiver, ReceiverHeaders, ReceiveOutcome } from './receiver';
 export { createFlagClient } from './flags/create-flag-client';
 export type { NodeFlagClient } from './flags/create-flag-client';
 export type { FlagClientConfig } from './flags/config';

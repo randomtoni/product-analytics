@@ -236,6 +236,24 @@ test asserts only the recorded SQL+params. Same way E18's SQL-shape tests assert
 - The mount pattern the wrappers (S2/S4) will follow: `python/src/analytics_kit/integrations/` (asgi.py,
   django.py, __init__.py lazy re-export).
 
+> Reviewer suggestion (2026-07-14) → E19 improvement pass (doc nudge): `ReceiverHeaders` shape differs
+> per tree — TS accepts `string | string[] | undefined` (reads `[0]`), Python types `Mapping[str, str]`
+> (single-valued). Defensible per-runtime idiom, but add a one-line Python docstring note that the mount
+> must pre-flatten multi-valued headers, so S2/S4 authors know the normalization obligation is asymmetric.
+> Reviewer suggestion (2026-07-14) → E21: `isBatchEnvelope` validates only that `batch` is an array;
+> per-element `WireEvent` integrity is enforced by the DB constraints (NOT NULL/UNIQUE), not the parser
+> (correct for an internal wire, Zod/Pydantic reserved for external boundaries). Forward note: a corrupt
+> element (e.g. missing `uuid`) surfaces as a **driver error at execute time, not a neutral
+> `malformed_body`** — invisible against the E17 fake, so E21's real-Postgres pass should expect that.
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this on move to stories/5-done/. Do not hand-edit. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files added:** `ts/packages/node/src/receiver/` (`receiver.ts`, `index.ts`, `receiver.test.ts`); `python/src/analytics_kit/receiver/` (`receiver.py`, `__init__.py`), `python/tests/test_receiver.py`
+- **Files changed:** `ts/packages/node/src/index.ts`, `python/src/analytics_kit/__init__.py` (receiver exports)
+- **New public API:** TS `createReceiver(dbExecute) → Receiver` (`Receiver.receive(body, headers, now?) → Promise<ReceiveOutcome>`), `ReceiverHeaders`, `ReceiveOutcome`; Python `Receiver(db_execute)` (`receive(body, headers, now?) → ReceiveOutcome`), `Accepted`/`MalformedBody`. All role-named, zero vendor token
+- **Tests added:** 19 per tree — exact upsert SQL/params, injection two-sided proof, multi-row lockstep placeholders, idempotency (`DO NOTHING` + intra-batch dup), properties verbatim jsonb + `{}` default, trait/group nesting (column list = frozen 5), receipt-time (fixed instant, one-per-batch), gzip vs raw decompress (case-insensitive), malformed/non-envelope/undecodable → neutral parse error, empty batch → zero DB calls, opaque write result — all against the E17 fake
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP (no criticals) — envelope-faithful (reuses the transport's own `WireEvent`/`WireBatchEnvelope` types → symmetric by construction), injection-safe, seam-opaque, byte-identical SQL across trees (reviewer reproduced both builders). 2 doc-nudge suggestions above
+- **Cross-story seams exposed:** **S2/S3/S4 bind to `createReceiver(dbExecute) → Receiver`** — the core takes an injected `DbExecute` and holds only it (no DSN/driver/framework). **S3** builds the `DbExecute` from `warehouse_dsn` and composes it onto `createReceiver`; **S2 (Python) + S4 (TS) mounts** translate the neutral `ReceiveOutcome` (`accepted`/`malformed_body`) to an HTTP response and pass raw body + headers in. Single multi-row `INSERT … ON CONFLICT (uuid) DO NOTHING`; receipt instant is the `now?` param. **E21:** the known Python-driver `fetchall()` write-raise (deferred) must be fixed before the real receiver writes to Neon.
