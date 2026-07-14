@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-13 — NOW set to the **Self-host backend completion (Neon-native)** area (E17–E21); the protocol-level vendor-neutrality push
+Last updated: 2026-07-14 — NOW set to the **Self-host backend completion (Neon-native)** area (E17–E21); the protocol-level vendor-neutrality push (epic-refined)
 
 ## Status
 
@@ -53,6 +53,9 @@ concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python par
 - **[E20-FF-fully-local-flags](epics/E20-FF-fully-local-flags.md)** — consumer-supplied static flag
   definitions seeding the snapshot directly (zero-infra self-host default, evaluator unchanged), closing
   the last remote flag dependency; Neon `flag_definitions` table is an additive deferrable follow-up.
+  One open user decision (Concern 1): the consumer-authored definition surface is structurally
+  PostHog-shaped today — expose it raw, or add a neutral definition type + mapping (Bar-A-clean but
+  net-new seam surface).
 - **[E21-OBS-protocol-neutrality-gate](epics/E21-OBS-protocol-neutrality-gate.md)** — the capstone: a
   second, orthogonal (behavioral) neutrality gate — standing factory-selection assertion + end-to-end
   zero-egress acceptance test against real/local Postgres — plus the honest self-host recipe doc.

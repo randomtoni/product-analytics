@@ -5,7 +5,7 @@ area: adapters
 touches: [query, node, core]
 api_impact: additive
 blocked_by: []
-updated: 2026-07-13
+updated: 2026-07-14
 ---
 
 # E17-ADP-warehouse-substrate — Warehouse substrate: events schema + typed view + DB-execute seam + config selection
@@ -101,6 +101,13 @@ Locked by architect consult (2026-07-13) — do not re-litigate in stories.
   tests), all downstream warehouse stories (E18) are buildable/testable WITHOUT a real Neon; only the
   E21 end-to-end test needs a real/local Postgres. Do NOT set a blocking `blocked_by` prerequisite on
   this epic. — architect (2026-07-13)
+  - **Extra NAME is pinned; only manifest MECHANICS defer (epic-refiner, 2026-07-14).** The extra/opt
+    slug is `warehouse` in BOTH ecosystems (Python `analytics-kit[warehouse]`, matching the existing
+    `[fastapi]` extra convention; TS an optional peer-dep) — that name is decided, NOT an implement-time
+    open question. What legitimately settles per-ecosystem at implement time is only the manifest
+    MECHANICS: the exact `pyproject.toml` `[project.optional-dependencies]` `psycopg[binary]` v3 pin vs
+    the `package.json` `peerDependencies` + `peerDependenciesMeta.optional` entry for `pg`. Pin the
+    slug now; defer only the packaging detail.
 - **The schema is a ONE-WAY DOOR (risk-3).** Freeze it as the contract doc
   (`planning/WAREHOUSE-SCHEMA-CONTRACT.md`, same rigor as `QUERY-ROW-CONTRACT.md`) and get it reviewed
   BEFORE E18/E19 start — everything binds to it. — architect (2026-07-13)

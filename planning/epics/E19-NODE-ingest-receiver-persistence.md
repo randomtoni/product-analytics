@@ -2,10 +2,10 @@
 id: E19-NODE-ingest-receiver-persistence
 status: planned
 area: node
-touches: [adapters, capture]
+touches: [node, adapters, capture]
 api_impact: additive
 blocked_by: []
-updated: 2026-07-13
+updated: 2026-07-14
 ---
 
 # E19-NODE-ingest-receiver-persistence — Ingest receiver + Neon persistence: mountable reference receiver writing the events table

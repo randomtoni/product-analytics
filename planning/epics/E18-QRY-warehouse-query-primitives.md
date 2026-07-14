@@ -5,7 +5,7 @@ area: query
 touches: [adapters, node]
 api_impact: additive
 blocked_by: []
-updated: 2026-07-13
+updated: 2026-07-14
 ---
 
 # E18-QRY-warehouse-query-primitives — Warehouse query primitives: SQL over the typed view, byte-identical neutral rows
@@ -28,8 +28,9 @@ provider swap.
 - **Rows are byte-identical to the HTTP adapter's BY CONSTRUCTION:** SQL counts are fed into the SAME
   existing row-builders (`buildTrendRows`/`buildFunnelRows`/`buildRetentionRows` TS,
   `_build_*_rows` Python) / normalizers, so `conversionRate` stays COMPUTED in the normalizer, not in
-  SQL. Proven against the shared `query-contract.fixtures` — SQL-shaped inputs produce identical
-  neutral rows.
+  SQL. Proven against the `query-contract.fixtures` (parity-by-mirror across both trees —
+  `ts/packages/node/src/query/query-contract.fixtures.ts` + `python/tests/query_contract_fixtures.py`,
+  not one shared file) — SQL-shaped inputs produce identical neutral rows.
 - `trend` / `unique_count`: date_trunc bucket + count (`count(*)` / `count(distinct distinct_id)`),
   `GROUP BY properties->>breakdown`, empty buckets zero-filled via `generate_series`.
 - `funnel`: per-actor ordered-step-within-window (strictly increasing step timestamps within
@@ -61,7 +62,8 @@ provider swap.
 - **raw_query SQL + dialect-split doc** — pass `expr` as SQL; document the SQL-vs-HogQL dialect split
   and that `raw_query` is not provider-swap-portable.
 - **row-parity vs `query-contract.fixtures`** — feed SQL-shaped inputs → assert identical neutral rows
-  (the bar-A read-side proof), at TS/Python parity against the shared fixtures.
+  (the bar-A read-side proof), at TS/Python parity against each tree's mirrored fixtures file
+  (`query-contract.fixtures.ts` / `query_contract_fixtures.py` — parity-by-mirror, not a shared file).
 
 ## Out of scope
 
@@ -108,10 +110,10 @@ Locked by architect consult (2026-07-13) + user decision — do not re-litigate 
   well-defined funnel/retention semantics with the conventions documented** (window-from-step-0; cohort
   `period_index=0`) — **no chase for byte-exact HogQL parity, and no
   posthog-source-guide-against-the-server-repo dependency.** The row-builders are already pinned from
-  E15/E16 (`QUERY-ROW-CONTRACT.md` + `query-contract.fixtures`); this epic feeds SQL counts into them,
-  it does not re-derive the wire shape.
+  E15/E16 (`QUERY-ROW-CONTRACT.md` + the parity-by-mirror `query-contract.fixtures` — one file per
+  tree, not shared code); this epic feeds SQL counts into them, it does not re-derive the wire shape.
 - **The row contract is LOCKED.** Neutral rows are fixed by `planning/QUERY-ROW-CONTRACT.md` and the
-  executable `query-contract.fixtures`. This epic produces those rows from SQL; it does not re-decide
+  executable `query-contract.fixtures` (mirrored per tree). This epic produces those rows from SQL; it does not re-decide
   the row shape.
 
 ## Expansion path
