@@ -53,7 +53,7 @@ concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python par
   FastAPI / ASGI + TS Express / Next-route / plain-handler mounts, all over one neutral core + a
   C-symmetric `warehouse_dsn` from-config factory. **Write side complete — capture→store→query runs on
   the consumer's own Neon.**
-- **[E20-FF-fully-local-flags](epics/E20-FF-fully-local-flags.md)** — consumer-supplied static flag
+- **[E20-FF-fully-local-flags](epics/E20-FF-fully-local-flags.md)** *(active)* — consumer-supplied static flag
   definitions seeding the snapshot directly (zero-infra self-host default, evaluator unchanged), closing
   the last remote flag dependency; Neon `flag_definitions` table is an additive deferrable follow-up.
   Concern 1 RESOLVED (user, 2026-07-14): a **neutral consumer-facing definition type + internal mapping**

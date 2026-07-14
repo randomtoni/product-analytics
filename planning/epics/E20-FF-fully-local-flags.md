@@ -1,6 +1,6 @@
 ---
 id: E20-FF-fully-local-flags
-status: planned
+status: active
 area: feature-flags
 touches: [feature-flags, node, adapters]
 api_impact: additive
@@ -51,23 +51,14 @@ consumer config.
 
 ## Stories
 
-<Tentative slice — story files are drafted just-in-time at implement time. The neutral-front decision
-(Notes D, resolved 2026-07-14) adds the definition-type story below the static-seeding story; the Neon
-follow-up stays additive and explicitly deferrable.>
+- **[E20-S1](../stories/2-ready-for-dev/E20-S1-neutral-flag-definition-type.md)** *(additive, no deps)* — a purpose-designed NEUTRAL consumer-facing `FeatureFlagDefinition` type (TS interface + parity Python TypedDict, neutral vocabulary) + a pure lowering to the wire `DefinitionSnapshot` the evaluator reads, with seed-time Zod/Pydantic validation; the versioned additive contract the consumer authors instead of the raw wire shape.
+- **[E20-S2](../stories/2-ready-for-dev/E20-S2-static-definitions-config-seeding.md)** *(additive, depends on E20-S1)* — a config field taking the neutral definition set and seeding the `DefinitionSnapshot` directly (via S1's lowering), bypassing the poller fetch; the zero-infra self-host default; evaluator unchanged; zero `/flags/` calls; local-only posture documented.
 
-- **neutral consumer-facing flag-definition type + internal mapping** — a purpose-designed neutral
-  definition type (TS interface + a parity Python TypedDict/dataclass) that consumers author, plus an
-  internal mapping to the `DefinitionSnapshot` the evaluator already consumes. The internal wire types
-  stay as-is; the neutral type is the versioned additive contract. TS/Python parity on the type + the
-  mapping. This is the Bar-A-clean surface the static-seeding story builds on.
-- **consumer-supplied static definitions** — a config field taking the NEUTRAL definition type and
-  seeding the `DefinitionSnapshot` (via the mapping above) directly, bypassing the poller fetch; the
-  zero-infra self-host default; evaluator unchanged; malformed definitions validated loudly at seed
-  time; document the local-only default posture.
-- **(additive, deferrable) Neon `flag_definitions` table + warehouse-backed definition fetch** — an
-  `events`-schema-adjacent `flag_definitions` table + a warehouse-backed definition source, for
-  consumers who prefer definitions in Neon over static config. Mark deferrable; not required for the
-  acceptance bar.
+**Deferred / future follow-up (NOT built this cycle):** a Neon `flag_definitions` table + a
+warehouse-backed definition source (for consumers who prefer definitions in Neon over static config).
+Additive against the same snapshot-seeding path + E17 migration mechanism; not required for the
+acceptance bar (static definitions satisfy zero-`/flags/`-egress on their own). Queue as a story only
+when the user sequences it.
 
 ## Out of scope
 
