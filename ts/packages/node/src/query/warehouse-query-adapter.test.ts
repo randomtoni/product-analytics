@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { ShapeOf, TaxonomyShape } from '@randomtoni/analytics-kit';
 import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { expect, expectTypeOf, test } from 'vitest';
@@ -9,6 +10,7 @@ import {
   createWarehouseQueryAdapter,
   createWarehouseQueryAdapterFromConfig,
 } from './warehouse-query-adapter';
+import { buildRawRows } from './warehouse-sql';
 
 const taxonomy = defineTaxonomy({
   events: { order_placed: { amount: 'number' }, signed_up: {} },
@@ -17,11 +19,9 @@ const taxonomy = defineTaxonomy({
 
 type TX = ShapeOf<(typeof taxonomy)['decl']>;
 
-const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implemented';
-
 // A fake DB-execute injected wherever the adapter is constructed — the S3 reusable seam double.
-// In S4 the stub methods still throw before ever calling it; it only has to satisfy the required
-// `dbExecute` field so the constructor typechecks (E18 will invoke it for real).
+// A default (empty-result) fake satisfies the required `dbExecute` field so the constructor
+// typechecks; the compute tests pass a canned result to drive the normalization bodies.
 const fakeExec = () => createFakeDbExecute().execute;
 
 // The `implements AnalyticsQueryClient<TX>` clause on the class compiles (checked by tsc);
@@ -86,22 +86,8 @@ test('the adapter never sees a DSN — its only injected field is the opaque DbE
 
 // Called through the AnalyticsQueryClient<TX> interface — the bar-A surface a consumer sees.
 
-// S1 fills `trend`/`uniqueCount`; S2 fills `funnel`; S3 fills `retention`; `rawQuery` remains the
-// S4 fill-in seat and still throws the neutral not-implemented error.
-
-test('the still-unimplemented method rejects with the neutral not-implemented error (no vendor leak)', async () => {
-  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fakeExec() });
-
-  await expect(client.rawQuery('SELECT 1')).rejects.toThrow(NOT_IMPLEMENTED);
-});
-
-test('the not-implemented error message names no vendor', async () => {
-  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fakeExec() });
-  for (const run of [() => client.rawQuery('SELECT 1')]) {
-    await expect(run()).rejects.toThrow(/^analytics: /);
-    await expect(run()).rejects.not.toThrow(/posthog/i);
-  }
-});
+// S1 fills `trend`/`uniqueCount`; S2 fills `funnel`; S3 fills `retention`; S4 fills `rawQuery` —
+// the last stub. Every primitive now COMPUTES through the injected seam (see the per-block tests).
 
 // --- S1: trend + uniqueCount COMPUTE through the injected DbExecute seam --------------------
 
@@ -1037,4 +1023,117 @@ test('the generated retention SQL matches the canonical cross-tree string (byte-
   await client.retention(retentionSpec);
 
   expect(fake.calls[0].sql).toBe(CANONICAL_RETENTION_SQL);
+});
+
+// --- S4: rawQuery passes `expr` to the seam AS SQL; columns-present zip normalization --------
+
+// A canned raw result: a driver-reported column schema + positional cell rows — exactly what a
+// `SELECT` over the consumer's own schema produces. The zip keys each positional cell by column
+// order, so the neutral rows are column-keyed objects (the consumer's own projection, already
+// neutral). The column types are the driver-reported SELECT schema, stamped on `columns`.
+const rawResult: DbExecuteResult = {
+  columns: [
+    { name: 'event', type: 'text' },
+    { name: 'n', type: 'int8' },
+  ],
+  rows: [
+    ['order_placed', 1200],
+    ['signed_up', 4300],
+  ],
+};
+
+const RAW_EXPR = 'SELECT event, count(*) AS n FROM events_typed GROUP BY event';
+
+test('rawQuery passes `expr` to the seam VERBATIM as SQL (no HogQL/kind wrapping, no params)', async () => {
+  const fake = createFakeDbExecute(rawResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  await client.rawQuery(RAW_EXPR);
+
+  expect(fake.calls).toHaveLength(1);
+  // `expr` reaches the seam UNCHANGED — the raw SQL is passed verbatim.
+  expect(fake.calls[0].sql).toBe(RAW_EXPR);
+  // No `kind` discriminator / dialect envelope wrapped the SQL.
+  expect(fake.calls[0].sql.toLowerCase()).not.toContain('kind');
+  // The consumer owns `expr`: no positional params were synthesized around it.
+  expect(fake.calls[0].params).toBeUndefined();
+});
+
+test('rawQuery normalizes via the columns-present zip path (positional cells → column-keyed rows)', async () => {
+  const fake = createFakeDbExecute(rawResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.rawQuery(RAW_EXPR);
+
+  expect(result.rows).toEqual([
+    { event: 'order_placed', n: 1200 },
+    { event: 'signed_up', n: 4300 },
+  ]);
+});
+
+test('rawQuery stamps columns from the driver SELECT schema + generatedAt via the S1 assembler, omits fromCache', async () => {
+  const fake = createFakeDbExecute(rawResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.rawQuery(RAW_EXPR);
+
+  expect(result.columns).toEqual([
+    { name: 'event', type: 'text' },
+    { name: 'n', type: 'int8' },
+  ]);
+  expect(typeof result.generatedAt).toBe('string');
+  expect(new Date(result.generatedAt).toString()).not.toBe('Invalid Date');
+  expect(result).not.toHaveProperty('fromCache');
+});
+
+test('rawQuery empty result still reports its SELECT schema (columns present, rows empty)', async () => {
+  const emptyRaw: DbExecuteResult = { columns: [{ name: 'event' }, { name: 'n' }], rows: [] };
+  const fake = createFakeDbExecute(emptyRaw);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.rawQuery(RAW_EXPR);
+
+  expect(result.rows).toEqual([]);
+  expect(result.columns).toEqual([{ name: 'event' }, { name: 'n' }]);
+});
+
+test('rawQuery returns a neutral QueryResult — bar A intact on OUTPUT, only the INPUT expr is dialect-keyed', async () => {
+  const fake = createFakeDbExecute(rawResult);
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  const result = await client.rawQuery(RAW_EXPR);
+
+  // The result is the shared neutral QueryResult shape (rows + columns + generatedAt), independent
+  // of the SQL dialect the `expr` spoke.
+  expect(new Set(Object.keys(result))).toEqual(new Set(['rows', 'columns', 'generatedAt']));
+});
+
+test('buildRawRows honors the pinned positional-cell zip: dict passthrough, non-cell → {}, short row → trailing undefined', () => {
+  // The columns-present zip twin: a cell-array is keyed by column order; a row already an object
+  // passes through; anything else yields {}. A short row keys the missing trailing cell as undefined.
+  const columns = [{ name: 'event' }, { name: 'n' }];
+  expect(buildRawRows({ columns, rows: [['order_placed', 1200]] })).toEqual([
+    { event: 'order_placed', n: 1200 },
+  ]);
+  expect(buildRawRows({ columns, rows: [{ event: 'x', n: 1 } as unknown as unknown[]] })).toEqual([
+    { event: 'x', n: 1 },
+  ]);
+  expect(buildRawRows({ columns, rows: [42 as unknown as unknown[]] })).toEqual([{}]);
+  expect(buildRawRows({ columns, rows: [['order_placed']] })).toEqual([
+    { event: 'order_placed', n: undefined },
+  ]);
+});
+
+test('the rawQuery dialect-split doc names the SQL-vs-HogQL split, states NOT provider-swap-portable, and names no vendor', () => {
+  // The dialect-split doc lives on the rawQuery method. Read the source to assert it states the
+  // split precisely and names no `posthog` vendor token (HogQL is the HTTP adapter's dialect name —
+  // a dev-facing contrast, kept neutral).
+  const src = readFileSync(
+    new URL('./warehouse-query-adapter.ts', import.meta.url),
+    'utf8'
+  ).toLowerCase();
+  expect(src).toContain('dialect');
+  expect(src).toContain('not provider-swap-portable');
+  expect(src).toContain('output');
+  expect(src).not.toContain('posthog');
 });

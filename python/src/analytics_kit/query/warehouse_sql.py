@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from typing import Callable, TypeVar
+from typing import Callable, Mapping, TypeVar
 
 from .client import (
     Aggregation,
@@ -50,6 +50,7 @@ __all__ = [
     "build_trend_rows",
     "build_funnel_rows",
     "build_retention_rows",
+    "build_raw_rows",
     "assemble_result",
 ]
 
@@ -594,6 +595,36 @@ def build_retention_rows(result: DbExecuteResult) -> list[RetentionRow]:
             )
         )
     return rows
+
+
+def _zip_row(row: object, columns: list[DbColumn]) -> dict[str, object]:
+    """The columns-present zip — a warehouse-local twin of the HTTP adapter's private ``_zip_row``
+    (``http_adapter.py:356``), kept co-located with the warehouse builders rather than importing a
+    private cross-module helper.
+
+    SAME positional-cell zip behavior: a list row is keyed by column order; a row that is already a
+    dict passes through; anything else yields ``{}``. The HTTP ``_zip_row`` takes neutral
+    :class:`~analytics_kit.QueryColumn`\\ s; this twin takes :class:`DbColumn`\\ s directly (reading
+    only ``column.name``), so no cross-type conversion is needed at the call site.
+    """
+    if isinstance(row, list):
+        return {column.name: row[i] if i < len(row) else None for i, column in enumerate(columns)}
+    if isinstance(row, dict):
+        return row
+    return {}
+
+
+def build_raw_rows(result: DbExecuteResult) -> list[Mapping[str, object]]:
+    """``raw_query``'s flat-row builder — the ONE primitive that is NOT per-primitive-shaped.
+
+    The consumer's own SELECT projection is already neutral, so each positional cell row is zipped
+    into a column-keyed object via the driver-reported columns. The warehouse analog of the HTTP
+    adapter's columns-present raw branch; :class:`DbExecuteResult` ALWAYS carries ``columns`` (unlike
+    the optional HTTP wire ``columns``), so this is unconditionally the zip path. Returns
+    ``Mapping[str, object]`` rows — the ``QueryResult`` default row type ``raw_query`` carries.
+    """
+    columns = list(result.columns)
+    return [_zip_row(list(row), columns) for row in result.rows]
 
 
 WarehouseRowBuilder = Callable[[DbExecuteResult], "list[_TRow]"]

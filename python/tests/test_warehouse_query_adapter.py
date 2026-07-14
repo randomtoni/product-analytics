@@ -1,11 +1,12 @@
-"""The warehouse query adapter — the typed-stub bar-A proof.
+"""The warehouse query adapter — the bar-A proof made real.
 
 This is the story's whole reason to exist: a SECOND query backend satisfies the SAME neutral
 ``AnalyticsQueryClient`` Protocol as the HTTP adapter, with ZERO change to the Protocol (bar A —
 provider-swap is one adapter, zero consumer change). The consolidated conformance test feeds BOTH
 adapters through the shipped ``_conforms`` type-level sink (mypy proves satisfaction without
-subclassing), making "two adapters, one Protocol" explicit and co-located. The stub itself does
-not compute — every primitive raises a neutral not-implemented error, never a live connection.
+subclassing), making "two adapters, one Protocol" explicit and co-located. Every primitive COMPUTES
+— it generates SQL, routes it through the injected fake seam, and returns the same neutral rows the
+HTTP adapter would, never a live connection.
 """
 
 from __future__ import annotations
@@ -64,15 +65,7 @@ def test_both_query_adapters_satisfy_one_protocol_unchanged() -> None:
     _conforms(warehouse_adapter)
 
 
-# --- each primitive is a sync typed stub that does not compute ---------------------------
-
-
-def test_the_still_unimplemented_primitives_raise_a_neutral_not_implemented_error() -> None:
-    # S1 fills trend/unique_count; S2 fills funnel; S3 fills retention; raw_query remains the S4
-    # fill-in seat.
-    adapter = WarehouseQueryAdapter(db_execute=_FAKE_EXEC)
-    with pytest.raises(NotImplementedError, match="warehouse query adapter is not yet implemented"):
-        adapter.raw_query("select 1")
+# --- each primitive is a sync computing method -------------------------------------------
 
 
 def test_every_primitive_is_sync_not_a_coroutine() -> None:
@@ -1047,3 +1040,119 @@ def test_the_generated_retention_sql_matches_the_canonical_cross_tree_string() -
 
     query = build_retention_sql(_RETENTION_SPEC)
     assert query.sql == _CANONICAL_RETENTION_SQL
+
+
+# --- S4: raw_query passes `expr` to the seam AS SQL; columns-present zip normalization -------
+
+# A canned raw result: a driver-reported column schema + positional cell rows — exactly what a
+# `SELECT` over the consumer's own schema produces. The zip keys each positional cell by column
+# order, so the neutral rows are column-keyed objects (the consumer's own projection, already
+# neutral). `int8`/`text` column types are the driver-reported SELECT schema, stamped on `columns`.
+_RAW_RESULT = DbExecuteResult(
+    columns=[
+        DbColumn(name="event", type="text"),
+        DbColumn(name="n", type="int8"),
+    ],
+    rows=[("order_placed", 1200), ("signed_up", 4300)],
+)
+
+_RAW_EXPR = "SELECT event, count(*) AS n FROM events_typed GROUP BY event"
+
+
+def test_raw_query_passes_expr_to_the_seam_verbatim_as_sql() -> None:
+    # `expr` reaches the DB-execute seam UNCHANGED — no HogQL/`kind` wrapping, no sanitizer, no
+    # parameterization layer. It is the ONLY thing the seam is called with (no positional params).
+    fake = FakeDbExecute(_RAW_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    adapter.raw_query(_RAW_EXPR)
+
+    assert len(fake.calls) == 1
+    assert fake.calls[0].sql == _RAW_EXPR
+    # No `kind` discriminator / dialect envelope reached the seam — the raw SQL is passed verbatim.
+    assert "kind" not in fake.calls[0].sql.lower()
+    # The consumer owns `expr`: no params were synthesized around it.
+    assert fake.calls[0].params is None
+
+
+def test_raw_query_normalizes_via_the_columns_present_zip_path() -> None:
+    # Positional cells are zipped into column-keyed objects via the driver-reported columns; the
+    # neutral rows are the consumer's own SELECT projection, keyed by name (not positional).
+    fake = FakeDbExecute(_RAW_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.raw_query(_RAW_EXPR)
+
+    assert list(result.rows) == [
+        {"event": "order_placed", "n": 1200},
+        {"event": "signed_up", "n": 4300},
+    ]
+
+
+def test_raw_query_stamps_columns_and_generated_at_via_the_s1_assembler() -> None:
+    # The S1 assembler stamps `columns` from the driver SELECT schema + `generated_at`, and omits
+    # `from_cache` (a live exec has no cache envelope) — same as the four structured primitives.
+    fake = FakeDbExecute(_RAW_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.raw_query(_RAW_EXPR)
+
+    assert [(c.name, c.type) for c in result.columns] == [("event", "text"), ("n", "int8")]
+    assert isinstance(result.generated_at, str) and result.generated_at
+    assert result.from_cache is None
+
+
+def test_raw_query_empty_result_still_reports_its_select_schema() -> None:
+    # An empty result set still carries its SELECT schema on `columns` (the raw path stamps them via
+    # the assembler), so a consumer keying on the shape survives a zero-row result.
+    empty = DbExecuteResult(columns=[DbColumn(name="event"), DbColumn(name="n")], rows=[])
+    fake = FakeDbExecute(empty)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.raw_query(_RAW_EXPR)
+
+    assert list(result.rows) == []
+    assert [(c.name, c.type) for c in result.columns] == [("event", None), ("n", None)]
+
+
+def test_raw_query_returns_a_neutral_query_result_output_stays_bar_a_intact() -> None:
+    # bar A on the OUTPUT: raw_query returns a neutral QueryResult regardless of the dialect-keyed
+    # input. Only the INPUT `expr` is dialect-keyed; the output shape is the shared neutral one.
+    from analytics_kit import QueryResult
+
+    fake = FakeDbExecute(_RAW_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    result = adapter.raw_query(_RAW_EXPR)
+
+    assert isinstance(result, QueryResult)
+
+
+def test_raw_query_zip_twin_passes_dict_rows_through_and_yields_empty_for_other() -> None:
+    # The warehouse-local `_zip_row` twin honors the pinned positional-cell behavior: a row already
+    # a dict passes through unchanged; a non-list/non-dict row yields {}.
+    from analytics_kit.query.warehouse_sql import _zip_row
+
+    columns = list(_RAW_RESULT.columns)
+    assert _zip_row(["order_placed", 1200], columns) == {"event": "order_placed", "n": 1200}
+    assert _zip_row({"event": "x", "n": 1}, columns) == {"event": "x", "n": 1}
+    assert _zip_row(42, columns) == {}
+    # A short row keys the missing trailing cell as None (positional, by column order).
+    assert _zip_row(["order_placed"], columns) == {"event": "order_placed", "n": None}
+
+
+def test_raw_query_dialect_split_doc_names_the_split_and_no_vendor() -> None:
+    # The SQL-vs-HogQL dialect split is documented on the raw_query method, stating raw_query is NOT
+    # provider-swap-portable while the structured primitives are, and that the OUTPUT stays neutral.
+    # The doc names no `posthog` token (HogQL is the HTTP adapter's dialect name — a dev-facing
+    # contrast, kept neutral).
+    import inspect as _inspect
+
+    src = _inspect.getsource(WarehouseQueryAdapter.raw_query).lower()
+    assert "dialect" in src
+    assert "not provider-swap-portable" in src
+    # The four structured primitives ARE portable — the contrast is stated.
+    assert "provider-swap-portable" in src
+    # The OUTPUT stays neutral (bar A intact on output); only the INPUT expr is dialect-keyed.
+    assert "output" in src and "queryresult" in src
+    assert "posthog" not in src

@@ -19,6 +19,7 @@ import {
   assembleResult,
   buildFunnelRows,
   buildFunnelSql,
+  buildRawRows,
   buildRetentionRows,
   buildRetentionSql,
   buildTrendRows,
@@ -26,17 +27,14 @@ import {
   buildUniqueCountSql,
 } from './warehouse-sql';
 
-const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implemented';
-
-// A second query backend, named by ROLE (never a vendor). It is a TYPED STUB for R1: every
-// member satisfies `AnalyticsQueryClient<TX>` and typechecks, but no method computes — each
-// throws a neutral not-implemented error. Its reason to exist is the bar-A proof: a second
-// adapter satisfies the same neutral interface as `HttpQueryAdapter`, unchanged.
-//
-// Intended per-method SQL mapping (the fill-in seat):
-// The first real fill-in emits Postgres SQL over the taxonomy-generated typed VIEW (safe-cast
-// projections over the JSONB base — never raw JSONB, never DuckDB-first). Each method targets
-// the view's columns generically; NO consumer event/domain name is baked into any SQL here.
+// A second query backend, named by ROLE (never a vendor). Every member satisfies
+// `AnalyticsQueryClient<TX>` and COMPUTES: it emits Postgres SQL over the taxonomy-generated
+// typed VIEW (safe-cast projections over the JSONB base — never raw JSONB), routes it through the
+// injected DB-execute seam, and normalizes the driver's rows/columns into the neutral
+// `QueryResult` — exactly as the HTTP adapter normalizes its wire envelope. This is the bar-A
+// proof made real: a second adapter satisfies the same neutral interface as `HttpQueryAdapter`,
+// unchanged, and returns the same neutral rows. Each method targets the view's columns
+// generically; NO consumer event/domain name is baked into any SQL here.
 //
 //   funnel(spec)      SELECT ordered step-completion counts from the typed view, restricting to
 //                     the spec.steps in order, keeping only distinct_ids whose step timestamps
@@ -48,12 +46,8 @@ const NOT_IMPLEMENTED = 'analytics: warehouse query adapter is not yet implement
 //                     per spec.aggregation (count(*) for total, count(distinct distinct_id) for
 //                     unique/dau); GROUP BY spec.breakdown when present.
 //   uniqueCount(spec) SELECT count(distinct distinct_id) over spec.window for the event.
-//   rawQuery(expr)    Passes `expr` to the SQL engine AS SQL (this adapter's dialect is SQL,
-//                     vs HogQL for the HTTP adapter — the split that justifies `rawQuery`
-//                     taking a plain string and naming no dialect).
-//
-// Every real body normalizes the driver's rows/columns into the neutral `QueryResult` before
-// returning, exactly as the HTTP adapter normalizes its wire envelope.
+//   rawQuery(expr)    Passes `expr` to the SQL engine AS SQL — see the method doc for the
+//                     SQL-vs-HogQL dialect split.
 
 export interface WarehouseQueryAdapterOptions {
   // The injected DB-execute seam — held OPAQUE, exactly as `HttpQueryAdapter` holds its
@@ -99,8 +93,22 @@ export class WarehouseQueryAdapter<TX extends TaxonomyShape>
     return assembleResult(result, buildTrendRows);
   }
 
-  async rawQuery(): Promise<QueryResult> {
-    throw new Error(NOT_IMPLEMENTED);
+  // The SQL-vs-HogQL DIALECT SPLIT. `rawQuery` passes `expr` to the engine AS SQL, verbatim —
+  // NO `kind` discriminator, NO dialect wrapping (that is the HTTP adapter's wire vocabulary).
+  // This adapter's dialect is SQL (Postgres, over EVENTS_VIEW / the consumer's own schema); the
+  // HTTP adapter's is HogQL. Same neutral signature (`rawQuery(expr: string) → QueryResult`), but
+  // a DIFFERENT dialect the `expr` string must speak — so `rawQuery` is the ONE query primitive
+  // that is NOT provider-swap-portable: an `expr` written for one backend's dialect will not run
+  // verbatim on the other. The four structured primitives (funnel/retention/trend/uniqueCount) ARE
+  // provider-swap-portable — they take neutral specs. `rawQuery` trades that portability for an
+  // escape hatch, BY DESIGN. This is not a bar-A violation: the OUTPUT stays a neutral
+  // `QueryResult` (the columns-present zip normalizes the driver rows to column-keyed objects);
+  // only the INPUT `expr` is dialect-keyed. The consumer owns `expr` — it is passed unsanitized
+  // and unparameterized, consistent with the HTTP adapter's rawQuery posture (a deliberate raw
+  // escape hatch, not a place for injection hardening).
+  async rawQuery(expr: string): Promise<QueryResult> {
+    const result = await this.dbExecute(expr);
+    return assembleResult(result, buildRawRows);
   }
 }
 

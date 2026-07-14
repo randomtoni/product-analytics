@@ -126,3 +126,12 @@ Run-ordering recommendation only; the `depends_on` graph is correct as-is.
   populates `columns` from the SELECT schema.
 
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files changed:** TS `warehouse-sql.ts` (+ warehouse-local `zipRow` twin + `buildRawRows`), `warehouse-query-adapter.ts` (+ `.test.ts`); Python `warehouse_sql.py` (+ `_zip_row` twin + `build_raw_rows`), `warehouse_adapter.py` (+ `tests/test_warehouse_query_adapter.py`)
+- **New public API:** none consumer-facing (adapter-internal; reached via `createQueryClient`). All five warehouse primitives now COMPUTE (last stub filled).
+- **Tests added:** TS 6 + Python 7 — `expr` reaches the seam verbatim (no `kind`, no `params`), columns-present zip normalization, empty-result-still-reports-schema, neutral `QueryResult` output (bar A on output), zip-twin edge cases (dict passthrough / non-cell → `{}` / short-row trailing None), dialect-split doc names the split + guards `posthog` absent — all against the E17-S3 fake
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP AS-IS (no criticals, no suggestions). **"HogQL" neutrality ruling: definitively not-a-concern** — `neutrality-scan.ts:184-189` explicitly admits `HogQLQuery` as required wire vocabulary (no vendor *name* token); pre-existing in shipped `src` (S4 echoes in dev `//`/`#` comments, doesn't introduce); the guarded `posthog` token is absent, both scans green
+- **Cross-story seams exposed:** `rawQuery` passes `expr` verbatim as SQL (dialect split: warehouse = SQL, HTTP = HogQL); the ONE primitive NOT provider-swap-portable on input (output stays neutral). Warehouse-local zip twin (co-located, HTTP helpers stay private). **S5 (the last E18 story) proves all four structured primitives + the raw path flatten to the locked `query-contract.fixtures`.**

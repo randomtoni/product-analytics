@@ -512,6 +512,33 @@ export function buildRetentionRows(result: DbExecuteResult): ReadonlyArray<Reten
   return rows;
 }
 
+// The columns-present zip — a warehouse-local twin of the HTTP adapter's private `zipRow`
+// (`http-query-adapter.ts:395`), kept co-located with the warehouse builders rather than
+// exporting a private cross-module helper. SAME positional-cell zip behavior: a cell-array row is
+// keyed by column order; a row that is already an object passes through; anything else yields `{}`.
+// The HTTP `zipRow` takes column-NAME strings; `DbExecuteResult.columns` is `DbColumn[]`, so the
+// call site passes `result.columns.map((c) => c.name)` — no `DbColumn` shape reaches this twin.
+function zipRow(row: unknown, columnNames: ReadonlyArray<string>): Record<string, unknown> {
+  const keyed: Record<string, unknown> = {};
+  if (Array.isArray(row)) {
+    columnNames.forEach((name, i) => {
+      keyed[name] = row[i];
+    });
+    return keyed;
+  }
+  return typeof row === 'object' && row !== null ? (row as Record<string, unknown>) : keyed;
+}
+
+// `rawQuery`'s flat-row builder — the ONE primitive that is NOT per-primitive-shaped. The consumer's
+// own SELECT projection is already neutral, so each positional cell-array row is zipped into a
+// column-keyed object via the driver-reported column names. The warehouse analog of the HTTP
+// adapter's `buildRawRows` columns-present branch; `DbExecuteResult` ALWAYS carries `columns`
+// (unlike the HTTP wire envelope, where they are optional), so this is unconditionally the zip path.
+export function buildRawRows(result: DbExecuteResult): ReadonlyArray<Record<string, unknown>> {
+  const columnNames = result.columns.map((c) => c.name);
+  return result.rows.map((row) => zipRow(row, columnNames));
+}
+
 // A flat-row builder: a `DbExecuteResult` in, the primitive's neutral rows out. Sibling of the
 // HTTP adapter's `RowBuilder`, but its source is the positional `DbExecuteResult` rather than a
 // wire envelope. S2–S4 each supply their own.
