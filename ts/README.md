@@ -92,8 +92,8 @@ analytics.identify("user_123", { plan: "pro" });
 ## Interface → implementation matrix
 
 This is the seam, method by method. Each row maps **one neutral interface method → the shipped
-implementation that backs it today (described by role and wire shape, never by vendor) → what a
-future warehouse/SQL or self-hosted implementation must satisfy** to fill that cell. A prospective
+implementation that backs it today (described by role and wire shape, never by vendor) → the SPI
+method an alternative backend satisfies** to fill that cell. A prospective
 adapter author reads the third column as the exact contract to implement; a reader confirms the
 seam is complete and genuinely swappable.
 
@@ -103,9 +103,11 @@ hostnames are stripped, and the ingest target is configuration (`ingestHost` / `
 baked-in endpoint. The client rows' fill-in-the-blanks contract is the `AnalyticsAdapter` SPI
 (`packages/analytics-kit/src/adapter.ts`): a self-hosted backend implements that one interface and
 every client verb below routes to it unchanged. The query rows' contract is the
-`AnalyticsQueryClient` interface, with the `WarehouseQueryAdapter` typed stub
-(`packages/node/src/query/warehouse-query-adapter.ts`) as the concrete second-adapter proof that a
-SQL/warehouse fill-in is real, not hypothetical.
+`AnalyticsQueryClient` interface, and the **shipped** `WarehouseQueryAdapter`
+(`packages/node/src/query/warehouse-query-adapter.ts`) is the concrete second backend behind it —
+real SQL over the taxonomy-generated typed view, factory-selected the moment a `warehouseDsn` is
+configured, satisfying that interface with zero Protocol change (the zero-egress acceptance test
+exercises it end to end against a real Postgres).
 
 ### Client — `AnalyticsProvider` (the 15-member frozen surface)
 
@@ -114,7 +116,7 @@ on the browser/TS target) — exactly the 15 members of `keyof AnalyticsProvider
 server/adapter-level verb is `capture`). Every verb first passes the consumer allowlist, then
 delegates to the backing adapter's corresponding SPI method.
 
-| Method | Shipped implementation (by role + wire shape) | Future warehouse/SQL or self-hosted fill-in |
+| Method | Shipped implementation (by role + wire shape) | SPI method to satisfy (the fill-in contract) |
 |---|---|---|
 | `track(event, props)` | Allowlist-gated, then minted into a neutral event and handed to the adapter's `capture`; the HTTP adapter enriches and batch-buffers it for a gzipped batch POST to the configured ingest host/path. | Implement `AnalyticsAdapter.capture(event)`: accept the neutral event and durably record/forward it to your backend's ingest. |
 | `identify(id, traits?, traitsOnce?)` | Gated, then routed to the adapter's `identify`; the HTTP adapter binds the distinct id and emits a set / set-once trait update on the batch wire. | Implement `AnalyticsAdapter.identify(distinctId, traits?, traitsOnce?)`: associate the id and persist the set / set-once trait bags. |
@@ -138,7 +140,7 @@ Server-side capture with no browser persistence. The verb here is **`capture`** 
 name for the client's `track`). Each verb is allowlist-gated, then buffered on a batch queue whose
 delivery seam is injected.
 
-| Method | Shipped implementation (by role + wire shape) | Future warehouse/SQL or self-hosted fill-in |
+| Method | Shipped implementation (by role + wire shape) | SPI method to satisfy (the fill-in contract) |
 |---|---|---|
 | `capture(distinctId, event, props?, options?)` | Allowlist-gated, then minted (with a `dedupeId`) and enqueued on the batch queue; the injected delivery closure sends the batch as a gzipped POST to the configured ingest host/path. | Provide a delivery closure (the injected `SendBatch`): accept a batch of neutral events and forward them to your backend's ingest endpoint. |
 | `setTraits(distinctId, traits, once?)` | Gated, then minted as an adapter-internal trait event carrying the set / set-once trait bag under de-branded nested wire keys, riding the same batch queue as `capture`. | Same delivery closure receives the trait event; a self-hosted backend applies its set / set-once trait bag to the distinct id. |
@@ -156,11 +158,11 @@ narrowed `QueryResult<TRow>` whose row fields are the contract consumers key on 
 keys leak); `rawQuery` alone keeps the default `Record<string, unknown>` verbatim column-keyed row.
 The per-primitive wire→neutral-row contract fixtures live at
 [`packages/node/src/query/query-contract.fixtures.ts`](packages/node/src/query/query-contract.fixtures.ts)
-(the executable form of the contract). The `WarehouseQueryAdapter` typed stub is the second-adapter
-proof; its intended per-method SQL mapping (emitting portable SQL over a taxonomy-generated typed
-view) is the fill-in-the-blanks contract below.
+(the executable form of the contract). The **shipped** `WarehouseQueryAdapter` is the second backend
+behind this seam — it emits real SQL over the taxonomy-generated typed view for each primitive below,
+factory-selected by `warehouseDsn` presence, with zero Protocol change.
 
-| Method | Shipped implementation (by role + wire shape) | Future warehouse/SQL or self-hosted fill-in |
+| Method | Shipped implementation (by role + wire shape) | SPI method to satisfy (the fill-in contract) |
 |---|---|---|
 | `funnel(spec)` | HTTP query endpoint (Bearer personal key): sends the ordered-step funnel spec, normalizes the response into `QueryResult<{ step, event, count, conversionRate, breakdown? }>` (one row per funnel step; `conversionRate` is computed relative to the first step, per-group when broken down). | `SELECT` ordered step-completion counts from the typed view, restricted to `spec.steps` in order, keeping only distinct ids whose step timestamps fall inside `spec.within`; `GROUP BY spec.breakdown` when present; normalize rows into `QueryResult`. |
 | `retention(spec)` | HTTP query endpoint (Bearer personal key): sends the cohort/return retention spec, normalizes the response into `QueryResult<{ cohort, periodIndex, value, breakdown? }>` (one row per cohort×period cell; `periodIndex` 0 is the cohort's own period). | Self-join the typed view: cohort rows (`spec.cohortEvent`) against return rows (`spec.returnEvent`) bucketed by `spec.granularity` for `spec.periods` periods; `GROUP BY spec.breakdown` when present; normalize into `QueryResult`. |
@@ -555,9 +557,10 @@ Bar A is **already met on the query side**, shipped. Two adapters sit behind ONE
 - `HttpQueryAdapter` — the first backend: translates each neutral KPI primitive (`funnel`,
   `retention`, `trend`, `uniqueCount`, `rawQuery`) to an HTTP query endpoint and normalizes the wire
   envelope back into the neutral `QueryResult`.
-- `WarehouseQueryAdapter` — a second backend, a typed stub satisfying the same
-  `AnalyticsQueryClient` interface (each method typechecks; its intended fill-in emits SQL over the
-  taxonomy-generated typed view).
+- `WarehouseQueryAdapter` — the **shipped** second backend behind the same `AnalyticsQueryClient`
+  interface: it emits real SQL over the taxonomy-generated typed view for each primitive,
+  factory-selected the moment a `warehouseDsn` is configured, with zero Protocol change (proven by the
+  zero-egress end-to-end acceptance test on real Postgres).
 
 **Two adapters, one interface, seam unchanged** — the concrete precedent that a second backend drops
 in behind the seam with no consumer or library-seam edits. Tie it together: the 18-member

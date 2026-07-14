@@ -139,8 +139,8 @@ is the honest gap, documented in `taxonomy.py`.
 ## Interface → implementation matrix
 
 Every neutral verb maps to a shipped, de-branded implementation described **by role and wire shape**
-(never by vendor) — plus the cell a future warehouse / self-hosted adapter fills. A new backend is
-genuinely fill-in-the-blanks: satisfy the SPI method, fill the future cell.
+(never by vendor) — plus the SPI method an alternative backend satisfies to fill that cell. A new
+backend is genuinely fill-in-the-blanks: satisfy the SPI method.
 
 ### Provider verbs → the server capture target
 
@@ -148,7 +148,7 @@ The server target's delivery is a background batch consumer that gzip-POSTs a `{
 sent_at}` envelope to the configured ingest host + path. Each minted event carries a top-level
 idempotency `uuid` (the neutral `dedupe_id`, defaulted per call when unset).
 
-| Verb | Shipped implementation (by role / wire shape) | Future warehouse / self-hosted cell |
+| Verb | Shipped implementation (by role / wire shape) | SPI method to satisfy (the fill-in contract) |
 | --- | --- | --- |
 | `capture` | mints a neutral event, gates it (consent → allowlist → capture-scoped prop validation), enqueues it onto the batch consumer; delivery gzip-POSTs the `{api_key, batch, sent_at}` envelope to the configured ingest host + path | satisfy `AnalyticsAdapter.capture(event)` — accept the already-minted neutral event and persist / forward it however the backend ingests |
 | `set` | mints a person-props update (nested `set` / `set_once` wrapper) routed through the one capture path, discriminated structurally, not by name | `AnalyticsAdapter.capture` — recognize the person-props update by its structural discriminant and apply it to the person store |
@@ -173,7 +173,7 @@ per-primitive wire→neutral-row fixtures at
 [`tests/query_contract_fixtures.py`](tests/query_contract_fixtures.py) are its executable form,
 mirroring the TS `query-contract.fixtures.ts` values cell-for-cell.
 
-| Verb | Shipped implementation (by role / wire shape) | Future warehouse / self-hosted cell |
+| Verb | Shipped implementation (by role / wire shape) | SPI method to satisfy (the fill-in contract) |
 | --- | --- | --- |
 | `funnel` | translates `FunnelSpec` (ordered steps + window + optional breakdown) into the query body, POSTs to the configured query endpoint with Bearer-key auth, normalizes the response into `QueryResult[FunnelStepRow]` — rows of `{ step, event, count, conversion_rate, breakdown? }` (one row per funnel step; `conversion_rate` is computed relative to the first step, per-group when broken down) | satisfy `AnalyticsQueryClient.funnel` — emit ordered step-completion counts over the taxonomy-typed view restricted to the window; normalize into the same neutral rows |
 | `retention` | translates `RetentionSpec` (cohort + return event, bucketed horizon) into the query body, same POST, normalizes into `QueryResult[RetentionRow]` — rows of `{ cohort, period_index, value, breakdown? }` (one row per cohort×period cell; `period_index` 0 is the cohort's own period) | satisfy `.retention` — self-join cohort vs return rows bucketed by granularity for the period count; normalize into the same neutral rows |
@@ -181,10 +181,10 @@ mirroring the TS `query-contract.fixtures.ts` values cell-for-cell.
 | `unique_count` | translates `UniqueCountSpec` (event + window) into the query body, same POST, normalizes into `QueryResult[UniqueCountRow]` — rows of `{ bucket, value, breakdown? }` (same neutral row shape as `trend` — a trend with distinct-id math, kept its own named row concept) | satisfy `.unique_count` — count distinct actors over the window; normalize into the same neutral rows |
 | `raw_query` | passes the dialect **value** (a string) through as the query body, same POST; keeps the default `QueryResult` row — a verbatim column-keyed mapping whose keys are the consumer's own SELECT projection (the one place a dialect-keyed shape legitimately surfaces); the escape hatch is for the query language only | satisfy `.raw_query` — pass the expression to the backend's own dialect and normalize the result into the default column-keyed `QueryResult` |
 
-The `WarehouseQueryAdapter` typed stub is the concrete second-adapter proof: it satisfies the same
-`AnalyticsQueryClient` seam by shape (each method typed, bodies as the fill-in seat), so a
-SQL-over-warehouse backend is one adapter, zero consumer change — the future cells above are its
-per-method SQL mapping.
+The **shipped** `WarehouseQueryAdapter` is the concrete second backend behind the same
+`AnalyticsQueryClient` seam: it emits real SQL over the taxonomy-generated typed view for each
+primitive above, factory-selected by `warehouse_dsn` presence, with zero Protocol change — one
+adapter, zero consumer change (proven end to end by the zero-egress acceptance test on real Postgres).
 
 ## Adopt in a new app
 
