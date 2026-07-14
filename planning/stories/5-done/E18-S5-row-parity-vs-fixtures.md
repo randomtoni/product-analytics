@@ -126,4 +126,22 @@ generic column-keyed `QueryResult`, contract-checked in S4's own zip test, not i
 - The warehouse builders under proof: S1 (trend/unique_count), S2 (funnel + guarded conversionRate), S3
   (retention + periodIndex=0), all in the S1 SQL-gen module + the warehouse adapter.
 
+> Reviewer suggestion (2026-07-14) → E18 improvement pass (low value): the SEAL test covers only the
+> breakdown-path outputs (the likeliest leak). Optionally also seal a plain (non-breakdown) trend/funnel/
+> retention output — the builders share one code path across plain/breakdown, so it's a completeness
+> nicety, not a gap.
+> Reviewer suggestion (2026-07-14): on the TS side `UniqueCountRow` is a type alias of `TrendRow`, so the
+> uniqueCount assertion can't structurally distinguish the named types (Python keeps a distinct
+> `UniqueCountRow`). Acceptable given the aliasing decision; worth a one-line test note if TS ever
+> de-aliases.
+
 ## Shipped
+
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files added:** `ts/packages/node/src/query/warehouse-row-parity.test.ts`, `python/tests/test_warehouse_row_parity.py` (test-only — no production/builder/fixtures change)
+- **New public API:** none — a test capstone
+- **Tests added:** 12 per tree (mirrored) — row-parity over all 8 fixture cases (`trendSingleSeries`/`trendBreakdown`/`uniqueCountSingleSeries`/`funnelPlain`/`funnelZeroFirstStep`/`funnelEventPrecedence`/`funnelBreakdown`/`retentionCohorts`), computed-field parity (guarded conversionRate, per-group ratios, periodIndex=0), and the `ENGINE_ROW_FIELD_NAMES` seal — driving the real S1–S4 builders via the E17-S3 fake against each tree's OWN fixtures
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict APPROVE (no criticals) — **proof proven GENUINE (non-circular)**: the reviewer falsified circularity with 3 builder mutations (drop zero-guard → 2 fails; break ratio → 4 fails; re-source event from SQL column → 7 fails), each caught. The `event_name` red-herring column the builder ignores is a deliberate honesty signal. 2 minor suggestions above
+- **Cross-story seams exposed:** **the read-side bar-A guarantee is now executable** — the warehouse adapter produces byte-identical neutral rows to the HTTP adapter, proven against the locked `query-contract.fixtures` (parity-by-mirror). Inputs carry raw counts; builders COMPUTE the derived fields (conversionRate/periodIndex), so a builder regression fails a gate. **E21** re-proves this against real Neon (real SELECT → rows), not canned `DbExecuteResult`s.
