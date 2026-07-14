@@ -37,13 +37,23 @@ planning-doc story: no production code, a doc plus its review gate.
     - `properties` — a **`jsonb`** column holding the full neutral property bag verbatim.
   - **The typed-VIEW generation rule.** The taxonomy-driven typed VIEW is a set of **safe-cast
     projections over the `properties` JSONB base — never raw JSONB exposed to query SQL**. State the
-    rule precisely: each taxonomy-declared event/property becomes a view column that safe-casts the
-    JSONB path (e.g. `(properties ->> 'plan')::text`, `(properties ->> 'count')::numeric`) per its
+    rule precisely: each taxonomy-declared **event property** becomes a view column that safe-casts
+    the JSONB path (e.g. `(properties ->> 'plan')::text`, `(properties ->> 'count')::numeric`) per its
     declared `PropType` (`string → text`, `number → numeric`, `boolean → boolean`, `date →
     timestamptz`), so query SQL (E18) targets typed view columns generically, never `properties`
     directly. State that a safe cast tolerates a missing/mistyped key (yields NULL, not an error) —
     the greenfield/loose-JSONB posture. No consumer event/domain name is baked into the generator;
     it reads the taxonomy.
+  - **State the projection SOURCE precisely (the positive rule that pairs with the guard below).**
+    The generator projects columns from the taxonomy's **event property declarations** — the union of
+    prop keys across `decl.events`' `PropDecl` values (`events: Record<string, PropDecl>` in TS /
+    `events: dict[str, PropDecl]` in Python; `PropDecl = { propKey: PropType }`). It does NOT project
+    the `traits`/`groups`/`page`/`flags` decl slots into view columns: `traits`/`groups` keys are the
+    JSONB-nesting guard below; `page` is a browser-only taxonomy slot **absent from the Python
+    `TaxonomyDecl` by design** (a documented server omission — Python has no page surface); `flags` are
+    inbound flag payloads, not stored event columns. Naming the source as "event-property decls only"
+    keeps the two trees' generators identical despite the `page`-slot asymmetry (the slot the generator
+    never reads).
   - **The trait/group JSONB-nesting guard.** The de-branded trait/group keys —
     `set` / `set_once` / `group_type` / `group_key` / `group_set` — are nested INSIDE `properties`
     by the node wire-mapper (`ts/packages/node/src/wire-mapper.ts:16-20`), and the receiver (E19)
@@ -84,6 +94,9 @@ planning-doc story: no production code, a doc plus its review gate.
       role and the `uuid`-UNIQUE → idempotent-upsert rationale.
 - [ ] The doc states the typed-VIEW generation rule: safe-cast JSONB projections per declared
       `PropType`, never raw JSONB to query SQL, taxonomy-driven, no consumer name baked in.
+- [ ] The doc states the projection SOURCE: columns come from the taxonomy's **event-property**
+      decls only (`decl.events` prop keys), not the `traits`/`groups`/`page`/`flags` slots — so the
+      TS `page`-slot / Python-no-`page` asymmetry never reaches the generator.
 - [ ] The doc states the trait/group JSONB-nesting guard explicitly: `set` / `set_once` /
       `group_type` / `group_key` / `group_set` live only inside `properties`; no view column is named
       after them.
@@ -123,6 +136,16 @@ E18/E19 — the whole cycle binds to the contract it freezes.
   `groups` decl with an event-property projection. — architect (2026-07-13)
 - **Greenfield = no backfill.** The target consumer has no existing deployment/data; state that there
   is no migration-from-vendor concern. — architect (2026-07-13)
+- **Taxonomy-shape asymmetry the contract must survive (verified against both trees, story-refiner
+  2026-07-14).** The generator reads ONLY event-property decls, which are shaped identically in both
+  trees (`events: Record<string, PropDecl>` TS / `events: dict[str, PropDecl]` Python, `PropDecl =
+  { propKey: PropType }`, `PropType = 'string'|'number'|'boolean'|'date'`). The known asymmetries —
+  TS `TaxonomyDecl` carries a `page` slot, Python omits it by design (server has no page surface,
+  documented in `python/src/analytics_kit/taxonomy.py`); TS `PropsOf`/`ShapeOf` mapped types have no
+  Python analogue (const-generic wall) — do NOT touch the generator, because it projects event-prop
+  decls only and never the `page`/mapped-type surfaces. State in the contract that the view rule binds
+  to the event-property decl shape (symmetric), so both trees emit identical view SQL for the same
+  taxonomy. This is what makes S2's byte-equivalence parity assertion achievable.
 
 **Rigor reference:** `planning/QUERY-ROW-CONTRACT.md` is the sibling doc to mirror — same "why a
 contract / the shape / per-thing tables / the executable form / parity framing" structure. This is

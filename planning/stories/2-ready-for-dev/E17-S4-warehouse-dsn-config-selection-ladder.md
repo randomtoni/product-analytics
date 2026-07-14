@@ -41,10 +41,23 @@ it). Self-host becomes "here's my Neon" — one coherent field, no `backend:` en
     Notes C). Precedence: `warehouse_dsn` wins when present (it is the explicit self-host signal).
 - **Route to the existing `WarehouseQueryAdapter`** (`ts/.../query/warehouse-query-adapter.ts` /
   `python/.../query/warehouse_adapter.py`) — currently a typed STUB that satisfies
-  `AnalyticsQueryClient` and `throw`s / `raise`s `NotImplementedError`. S4 makes it CONSTRUCTABLE from
-  a `warehouse_dsn` (wiring the S3 driver into it), so selection + construction are proven; the
-  method BODIES stay stub-satisfying until E18 fills them. The factory selecting and constructing the
-  adapter is the deliverable — actually querying is E18.
+  `AnalyticsQueryClient` and `throw`s / `raise`s `NotImplementedError`. S4 makes it CONSTRUCTABLE with
+  an injected S3 `DbExecute` and selectable, so selection + construction are proven; the method BODIES
+  stay stub-satisfying until E18 fills them. The factory selecting and constructing the adapter is the
+  deliverable — actually querying is E18.
+  - **Driver-build ownership: the FACTORY builds the driver, the adapter holds only the `DbExecute`
+    (architect ruling, 2026-07-14).** Mirror `createHttpQueryAdapterFromConfig` reading `config.fetch`
+    and passing it into the adapter: add a thin **`createWarehouseQueryAdapterFromConfig(config)`**
+    (TS) / **`create_warehouse_query_adapter_from_config(config)`** (Python) that reads
+    `warehouse_dsn`, **lazily imports the S3 `warehouse`-extra driver, builds the default `DbExecute`
+    from the DSN**, and injects it into the `WarehouseQueryAdapter` constructor. The adapter gains a
+    `DbExecute`-typed field (TS `options.dbExecute`; Python `db_execute:` kwarg), holds it opaque, and
+    **NEVER sees a DSN or a driver handle** and never imports `pg`/`psycopg`. This keeps the adapter
+    module import-clean (no optional-extra import risk) and unit-testable against the S3 fake exec —
+    exactly why `HttpQueryAdapter` holds a `FetchLike` rather than building its own client. The lazy
+    driver import belongs at THIS factory boundary (where "a `warehouse_dsn` is present ⇒ we need the
+    driver" is decided), not in the adapter constructor. `createQueryClient`/`create_query_client`
+    stays a pure selection ladder that delegates the warehouse rung to this thin factory.
 - Update the factory selection tests in both trees to cover the new first rung (a `warehouse_dsn`
   config selects the warehouse adapter; existing rungs unchanged), using the S3 fake DB-execute seam
   so no real Postgres is needed.
@@ -67,9 +80,12 @@ it). Self-host becomes "here's my Neon" — one coherent field, no `backend:` en
 - [ ] `createQueryClient` / `create_query_client` select by PRESENCE: `warehouse_dsn` present ⇒
       warehouse adapter (first rung, wins over HTTP); else `personalKey`+`queryEndpoint` ⇒ HTTP; else
       no-op. No `backend:` enum anywhere.
-- [ ] The warehouse adapter is constructed from the DSN (via the S3 default DB-execute driver) and
-      returned as an `AnalyticsQueryClient` — bar A intact (same neutral interface, unchanged). Its
-      method bodies remain stub-satisfying (E18 fills them).
+- [ ] The warehouse adapter is constructed via a thin `createWarehouseQueryAdapterFromConfig` (TS) /
+      `create_warehouse_query_adapter_from_config` (Python) that reads `warehouse_dsn`, lazily imports
+      the S3 driver, builds the default `DbExecute` from the DSN, and injects it; the adapter holds a
+      `DbExecute` field (never a DSN/handle) and is returned as an `AnalyticsQueryClient` — bar A
+      intact (same neutral interface, unchanged). Its method bodies remain stub-satisfying (E18 fills
+      them).
 - [ ] Bar B intact: a consumer selects the warehouse path by supplying `warehouse_dsn` alone — zero
       library change.
 - [ ] Factory selection tests in both trees cover the new rung using the S3 fake seam (no real
@@ -100,12 +116,25 @@ select by field presence today:
   — architect (2026-07-13)
 - **Route to the existing stub.** The `WarehouseQueryAdapter` typed stub already satisfies
   `AnalyticsQueryClient` and `throw`s/`raise`s (TS `warehouse-query-adapter.ts`, Python
-  `warehouse_adapter.py`). S4 makes it constructable from the DSN + S3 driver and selectable; E18
+  `warehouse_adapter.py`). S4 makes it constructable with an injected `DbExecute` and selectable; E18
   fills the bodies. Bar A holds because the interface is unchanged. — architect (2026-07-13)
-- **Consumes S3's driver.** The `warehouse_dsn` rung builds the S3 default DB-execute driver from the
-  DSN and injects it into the warehouse adapter. Because the seam is injectable, the selection test
-  uses the S3 fake — no real Neon. `depends_on` S3 (the seam) + S1 (the frozen contract the adapter
-  will bind to). — architect (2026-07-13)
+- **Consumes S3's driver — FACTORY-builds-driver, adapter holds only the `DbExecute` (architect,
+  2026-07-14).** The warehouse rung delegates to a thin `createWarehouseQueryAdapterFromConfig` (the
+  structural twin of `createHttpQueryAdapterFromConfig`, which reads `config.fetch` and injects it):
+  read `warehouse_dsn`, lazily import the S3 `warehouse`-extra driver, build the default `DbExecute`,
+  inject it into the adapter constructor. The adapter holds a `DbExecute`-typed field and never sees
+  the DSN or a driver handle — the same split as `HttpQueryAdapter` holding a `FetchLike`. Rationale:
+  the lazy optional-extra import belongs at the config/factory boundary (keeps the adapter module
+  import-clean); the adapter stays unit-testable against the S3 fake exec (the selection test injects
+  the fake — no real Neon); a DSN is credential-shaped config, read at the boundary and never stored
+  on the working object (like `personalKey`). `depends_on` S3 (the seam) + S1 (the frozen contract).
+  — architect (2026-07-13, 2026-07-14)
+
+**Cross-story dependency on S3's fake (story-refiner 2026-07-14).** S4's selection tests inject the S3
+fake `DbExecute` (the AC's "S3 fake seam, no real Postgres"). S3 ships that fake as a **reusable shared
+test helper** (pinned in S3's Scope) — S4 imports it, does not reinvent one. The `depends_on: [S1, S3]`
+already forces S3 to land first; no separate sequencing note needed (unlike E15-S4↔S3, this dep is a
+real `depends_on`, not a soft cross-reference).
 
 **`touches: core`** because the shared config/factory posture (presence-based selection, the neutral
 adapter interface) is a seam-level convention; the change lives in the `node`/query target but

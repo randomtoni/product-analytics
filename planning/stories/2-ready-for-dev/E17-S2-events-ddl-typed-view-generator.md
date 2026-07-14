@@ -31,8 +31,13 @@ S1's frozen contract.
   `CREATE OR REPLACE VIEW` (or the SQL string for one) projecting one **safe-cast** column per
   declared event property over the `properties` JSONB base, per S1's rule
   (`string → ::text`, `number → ::numeric`, `boolean → ::boolean`, `date → ::timestamptz`), plus the
-  base columns (`distinct_id`, `event`, `timestamp`, `uuid`) passed through. The generator reads
-  `PropType` off the taxonomy decl (`ts/packages/analytics-kit/src/taxonomy.ts` /
+  base columns (`distinct_id`, `event`, `timestamp`, `uuid`) passed through. The generator projects
+  from the **event-property decls only** — the union of prop keys across `decl.events`' `PropDecl`
+  values (`events: Record<string, PropDecl>` TS / `events: dict[str, PropDecl]` Python). It does NOT
+  read the `traits`/`groups`/`page`/`flags` slots (per S1: `traits`/`groups` are the JSONB-nesting
+  guard; `page` is a browser-only slot Python omits by design; `flags` are inbound payloads) — reading
+  event-prop decls only is what keeps the two generators identical despite that slot asymmetry. It
+  reads `PropType` off the decl (`ts/packages/analytics-kit/src/taxonomy.ts` /
   `python/src/analytics_kit/taxonomy.py`); it bakes in NO consumer event/domain name (names come from
   the taxonomy at call time). It honors the S1 trait/group guard: **no view column named after**
   `set`/`set_once`/`group_type`/`group_key`/`group_set`.
@@ -75,6 +80,8 @@ S1's frozen contract.
       is idempotent (safe to re-run).
 - [ ] TS and Python ship the same `events` DDL and the same view-generation rule; the generator
       produces equivalent view SQL for the same taxonomy in both trees (parity test present in both).
+      Column emission order is deterministic and identical across trees (one pinned ordering rule), so
+      "equivalent" is byte-for-byte, not merely set-equal.
 - [ ] Generated SQL and DDL carry zero vendor token; both neutrality scans green. No `$`-prefixed
       column or PostHog-shaped name appears.
 - [ ] All gates green in both trees (TS: build · test · typecheck · lint; Python: pytest · ruff ·
@@ -107,6 +114,17 @@ executable form of `QUERY-ROW-CONTRACT.md`.
 **Parity discipline:** mirrors the `Python parity` cycle precedent — the SQL contract is shared; each
 tree ships its own generator satisfying it, cased idiomatically. The generated SQL itself is
 Postgres and therefore identical across languages; assert that equivalence in both trees' tests.
+
+**Column ORDER must be deterministic and cross-tree-identical (story-refiner 2026-07-14).** "Byte-
+equivalent view SQL for the same taxonomy" (the AC + the parity assertion) is only attainable if the
+projected columns emit in a fixed order both trees agree on. A property key can appear on multiple
+events, so the union-dedup step must not scramble order. Pin ONE ordering rule and apply it in both
+trees — the natural, deterministic choice is **first-seen insertion order** while walking
+`decl.events` (both TS `Record`/`Object.keys` and Python `dict` preserve insertion order), OR a plain
+lexical sort of the deduped key set; pick one in S2 and state it, so the TS and Python generators
+produce byte-identical column lists (and the base columns lead in the fixed order
+`distinct_id, event, timestamp, uuid`). Without this pin the parity test is non-deterministic. This is
+a generation-shape decision, not a contract change — S1 froze the columns, not their emission order.
 
 **No driver here.** S2 produces SQL as strings/artifacts. It does NOT import `pg`/`psycopg` or
 execute anything — execution rides the S3 DB-execute seam. Keep S2 free of any driver dependency so
