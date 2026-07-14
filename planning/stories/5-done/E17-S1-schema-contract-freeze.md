@@ -151,6 +151,22 @@ E18/E19 — the whole cycle binds to the contract it freezes.
 contract / the shape / per-thing tables / the executable form / parity framing" structure. This is
 the WRITE-side contract; that is the READ-side contract; together they bound the self-host loop.
 
+> Reviewer suggestion (2026-07-14): pin a deterministic column-emission order (base columns first,
+> then event-property projections stable-sorted by prop key) so both trees emit byte-identical view
+> SQL — the load-bearing precondition for S2's parity assertion. ADDRESSED before ship: added the
+> "Deterministic column order" subsection to `WAREHOUSE-SCHEMA-CONTRACT.md` and conditioned the two
+> byte-identical parity claims on it.
+> Reviewer suggestion (2026-07-14): unify the two "byte-identical view SQL" assertions and condition
+> them on the ordering rule. ADDRESSED: both now read as consequences of the deterministic-order rule.
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this once the story moves to stories/5-done/. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files changed:** none (planning-doc-only story)
+- **Files added:** `planning/WAREHOUSE-SCHEMA-CONTRACT.md` — the frozen write-side `events` schema contract (the one-way door)
+- **New public API:** none — a planning contract doc
+- **Tests added:** none (doc-only; by-hand neutrality grep in lieu of a suite — 0 vendor/engine tokens)
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** no criticals; 2 suggestions, BOTH addressed in-story before ship (see Technical notes) — the deterministic column-order pin + unified parity wording, landed so S2 binds to the complete contract
+- **Cross-story seams exposed:** S2's typed-view generator MUST emit columns base-first (`distinct_id`, `event`, `timestamp`, `uuid`) then event-property keys **stable-sorted by prop key** — that ordering is what makes S2's byte-identical parity assertion hold. S2/S3/S4 + E18/E19 all bind to the frozen column set (`distinct_id`, `event`, `timestamp` NOT NULL, `uuid` UNIQUE, `properties` jsonb) + the event-property-decls-only safe-cast typed-view rule.
