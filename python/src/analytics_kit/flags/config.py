@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..config import FlagBootstrap
 from ..taxonomy import Taxonomy
+from .local.neutral_definition import FeatureFlagDefinition
 from .transport import FlagTransport
 
 
@@ -46,6 +47,15 @@ class FlagClientConfig(BaseModel):
     and DISTINCT from the ingest write key and the flag-eval ``key``. Enabling/tuning local eval is
     config-only (bar B). Because ``extra="forbid"``, these are real fields — a local-eval config with
     an unknown key still raises loudly.
+
+    The fully-local self-host posture (the recommended zero-infra default) supplies
+    ``static_definitions`` instead of a definitions endpoint: the consumer seeds the definition set
+    from config (the neutral :class:`~analytics_kit.FeatureFlagDefinition` shape), so the definition
+    SOURCE moves off the poller fetch and the client makes ZERO ``/flags/`` calls and has no
+    flag/definitions URL. The canonical shape is ``key`` + ``static_definitions`` +
+    ``only_evaluate_locally=True``, with NO ``definitions_endpoint`` / ``definitions_key`` /
+    ``flag_endpoint``. ``static_definitions`` is a REAL declared field (``extra="forbid"`` would else
+    reject a valid static-defs config); it is validated loudly at client construction.
     """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -58,4 +68,5 @@ class FlagClientConfig(BaseModel):
     definitions_endpoint: str | None = None
     definitions_key: str | None = None
     poll_interval: float | None = None
+    static_definitions: list[FeatureFlagDefinition] | None = None
     only_evaluate_locally: bool | None = None

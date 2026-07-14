@@ -61,6 +61,16 @@ class DefinitionPoller:
     injectable HTTP send hook (default a stdlib ``urllib`` GET).
     """
 
+    # The fetch machinery is ``None`` in seeded mode — a seeded poller structurally lacks the URL, the
+    # privileged credential, the poll interval, and the transport it would need to reach a definitions
+    # endpoint. A fetching poller sets all four; a seeded one leaves them ``None`` and its
+    # ``start()``/``load()`` short-circuit before ever touching them.
+    _url: str | None
+    _definitions_key: str | None
+    _poll_interval: float | None
+    _transport: FlagTransport | None
+    _seeded: bool
+
     def __init__(
         self,
         *,
@@ -86,13 +96,47 @@ class DefinitionPoller:
         # only a test that needs the first load settled before asserting readiness waits on it.
         self._first_load_done = threading.Event()
         self._thread: threading.Thread | None = None
+        # Fetching mode: definitions come from the poll thread.
+        self._seeded = False
+
+    @classmethod
+    def seeded(cls, snapshot: DefinitionSnapshot) -> DefinitionPoller:
+        """Construct a SEEDED poller from a pre-lowered :class:`DefinitionSnapshot` (S1's
+        ``lower_definitions``) — the static-definitions self-host path (S2).
+
+        The SAME ``DefinitionPoller`` type, so ``local.poller``'s type is unchanged and the adapter's
+        resolve/lifecycle path is byte-for-byte unchanged. It carries NO definitions endpoint /
+        privileged credential / transport — structurally unable to reach a remote source (the STRUCTURAL
+        guardrail: "no fetch, no URL, no thread" is a property of construction, not merely of the
+        ``start()`` no-op). ``is_ready()`` is ``True`` from construction (seed loaded, non-empty);
+        ``start()``/``stop()``/``load()`` are real no-ops (no thread, no URL, no fetch)."""
+        poller = cls.__new__(cls)
+        poller._url = None
+        poller._definitions_key = None
+        poller._poll_interval = None
+        poller._transport = None
+        poller._snapshot = snapshot
+        poller._loaded_successfully_once = True
+        poller._load_lock = threading.Lock()
+        poller._stopped = threading.Event()
+        poller._first_load_done = threading.Event()
+        poller._first_load_done.set()
+        poller._thread = None
+        poller._seeded = True
+        return poller
 
     def start(self) -> None:
         """Kick off polling and RETURN AT ONCE — the daemon thread does the first load as its own
         first step, so construction never blocks on the definitions round-trip (an unreachable
         endpoint must not hang app boot). ``is_ready()`` gates local eval, so ``evaluate`` falls
         through to remote/degraded until that first load lands. A background loop then reloads every
-        ``poll_interval`` until :meth:`stop`. Idempotent — a second ``start`` is a no-op."""
+        ``poll_interval`` until :meth:`stop`. Idempotent — a second ``start`` is a no-op.
+
+        In SEEDED mode this is a REAL no-op — the seed is already present, so there is no thread, no
+        URL resolution, and no fetch (the adapter constructor calls ``start()`` unconditionally; a
+        seeded poller that fetched would reintroduce the very remote dependency S2 bypasses)."""
+        if self._seeded:
+            return
         if self._thread is not None:
             return
         self._thread = threading.Thread(
@@ -135,6 +179,10 @@ class DefinitionPoller:
         """Load definitions once, deduping a concurrent call onto the same in-flight lock. A failed
         load leaves the prior snapshot in place — never overwrite good data with an error; the next
         scheduled poll retries."""
+        # A seeded poller never fetches (its `start()` short-circuits); this guard makes that
+        # structural even against a direct `load()` — the fetch machinery is None, nothing to load.
+        if self._seeded:
+            return
         with self._load_lock:
             self._fetch_definitions()
 
@@ -154,6 +202,10 @@ class DefinitionPoller:
             self.load()
 
     def _fetch_definitions(self) -> None:
+        # Narrows the optional fetch machinery: it is set only in fetching mode, and `load()` (the
+        # only caller) already short-circuits in seeded mode — so this is unreachable when None.
+        if self._transport is None or self._url is None or self._definitions_key is None:
+            return
         try:
             response = self._transport.send(
                 self._url,

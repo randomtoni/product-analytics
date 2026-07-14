@@ -1,5 +1,6 @@
 import type { FlagsConfig, Taxonomy, TaxonomyDecl } from '@randomtoni/analytics-kit';
 import type { FetchLike } from '../config';
+import type { FeatureFlagDefinition } from './local/neutral-definition';
 
 // The flag client's own server-only config surface — DISTINCT from the ingest
 // `NodeAnalyticsConfig` and from the query `QueryClientConfig`. The flag round-trip has its own
@@ -12,6 +13,12 @@ import type { FetchLike } from '../config';
 // the local-vs-remote strategy stays entirely behind the unchanged `evaluate`, never on the neutral
 // port. `onlyEvaluateLocally` is ADAPTER config, resolved from this object — never a neutral port
 // parameter. A browser adapter (no local mode) would simply ignore it.
+//
+// The fully-local self-host posture (the recommended zero-infra default) supplies `staticDefinitions`
+// instead of a definitions endpoint: the consumer seeds the definition set from config, so the
+// definition SOURCE moves off the poller fetch and the client makes ZERO `/flags/` calls and has no
+// flag/definitions URL. The canonical shape is `key` + `staticDefinitions` + `onlyEvaluateLocally:
+// true`, with NO `definitionsEndpoint` / `definitionsKey` / `flagEndpoint`.
 export interface FlagClientConfig {
   key?: string;
   flagEndpoint?: string;
@@ -26,6 +33,11 @@ export interface FlagClientConfig {
   definitionsKey?: string;
   // The definition poll interval in milliseconds. Defaults to a sensible interval when omitted.
   pollInterval?: number;
+  // Consumer-supplied STATIC flag definitions (the neutral S1 `FeatureFlagDefinition` shape). Present
+  // ⇒ the local-eval snapshot is SEEDED from these (via S1's lowering), bypassing the poller fetch
+  // entirely — no definitions endpoint / privileged credential required. Validated loudly at client
+  // construction; malformed definitions throw. This is the recommended zero-infra self-host default.
+  staticDefinitions?: FeatureFlagDefinition[];
   // Suppress the remote fallback: an inconclusive flag under local-only resolves to its degraded
   // neutral state rather than round-tripping. Effective = `onlyEvaluateLocally ?? false`.
   onlyEvaluateLocally?: boolean;

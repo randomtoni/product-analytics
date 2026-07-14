@@ -19,7 +19,13 @@ negotiating a different definition wire writes its own lowering from this SAME n
 from __future__ import annotations
 
 import warnings
-from typing import Literal, TypedDict, Union
+from typing import Literal, Union
+
+# `typing_extensions.TypedDict` (not `typing.TypedDict`): Pydantic requires it on Python < 3.12 to
+# generate a schema for a TypedDict embedded in a model — which the S2 `FlagClientConfig`
+# `static_definitions: list[FeatureFlagDefinition]` field does. Behaviourally identical; the field
+# shape is unchanged.
+from typing_extensions import TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 

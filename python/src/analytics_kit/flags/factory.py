@@ -25,6 +25,7 @@ from ..ports import FeatureFlagPort
 from .adapter import HttpFlagAdapter, LocalEvalCapability
 from .config import FlagClientConfig
 from .local import DefinitionPoller
+from .local.neutral_definition import lower_definitions, validate_definitions
 from .noop import FlagNoop
 
 # The definition poll cadence when the consumer doesn't tune it — a sensible server default.
@@ -58,9 +59,28 @@ def create_flag_client(config: FlagClientConfig) -> FeatureFlagPort:
 
 
 def _build_local_capability(config: FlagClientConfig) -> LocalEvalCapability | None:
-    """Assemble the local-eval capability when a definitions endpoint + the privileged credential are
-    configured; ``None`` otherwise (remote-only). The effective local-only value follows the reference
-    default ``only_evaluate_locally ?? False``."""
+    """Assemble the local-eval capability. Two selectors, in this order:
+
+    1. STATIC definitions (the fully-local self-host default) — ``static_definitions`` present ⇒ a
+       SEEDED poller carrying the lowered snapshot, with NO definitions endpoint / privileged
+       credential / transport. The definition source is config, so the client makes zero definition
+       fetches. Validated loudly here (raises the config-layer ``ValidationError`` at construction on
+       a malformed set), then lowered via S1's ``lower_definitions``.
+    2. The definitions endpoint + the privileged credential (the poller-fetch path) — unchanged.
+
+    ``None`` when neither selector fires (remote-only). A local capability from EITHER selector is a
+    real route, so the factory's "keyed but no route ⇒ no-op" guard does not swallow a static-defs
+    local-only config. The effective local-only value follows the reference default
+    ``only_evaluate_locally or False``."""
+    only_locally = config.only_evaluate_locally or False
+    if config.static_definitions is not None:
+        # Validate at the input boundary so a malformed static set fails LOUDLY at client construction
+        # (Pydantic ValidationError — the config-layer error type), not lazily at first eval. Then
+        # lower to the wire snapshot and seed a poller that structurally cannot fetch.
+        validate_definitions(config.static_definitions)
+        poller = DefinitionPoller.seeded(lower_definitions(config.static_definitions))
+        return LocalEvalCapability(poller, only_locally)
+
     if config.definitions_endpoint is None or config.definitions_key is None:
         return None
     poller = DefinitionPoller(
@@ -70,5 +90,4 @@ def _build_local_capability(config: FlagClientConfig) -> LocalEvalCapability | N
         poll_interval=config.poll_interval if config.poll_interval is not None else _DEFAULT_POLL_INTERVAL,
         transport=config.transport,
     )
-    only_locally = config.only_evaluate_locally or False
     return LocalEvalCapability(poller, only_locally)

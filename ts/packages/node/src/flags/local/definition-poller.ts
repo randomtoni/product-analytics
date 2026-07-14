@@ -58,10 +58,15 @@ const EMPTY_SNAPSHOT: DefinitionSnapshot = Object.freeze({
 });
 
 export class DefinitionPoller {
-  private readonly definitionsUrl: string;
-  private readonly definitionsKey: string;
-  private readonly pollIntervalMs: number;
-  private readonly doFetch: FetchLike;
+  // The fetch machinery is UNDEFINED in seeded mode — the seeded poller structurally lacks the URL,
+  // the privileged credential, and the fetch it would need to reach a definitions endpoint (S2's
+  // structural guardrail: "no fetch, no URL, no thread" is a property of construction, not merely of
+  // the start() no-op). A fetching poller sets all three; a seeded one leaves them undefined and its
+  // start()/load() short-circuit before ever touching them.
+  private readonly definitionsUrl: string | undefined;
+  private readonly definitionsKey: string | undefined;
+  private readonly pollIntervalMs: number | undefined;
+  private readonly doFetch: FetchLike | undefined;
   private snapshot: DefinitionSnapshot = EMPTY_SNAPSHOT;
   private loadedSuccessfullyOnce = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -69,17 +74,52 @@ export class DefinitionPoller {
   // flight at a time; cleared when it settles.
   private loadingPromise: Promise<void> | undefined;
   private stopped = false;
+  // Seeded mode: definitions came from config (S2), not the fetch. `start()` is a real no-op and the
+  // seed is already `isReady()` from construction — the adapter reads through the same `local.poller`
+  // field and cannot tell the difference.
+  private readonly seeded: boolean;
 
   constructor(config: DefinitionPollerConfig) {
     this.definitionsUrl = resolveDefinitionsUrl(config.definitionsEndpoint, config.token);
     this.definitionsKey = config.definitionsKey;
     this.pollIntervalMs = config.pollIntervalMs;
     this.doFetch = config.fetch;
+    this.seeded = false;
+  }
+
+  // Construct a SEEDED poller from a pre-lowered `DefinitionSnapshot` (S1's `lowerDefinitions`) —
+  // the static-definitions self-host path (S2). Same `DefinitionPoller` type, so `local.poller`'s
+  // type is unchanged and the adapter's resolve/lifecycle path is byte-for-byte unchanged. It carries
+  // NO definitions endpoint / privileged credential / fetch — structurally unable to reach a remote
+  // source. `isReady()` is true from construction (seed loaded, non-empty); `start()`/`stop()` are
+  // real no-ops (no thread, no timer, no URL, no fetch). The private constructor above stays the
+  // fetching mode; this factory is the only seeded entry.
+  static seeded(snapshot: DefinitionSnapshot): DefinitionPoller {
+    const poller = Object.create(DefinitionPoller.prototype) as DefinitionPoller;
+    Object.assign(poller, {
+      definitionsUrl: undefined,
+      definitionsKey: undefined,
+      pollIntervalMs: undefined,
+      doFetch: undefined,
+      snapshot,
+      loadedSuccessfullyOnce: true,
+      timer: undefined,
+      loadingPromise: undefined,
+      stopped: false,
+      seeded: true,
+    });
+    return poller;
   }
 
   // Kick off polling: an immediate first load, then a self-rescheduling interval. Returns the
-  // first-load promise so a caller can await readiness.
+  // first-load promise so a caller can await readiness. In seeded mode this is a REAL no-op — the
+  // seed is already present, so there is no thread, no URL resolution, and no fetch (the adapter's
+  // constructor calls `start()` unconditionally; a seeded poller that fetched would reintroduce the
+  // very remote dependency S2 bypasses).
   start(): Promise<void> {
+    if (this.seeded) {
+      return Promise.resolve();
+    }
     return this.load();
   }
 
@@ -108,6 +148,11 @@ export class DefinitionPoller {
   // the next poll BEFORE doing the fetch work (mirroring the reference), so a slow/failed fetch
   // never stalls the interval.
   private load(): Promise<void> {
+    // A seeded poller never fetches (its `start()` short-circuits); this guard makes that structural
+    // even against a direct `load()` — the fetch machinery is undefined, so there is nothing to load.
+    if (this.seeded) {
+      return Promise.resolve();
+    }
     if (this.loadingPromise !== undefined) {
       return this.loadingPromise;
     }
@@ -141,6 +186,15 @@ export class DefinitionPoller {
   }
 
   private async fetchDefinitions(): Promise<void> {
+    // Narrows the optional fetch machinery: it is defined only in fetching mode, and `load()` (the
+    // only caller) already short-circuits in seeded mode — so this is unreachable when absent.
+    if (
+      this.doFetch === undefined ||
+      this.definitionsUrl === undefined ||
+      this.definitionsKey === undefined
+    ) {
+      return;
+    }
     const response = await this.doFetch(this.definitionsUrl, {
       method: 'GET',
       headers: {

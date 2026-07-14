@@ -140,6 +140,23 @@ posture must be identical in concept across `ts/` and `python/`; only casing (`s
 `static_definitions`) and idiom differ. Mirror the existing `local-parity.test.ts` posture for the
 zero-egress + equal-value assertions.
 
+> Reviewer suggestion (2026-07-14) → E20 improvement pass (optional): an empty `staticDefinitions` under
+> local-only builds a real (empty) route whose `isReady()` is permanently false, so every eval degrades
+> silently to the unresolved set — unlike the keyed-but-no-route path, which `console.warn`s. Intended
+> "valid empty seed" behavior (tests assert it), but a one-line dev-warn on an empty static set (both
+> trees) would make an accidental empty config observable.
+> Reviewer note (2026-07-14) → future follow-up (PRE-EXISTING, NOT introduced by S2, out of E20 scope):
+> TS/Python `key`-guard asymmetry — TS no-ops on `key === undefined || key === ''`, Python only on
+> `key is None` (an empty-string key passes through). Latent parity gap in `create-flag-client.ts` /
+> `factory.py`; doesn't affect the static-defs path. A future ticket.
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this on move to 5-done/. Do not hand-edit. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files changed:** TS `flags/local/definition-poller.ts` (seeded mode), `config.ts` (`staticDefinitions?`), `create-flag-client.ts` (factory branch) + `static-definitions.test.ts`; Python `flags/local/definition_poller.py` (seeded), `local/neutral_definition.py` (`typing.TypedDict`→`typing_extensions.TypedDict`, Pydantic<3.12 boundary req), `config.py` (`static_definitions`), `factory.py` + `tests/test_flag_static_definitions.py`
+- **New public API:** `staticDefinitions?: FeatureFlagDefinition[]` (TS `FlagClientConfig`) / `static_definitions` (Python) — takes the neutral S1 type
+- **Tests added:** TS 8 + Python 9 — **zero-egress** (recording transport never hit across definitions GET + `/flags/` POST), canonical shape selects the real adapter, `stop()` idempotent no-op, **equal-value-vs-poller** (over a REAL socket, through the actual evaluator, + flipped-rollout negative control), malformed → raise at construction (transport untouched), unkeyed → `FlagNoop`, empty array degrades cleanly
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP (no criticals). **Zero-egress is STRUCTURAL** — the seeded poller carries no URL/credential/transport and every fetch entry point (`start`→`load`→`fetchDefinitions`) short-circuits; egress is impossible even against a direct `fetchDefinitions()` call. Adapter + evaluator **zero-diff** (verified). The `typing_extensions.TypedDict` swap validated as a mandatory boundary req (Pydantic reproduced the <3.12 error). 2 forward suggestions above
+- **Cross-story seams exposed:** **E20 is CLOSED — self-host flag eval makes provably zero remote calls** (the last remote flag dependency, gone). Seeding is a seeded MODE of the same `DefinitionPoller` (so `local.poller` type + the adapter resolve path are unchanged); the config field takes the neutral S1 type; validation runs at construction. **E21** proves the full-loop zero-egress (recording-transport log empty of `/api/projects/.../query/`, `/flags/`, `/batch/`) and the standing factory-selection gate (a self-host flag config selects the local-only path).

@@ -10,6 +10,10 @@ import type { FlagClientConfig } from './config';
 import { FlagNoop } from './flag-noop';
 import { HttpFlagAdapter, type LocalEvalCapability } from './http-flag-adapter';
 import { DefinitionPoller } from './local';
+// S1's lowering + seed-time validator are INTERNAL — imported by explicit module path (not from the
+// `./local` barrel, which does not re-export them). The consumer authors the neutral `FeatureFlagDefinition`.
+import { lowerDefinitions } from './local/neutral-definition';
+import { validateDefinitions } from './local/validate-definitions';
 
 // The default definition poll interval (ms) when the config omits `pollInterval`.
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
@@ -65,13 +69,32 @@ export function createFlagClient(
   });
 }
 
-// Build the local-eval capability when the config selects it: a definitions endpoint + a privileged
-// definition-reading credential. Absent ⇒ undefined (remote-only). The effective local-only posture
-// follows the reference default: `onlyEvaluateLocally ?? false`.
+// Build the local-eval capability when the config selects it. Two selectors, in this order:
+//   1. STATIC definitions (the fully-local self-host default) — `staticDefinitions` present ⇒ a
+//      SEEDED poller carrying the lowered snapshot, with NO definitions endpoint / privileged
+//      credential / fetch. The definition source is config, so the client makes zero definition
+//      fetches. Validated loudly here (throws at construction on a malformed set).
+//   2. The definitions endpoint + privileged credential (the poller-fetch path) — unchanged.
+// Absent both ⇒ undefined (remote-only). A local capability from EITHER selector is a real route, so
+// the factory's "keyed but no route ⇒ no-op" guard does not swallow a static-defs local-only config.
+// The effective local-only posture follows the reference default: `onlyEvaluateLocally ?? false`.
 function buildLocalCapability(
   config: FlagClientConfig,
   doFetch: typeof fetch
 ): LocalEvalCapability | undefined {
+  const staticDefinitions = config.staticDefinitions;
+  if (staticDefinitions !== undefined) {
+    // Validate at the input boundary so a malformed static set fails LOUDLY at client construction
+    // (config-layer `Error`), not lazily at first eval. Then lower to the wire snapshot and seed a
+    // poller that structurally cannot fetch — the endpoint/credential are not supplied to it.
+    validateDefinitions(staticDefinitions);
+    const poller = DefinitionPoller.seeded(lowerDefinitions(staticDefinitions));
+    return {
+      poller,
+      onlyLocally: config.onlyEvaluateLocally ?? false,
+    };
+  }
+
   const endpoint = config.definitionsEndpoint;
   const definitionsKey = config.definitionsKey;
   if (
