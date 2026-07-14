@@ -88,6 +88,17 @@ type per the property's declared `PropType`:
 The view also carries the base columns (`distinct_id`, `event`, `timestamp`, `uuid`) through
 unchanged, so query SQL selects everything it needs from the view alone.
 
+### Breakdown is a typed-view column, never a raw-JSONB read
+
+A query `breakdown` groups on the **typed view column** projected for the breakdown key — never
+on `properties ->> '<key>'`. The breakdown key must be a **declared event property** (the same key
+set the view projects), so it always has a safe-cast column in `events_typed`; the query groups on
+`("<key>")::text` so the neutral `breakdown` string is rendered deterministically by Postgres
+(identical across both trees, independent of driver/session settings) regardless of the property's
+declared `PropType`. A breakdown naming an **undeclared** key is a taxonomy error raised at
+SQL-generation time — the query is never emitted. This upholds §"Query SQL never targets
+`properties` directly" without exception.
+
 ### Deterministic column order (what makes parity byte-exact)
 
 The generator emits view columns in **one deterministic order across both trees**: the base columns

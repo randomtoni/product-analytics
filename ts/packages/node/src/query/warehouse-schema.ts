@@ -59,8 +59,10 @@ const CAST_TYPE: Record<PropType, string> = {
 
 // Double-quote a SQL identifier (the view column alias). Consumer prop keys are arbitrary
 // strings, so quoting guards mixed case, reserved words, and punctuation; an embedded quote is
-// doubled per the SQL standard.
-function quoteIdent(name: string): string {
+// doubled per the SQL standard. Exported for the warehouse SQL builders (node-package-internal)
+// so the view generator and the breakdown path quote identifiers through ONE function — NOT
+// re-exported from the package `index.ts` (a cross-module helper, not consumer API).
+export function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
@@ -90,7 +92,9 @@ function projectColumn(key: string, propType: PropType): string {
 // string). A key that appears on multiple events resolves to the FIRST-declared event's type
 // for that key (stable over the events' declaration order); the sort is by key only, so both
 // language trees emit the identical column order regardless of how each walks its taxonomy.
-function collectProjectionKeys(events: Record<string, PropDecl>): Array<[string, PropType]> {
+// Exported for the warehouse SQL builders (node-package-internal) to derive the declarable-key
+// set from the SAME source the view projects — NOT re-exported from the package `index.ts`.
+export function collectProjectionKeys(events: Record<string, PropDecl>): Array<[string, PropType]> {
   const byKey = new Map<string, PropType>();
   for (const propDecl of Object.values(events)) {
     for (const [key, propType] of Object.entries(propDecl)) {

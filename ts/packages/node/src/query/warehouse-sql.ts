@@ -1,5 +1,6 @@
 import type {
   FunnelStepRow,
+  PropDecl,
   QueryColumn,
   QueryResult,
   RetentionRow,
@@ -7,7 +8,7 @@ import type {
   TrendRow,
 } from '@randomtoni/analytics-kit';
 import type { DbColumn, DbExecuteResult } from './db-execute';
-import { EVENTS_VIEW } from './warehouse-schema';
+import { EVENTS_VIEW, collectProjectionKeys, quoteIdent } from './warehouse-schema';
 import type {
   Aggregation,
   Duration,
@@ -24,14 +25,45 @@ import type {
 // executes nothing — a caller routes the emitted SQL through the injected `DbExecute` seam. The
 // trend/unique_count builder is the first resident; funnel/retention/raw builders (S2–S4) join it.
 //
-// Never targets the base `events` table and never reads `properties` directly EXCEPT the breakdown
-// path (`properties ->> '<key>'`) — breakdown is a runtime string, not a typed view column, so it
-// reads the JSONB path; the bucketed/counted columns come from the view.
+// Never targets the base `events` table and never reads `properties` directly — breakdown groups on
+// the typed view column projected for the breakdown key (`("<key>")::text`), so every query body
+// selects only view columns.
 
-// Single-quote a SQL string literal — the same escaping `warehouse-schema.ts` applies to consumer
-// keys, kept consistent so the breakdown JSONB key path and the view generator share one story.
-function quoteLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
+// The breakdown leaf: the typed view column projected for the breakdown key, TEXT-CAST. `quoteIdent`
+// (shared with the view generator, so this alias IS the projected column) yields `"<key>"`; the
+// `::text` cast makes Postgres — not the client driver — render the neutral breakdown string, so a
+// non-string declared prop (`number`/`boolean`) renders the SAME canonical string cross-tree. The
+// view ALWAYS projects a column for a declared key; an undeclared key never reaches here (it throws
+// at `requireDeclared`).
+function breakdownColumn(breakdown: string): string {
+  return `(${quoteIdent(breakdown)})::text`;
+}
+
+// Guard a breakdown key against the declared event-property set — THROW at SQL-gen time.
+// `declarableKeys` is the union of declared event-property keys (the SAME set the view projects),
+// or `undefined` when no taxonomy was supplied. A missing taxonomy is a DISTINCT config error (name
+// the actual fix); an undeclared key names the key + the declarable set. Both fail before any SQL is
+// emitted — never an empty-result silent-swallow, never a query-time error.
+function requireDeclared(breakdown: string, declarableKeys: ReadonlySet<string> | undefined): void {
+  if (declarableKeys === undefined) {
+    throw new Error(
+      'analytics: a warehouse breakdown query requires a taxonomy on QueryClientConfig'
+    );
+  }
+  if (!declarableKeys.has(breakdown)) {
+    const declarable = [...declarableKeys].sort().join(', ') || '(none)';
+    throw new Error(
+      `analytics: breakdown key "${breakdown}" is not a declared event property; declarable keys are: ${declarable}`
+    );
+  }
+}
+
+// The declarable breakdown-key set — the keys of the SAME projection set the view emits. Derived
+// from `collectProjectionKeys` (shared with the view generator) so "breakdown key ⇒ a column the
+// view actually projects" holds by construction. The adapter derives this once from
+// `taxonomy.decl.events` and threads it to each `build*Sql` call.
+export function collectDeclarableKeys(events: Record<string, PropDecl>): ReadonlySet<string> {
+  return new Set(collectProjectionKeys(events).map(([key]) => key));
 }
 
 // The `date_trunc` bucket unit, mirroring the HTTP adapter's `INTERVAL_FOR_UNIT`: minute/hour
@@ -84,6 +116,7 @@ interface TrendWalk {
   countExpr: string;
   window: Duration;
   breakdown: string | undefined;
+  declarableKeys: ReadonlySet<string> | undefined;
 }
 
 // Emit the shared trend walk as Postgres SQL over the typed view. A `generate_series` spine over
@@ -119,13 +152,14 @@ function trendWalkSql(walk: TrendWalk): string {
     ].join('\n');
   }
 
-  const breakdownPath = `properties ->> ${quoteLiteral(walk.breakdown)}`;
+  requireDeclared(walk.breakdown, walk.declarableKeys);
+  const breakdownCol = breakdownColumn(walk.breakdown);
   return [
     'WITH counts AS (',
-    `  SELECT date_trunc('${bucketUnit}', timestamp) AS bucket, ${breakdownPath} AS breakdown, ${walk.countExpr} AS value`,
+    `  SELECT date_trunc('${bucketUnit}', timestamp) AS bucket, ${breakdownCol} AS breakdown, ${walk.countExpr} AS value`,
     `  FROM ${EVENTS_VIEW}`,
     `  WHERE event = $1 AND timestamp >= ${lowerBound}`,
-    `  GROUP BY date_trunc('${bucketUnit}', timestamp), ${breakdownPath}`,
+    `  GROUP BY date_trunc('${bucketUnit}', timestamp), ${breakdownCol}`,
     '),',
     'series AS (SELECT DISTINCT breakdown FROM counts)',
     `SELECT ${bucketLabel} AS bucket, coalesce(counts.value, 0) AS value, series.breakdown AS breakdown`,
@@ -143,19 +177,27 @@ export interface WarehouseQuery {
   params: ReadonlyArray<unknown>;
 }
 
-export function buildTrendSql<TX extends TaxonomyShape>(spec: TrendSpec<TX>): WarehouseQuery {
+// `declarableKeys` is the declared event-property key set (the same set the view projects); a
+// `breakdown` naming a key outside it — or a breakdown with no taxonomy (`undefined`) — throws at
+// SQL-gen time before any SQL is emitted (see `requireDeclared`).
+export function buildTrendSql<TX extends TaxonomyShape>(
+  spec: TrendSpec<TX>,
+  declarableKeys?: ReadonlySet<string>
+): WarehouseQuery {
   return {
     sql: trendWalkSql({
       countExpr: countExpr(spec.aggregation),
       window: spec.window,
       breakdown: spec.breakdown,
+      declarableKeys,
     }),
     params: [spec.event],
   };
 }
 
 export function buildUniqueCountSql<TX extends TaxonomyShape>(
-  spec: UniqueCountSpec<TX>
+  spec: UniqueCountSpec<TX>,
+  declarableKeys?: ReadonlySet<string>
 ): WarehouseQuery {
   return {
     sql: trendWalkSql({
@@ -163,6 +205,7 @@ export function buildUniqueCountSql<TX extends TaxonomyShape>(
       countExpr: countExpr('unique'),
       window: spec.window,
       breakdown: spec.breakdown,
+      declarableKeys,
     }),
     params: [spec.event],
   };
@@ -190,7 +233,12 @@ function windowIntervalLiteral(within: Duration): string {
 // `run_max`-style window forms are deliberately NOT used: a running `max(step_index)` cannot honor
 // the STRICT step-to-step inequality (equal-timestamp rows leak across), so it miscounts ties. The
 // variadic N-way self-join is the other rejected alternative (join count grows with step count).
-function funnelWalkSql(stepCount: number, within: Duration, breakdown: string | undefined): string {
+function funnelWalkSql(
+  stepCount: number,
+  within: Duration,
+  breakdown: string | undefined,
+  declarableKeys: ReadonlySet<string> | undefined
+): string {
   const windowInterval = windowIntervalLiteral(within);
   const valuesRows = Array.from({ length: stepCount }, (_, i) => `(${i}, $${i + 1})`).join(', ');
   const withinStep = `m.timestamp > w.reached_at AND m.timestamp <= w.t0 + ${windowInterval}`;
@@ -231,13 +279,14 @@ function funnelWalkSql(stepCount: number, within: Duration, breakdown: string | 
     ].join('\n');
   }
 
-  const breakdownPath = `properties ->> ${quoteLiteral(breakdown)}`;
+  requireDeclared(breakdown, declarableKeys);
+  const breakdownCol = breakdownColumn(breakdown);
   return [
     'WITH RECURSIVE steps(step_index, event_name) AS (',
     `  VALUES ${valuesRows}`,
     '),',
     'matched AS (',
-    `  SELECT e.distinct_id, s.step_index, e.timestamp, ${breakdownPath} AS bd`,
+    `  SELECT e.distinct_id, s.step_index, e.timestamp, ${breakdownCol} AS bd`,
     `  FROM ${EVENTS_VIEW} e`,
     '  JOIN steps s ON e.event = s.event_name',
     '),',
@@ -269,10 +318,14 @@ function funnelWalkSql(stepCount: number, within: Duration, breakdown: string | 
 
 // The generated funnel SQL + positional params. Each step's event name is bound as a positional
 // param ($1..$N in step order); `within` is inlined as a canonical interval literal; the breakdown
-// key (when present) reaches the SQL as an escaped JSONB path, exactly as S1's trend breakdown does.
-export function buildFunnelSql<TX extends TaxonomyShape>(spec: FunnelSpec<TX>): WarehouseQuery {
+// key (when present) groups on the typed view column `("<key>")::text`, exactly as S1's trend
+// breakdown does — and must be a declared event property (`declarableKeys`) or SQL-gen throws.
+export function buildFunnelSql<TX extends TaxonomyShape>(
+  spec: FunnelSpec<TX>,
+  declarableKeys?: ReadonlySet<string>
+): WarehouseQuery {
   return {
-    sql: funnelWalkSql(spec.steps.length, spec.within, spec.breakdown),
+    sql: funnelWalkSql(spec.steps.length, spec.within, spec.breakdown, declarableKeys),
     params: [...spec.steps],
   };
 }
@@ -296,13 +349,14 @@ export function buildFunnelSql<TX extends TaxonomyShape>(spec: FunnelSpec<TX>): 
 // `(cohort_bucket, period_index[, breakdown])`, so an actor in two cohort buckets counts once in
 // EACH cohort's cells — per-cohort, never global.
 //
-// With a breakdown, the cohort's breakdown value is anchored at the cohort event (`properties ->>
-// key`, escaped exactly as trend/funnel), one grid per breakdown value; it is carried through the
-// grid and the join and stringified onto every row.
+// With a breakdown, the cohort's breakdown value is anchored at the cohort event (the typed view
+// column `("<key>")::text`, exactly as trend/funnel), one grid per breakdown value; it is carried
+// through the grid and the join and stringified onto every row.
 function retentionWalkSql(
   periods: number,
   granularity: Granularity,
-  breakdown: string | undefined
+  breakdown: string | undefined,
+  declarableKeys: ReadonlySet<string> | undefined
 ): string {
   const bucketFormat = BUCKET_FORMAT_FOR_UNIT[granularity];
   const offsetInterval = `(g.period_index * interval '1 ${granularity}')`;
@@ -343,13 +397,14 @@ function retentionWalkSql(
     ].join('\n');
   }
 
-  const breakdownPath = `properties ->> ${quoteLiteral(breakdown)}`;
+  requireDeclared(breakdown, declarableKeys);
+  const breakdownCol = breakdownColumn(breakdown);
   return [
     'WITH cohort AS (',
-    `  SELECT distinct_id, ${bucketExpr} AS cohort_bucket, ${breakdownPath} AS bd`,
+    `  SELECT distinct_id, ${bucketExpr} AS cohort_bucket, ${breakdownCol} AS bd`,
     `  FROM ${EVENTS_VIEW}`,
     '  WHERE event = $1',
-    `  GROUP BY distinct_id, ${bucketExpr}, ${breakdownPath}`,
+    `  GROUP BY distinct_id, ${bucketExpr}, ${breakdownCol}`,
     '),',
     'returns AS (',
     `  SELECT distinct_id, ${bucketExpr} AS return_bucket`,
@@ -380,12 +435,14 @@ function retentionWalkSql(
 // The generated retention SQL + positional params. The cohort event and return event are the
 // two positional params (`$1` = cohortEvent, `$2` = returnEvent, in that order); `periods` and
 // `granularity` are structural (the series bound + the truncation/offset unit) and inlined; the
-// breakdown key (when present) reaches the SQL as an escaped JSONB path, exactly as trend/funnel.
+// breakdown key (when present) groups on the typed view column `("<key>")::text`, exactly as
+// trend/funnel — and must be a declared event property (`declarableKeys`) or SQL-gen throws.
 export function buildRetentionSql<TX extends TaxonomyShape>(
-  spec: RetentionSpec<TX>
+  spec: RetentionSpec<TX>,
+  declarableKeys?: ReadonlySet<string>
 ): WarehouseQuery {
   return {
-    sql: retentionWalkSql(spec.periods, spec.granularity, spec.breakdown),
+    sql: retentionWalkSql(spec.periods, spec.granularity, spec.breakdown, declarableKeys),
     params: [spec.cohortEvent, spec.returnEvent],
   };
 }

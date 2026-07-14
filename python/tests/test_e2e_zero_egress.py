@@ -57,15 +57,18 @@ pytestmark = [
 ]
 
 # The self-host taxonomy — the funnel steps + the event/prop names the count scenarios seed against.
+# `plan` (string) and `tier` (number) are DECLARED event props, so the typed view projects a `plan` /
+# `tier` column and a breakdown on either passes the E21-S5 SQL-gen declared-key guard. `tier` is the
+# §4c half-(2) numeric proof — its `numeric::text` render is asserted end-to-end below.
 TAXONOMY = define_taxonomy(
     {
         "events": {
-            "funnel_step_1": {"plan": "string"},
-            "funnel_step_2": {"plan": "string"},
-            "funnel_step_3": {},
-            "cohort_signup": {"plan": "string"},
+            "funnel_step_1": {"plan": "string", "tier": "number"},
+            "funnel_step_2": {"plan": "string", "tier": "number"},
+            "funnel_step_3": {"plan": "string", "tier": "number"},
+            "cohort_signup": {"plan": "string", "tier": "number"},
             "return_order": {},
-            "page_loaded": {},
+            "page_loaded": {"plan": "string", "tier": "number"},
         },
         "traits": {"plan": "string"},
     }
@@ -198,16 +201,18 @@ def test_full_loop_zero_egress_and_counts_provably_from_postgres(scoped_dsn: str
     #  B  step_3@11:00 precedes its step_2@12:00 reach              -> reaches step 1 only
     #  C  step_2 at t0+1day+1s, past the inclusive <= bound        -> reaches step 0 only
     #  D  partial (step_2, never step_3)                            -> reaches step 1
+    # step-0 (funnel_step_1) carries the breakdown props: `plan` anchors the funnel breakdown group
+    # (pro={A,C}, free={B,D}); `tier` is the numeric prop the trend breakdown proves renders as text.
     funnel_events = [
-        _ev("funnel_step_1", "A", "2026-01-05T10:00:00Z", {"plan": "pro"}),
+        _ev("funnel_step_1", "A", "2026-01-05T10:00:00Z", {"plan": "pro", "tier": 42}),
         _ev("funnel_step_2", "A", "2026-01-05T11:00:00Z", {"plan": "pro"}),
         _ev("funnel_step_3", "A", "2026-01-05T12:00:00Z"),
-        _ev("funnel_step_1", "B", "2026-01-05T10:00:00Z", {"plan": "free"}),
+        _ev("funnel_step_1", "B", "2026-01-05T10:00:00Z", {"plan": "free", "tier": 7}),
         _ev("funnel_step_3", "B", "2026-01-05T11:00:00Z"),
         _ev("funnel_step_2", "B", "2026-01-05T12:00:00Z", {"plan": "free"}),
-        _ev("funnel_step_1", "C", "2026-01-05T10:00:00Z", {"plan": "pro"}),
+        _ev("funnel_step_1", "C", "2026-01-05T10:00:00Z", {"plan": "pro", "tier": 42}),
         _ev("funnel_step_2", "C", "2026-01-06T10:00:01Z", {"plan": "pro"}),
-        _ev("funnel_step_1", "D", "2026-01-05T10:00:00Z", {"plan": "free"}),
+        _ev("funnel_step_1", "D", "2026-01-05T10:00:00Z", {"plan": "free", "tier": 7}),
         _ev("funnel_step_2", "D", "2026-01-05T10:30:00Z", {"plan": "free"}),
     ]
 
@@ -219,16 +224,18 @@ def test_full_loop_zero_egress_and_counts_provably_from_postgres(scoped_dsn: str
     #   R3: no return                             -> contributes to no cell
     #   R4: returns W3 (past periods-1=2)         -> out-of-window: contributes to NOTHING
     # Distinct returners per W0 cell (no breakdown): p0={R1}=1, p1={R1,R2}=2, p2={R1}=1.
+    # cohort_signup carries `plan` — the retention breakdown group is anchored at the cohort event:
+    # pro={R1,R3}, free={R2,R4}. In W0's own period only R1 (pro) returns, so p0[pro]=1, p0[free]=0.
     w0 = "2026-01-05"  # Monday
     retention_events = [
-        _ev("cohort_signup", "R1", "2026-01-05T09:00:00Z"),
+        _ev("cohort_signup", "R1", "2026-01-05T09:00:00Z", {"plan": "pro"}),
         _ev("return_order", "R1", "2026-01-05T12:00:00Z"),  # W0 (own period)
         _ev("return_order", "R1", "2026-01-12T12:00:00Z"),  # W1
         _ev("return_order", "R1", "2026-01-19T12:00:00Z"),  # W2
-        _ev("cohort_signup", "R2", "2026-01-05T09:00:00Z"),
+        _ev("cohort_signup", "R2", "2026-01-05T09:00:00Z", {"plan": "free"}),
         _ev("return_order", "R2", "2026-01-12T12:00:00Z"),  # W1 only — proves p0=0 for R2
-        _ev("cohort_signup", "R3", "2026-01-05T09:00:00Z"),  # never returns
-        _ev("cohort_signup", "R4", "2026-01-05T09:00:00Z"),
+        _ev("cohort_signup", "R3", "2026-01-05T09:00:00Z", {"plan": "pro"}),  # never returns
+        _ev("cohort_signup", "R4", "2026-01-05T09:00:00Z", {"plan": "free"}),
         _ev("return_order", "R4", "2026-01-26T12:00:00Z"),  # W3, past periods-1 -> no grid cell
     ]
 
@@ -237,22 +244,20 @@ def test_full_loop_zero_egress_and_counts_provably_from_postgres(scoped_dsn: str
         _ev("return_order", "X1", "2026-01-05T12:00:00Z"),  # returns in W0 but no cohort_signup
     ]
 
-    # NOTE — the retention BREAKDOWN scenario is deliberately DESCOPED from E1 (architect-ruled,
-    # 2026-07-14). The E1 real-Postgres run surfaced a genuine E18 defect: all three breakdown walk
-    # builders emit `properties ->> '<key>'` FROM the typed view `events_typed`, which the E17 view
-    # generator does NOT expose (it projects only base columns + declared typed prop columns). So every
-    # breakdown query fails on the real engine with `column "properties" does not exist`, in BOTH
-    # trees — a contract-violating SQL-generation defect (WAREHOUSE-SCHEMA-CONTRACT.md line 72) that
-    # needs its own story (architect consult + cross-tree SQL-gen change + E18 fixture rewrite),
-    # beyond S3's locked "test-infra + S1-driver-fix" scope. The MANDATED count-faithfulness (>=1
-    # funnel + >=1 retention adversarial scenario) is fully proven by the funnel + non-breakdown
-    # retention scenarios above, green on real Postgres.
+    # E21-S5 RE-ADDS the BREAKDOWN scenario E21-S3 descoped (the Defect 3 fix): all three breakdown
+    # builders now group on the typed view column `("<key>")::text` over `events_typed` (never raw
+    # `properties`), so a breakdown trend/funnel/retention runs to completion on real Postgres. The
+    # funnel/retention seeds above carry a DECLARED `plan` breakdown prop; the trend seeds carry a
+    # DECLARED `tier` NUMBER prop for the numeric `::text` proof. Breakdown assertions are below.
 
-    # now()-relative trend/unique_count smoke: page_loaded by two actors inside a 1-day window.
+    # now()-relative trend/unique_count smoke: page_loaded by two actors inside a 1-day window. The
+    # `tier` NUMBER prop is the §4c half-(2) proof: a numeric breakdown key renders via Postgres
+    # `numeric::text` to '42'/'7' (not '42.0'/Decimal) end-to-end. T1's two rows carry tier=42, T2's
+    # one row tier=7 → breakdown-by-tier: total {'42': 2, '7': 1}.
     trend_events = [
-        _ev("page_loaded", "T1", _iso_minutes_ago(30)),
-        _ev("page_loaded", "T1", _iso_minutes_ago(20)),
-        _ev("page_loaded", "T2", _iso_minutes_ago(10)),
+        _ev("page_loaded", "T1", _iso_minutes_ago(30), {"tier": 42}),
+        _ev("page_loaded", "T1", _iso_minutes_ago(20), {"tier": 42}),
+        _ev("page_loaded", "T2", _iso_minutes_ago(10), {"tier": 7}),
     ]
 
     all_events = [
@@ -316,7 +321,8 @@ def test_full_loop_zero_egress_and_counts_provably_from_postgres(scoped_dsn: str
     assert {row.period_index for row in w0_cells} == {0, 1, 2}
     assert len(w0_cells) == 3
 
-    # (Retention breakdown scenario DESCOPED — see the seeding note above; Defect 3 follow-up.)
+    # (The breakdown trend/funnel/retention scenarios — E21-S5's Defect 3 fix — are asserted in
+    # Step 3b below, grouping on the typed view column over real Postgres.)
 
     # Trend + unique_count smoke (now()-relative window). page_loaded: 3 total rows, 2 unique actors.
     trend = query.trend(TrendSpec(event="page_loaded", aggregation="total", window=Duration(1, "day")))
@@ -328,6 +334,66 @@ def test_full_loop_zero_egress_and_counts_provably_from_postgres(scoped_dsn: str
     # cohort_signup rows: R1,R2,R3,R4 = 4 cohort_signup events.
     raw = query.raw_query("SELECT count(*)::int AS n FROM events WHERE event = 'cohort_signup'")
     assert raw.rows[0]["n"] == 4
+
+    # --- Step 3b: the E21-S5 BREAKDOWN scenarios (Defect 3 fix, RE-ADDED) on real Postgres --------
+    # Each groups on the typed view column `("<key>")::text` — NO `column "properties" does not exist`.
+
+    # Funnel breakdown by `plan` (anchored at funnel_step_1): pro={A,C}, free={B,D}. Only A (pro)
+    # reaches step 2; B,D (free) reach step 1; C (pro) falls out at step 1's boundary. Per group:
+    #   pro:  step0={A,C}=2, step1={A}=1, step2={A}=1
+    #   free: step0={B,D}=2, step1={B,D}=2  (no actor reaches step 2 → the walk emits no free/step-2
+    #                                        breakdown row; the group's rows stop at the reached step)
+    funnel_bd = query.funnel(
+        FunnelSpec(
+            steps=["funnel_step_1", "funnel_step_2", "funnel_step_3"],
+            within=Duration(1, "day"),
+            breakdown="plan",
+        )
+    )
+    by_group_step = {(row.breakdown, row.step): row.count for row in funnel_bd.rows}
+    assert by_group_step[("pro", 0)] == 2
+    assert by_group_step[("pro", 1)] == 1
+    assert by_group_step[("pro", 2)] == 1
+    assert by_group_step[("free", 0)] == 2
+    assert by_group_step[("free", 1)] == 2
+    # The free group never reaches step 2 — no free/step-2 row is emitted (the walk drives the groups).
+    assert ("free", 2) not in by_group_step
+    # Both declared breakdown groups are present, each rendered as a Postgres text string.
+    assert {"pro", "free"} <= {row.breakdown for row in funnel_bd.rows}
+
+    # Retention breakdown by `plan` (anchored at cohort_signup): pro={R1,R3}, free={R2,R4}. In W0's
+    # own period, only R1 (pro) returns → p0[pro]=1, p0[free]=0.
+    retention_bd = query.retention(
+        RetentionSpec(
+            cohort_event="cohort_signup",
+            return_event="return_order",
+            periods=3,
+            granularity="week",
+            breakdown="plan",
+        )
+    )
+    w0_bd = {
+        (row.breakdown, row.period_index): row.value
+        for row in retention_bd.rows
+        if row.cohort == w0
+    }
+    assert w0_bd[("pro", 0)] == 1  # {R1}
+    assert w0_bd[("free", 0)] == 0  # R2 returns only in W1 → own-period edge
+    assert {row.breakdown for row in retention_bd.rows} == {"pro", "free"}
+
+    # Trend breakdown by the `tier` NUMBER prop — the §4c half-(2) proof. Postgres renders
+    # `numeric::text` as '42'/'7' (never '42.0'/Decimal) end-to-end. page_loaded totals per group:
+    # tier=42 → 2 rows (T1×2), tier=7 → 1 row (T2×1).
+    trend_bd = query.trend(
+        TrendSpec(event="page_loaded", aggregation="total", window=Duration(1, "day"), breakdown="tier")
+    )
+    total_by_tier: dict[str | None, float] = {}
+    for row in trend_bd.rows:
+        total_by_tier[row.breakdown] = total_by_tier.get(row.breakdown, 0) + row.value
+    assert total_by_tier == {"42": 2, "7": 1}
+    # HALF (2): the numeric key rendered to the EXACT string '42' — not '42.0', not a Decimal repr.
+    assert "42" in total_by_tier and "42.0" not in total_by_tier
+    assert all(isinstance(row.breakdown, str) for row in trend_bd.rows)
 
     # --- Step 4: evaluate E20 static flags local-only (no definition/flag fetch) -------------------
     flags = create_flag_client(

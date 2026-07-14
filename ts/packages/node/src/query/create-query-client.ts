@@ -21,6 +21,7 @@ export function createQueryClient(
   if (config.warehouseDsn !== undefined) {
     return createWarehouseQueryAdapterFromConfig<DefaultTaxonomyShape>({
       warehouseDsn: config.warehouseDsn,
+      taxonomy: config.taxonomy,
     });
   }
   // Unkeyed ⇒ a silent no-op read client: the null object queries nothing, never

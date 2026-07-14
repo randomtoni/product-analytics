@@ -37,21 +37,43 @@ from query_contract_fixtures import (
     unique_count_single_series,
 )
 
-from analytics_kit import AnalyticsQueryClient
+from analytics_kit import AnalyticsQueryClient, define_taxonomy
 from analytics_kit.query import DbColumn, DbExecuteResult
 from analytics_kit.query.client import (
     Duration,
     FunnelSpec,
     RetentionSpec,
+    TrendRow,
     TrendSpec,
     UniqueCountSpec,
 )
 from analytics_kit.query.warehouse_adapter import create_warehouse_query_adapter
 
+# A runtime taxonomy the broken-down parity cases validate against — the declared-key set the SQL-gen
+# guard checks a ``breakdown`` key against (E21-S5). ``plan`` is a declared ``string`` event prop (the
+# string-keyed breakdown fixtures) and ``amount`` a declared ``number`` prop (the number-keyed fixture,
+# proving the row-builder stringifies a numeric cell to ``'42'``).
+_TAXONOMY = define_taxonomy(
+    {
+        "events": {
+            "order_placed": {"plan": "string", "amount": "number"},
+            "signed_up": {"plan": "string", "amount": "number"},
+            "document_uploaded": {},
+            "active_reviewers": {},
+            "Renamed Step": {},
+            "act_3": {},
+        },
+        "traits": {"plan": "string"},
+    }
+)
+
 
 def _adapter_returning(result: DbExecuteResult) -> AnalyticsQueryClient:
-    """A warehouse adapter over a fake DB-execute that returns exactly ``result``."""
-    return create_warehouse_query_adapter(db_execute=FakeDbExecute(result))
+    """A warehouse adapter over a fake DB-execute that returns exactly ``result``.
+
+    The taxonomy is supplied so the broken-down parity cases pass the declared-key guard.
+    """
+    return create_warehouse_query_adapter(db_execute=FakeDbExecute(result), taxonomy=_TAXONOMY)
 
 
 # -- SQL-shaped inputs (the flat rows a warehouse SELECT would return per scenario) -------------
@@ -76,6 +98,16 @@ _TREND_BREAKDOWN_SQL = DbExecuteResult(
         ["2026-07-01", 4, "free"],
         ["2026-07-02", 10, "free"],
     ],
+)
+
+# TREND number-keyed breakdown (E21-S5 §4c half (1)) -> the row-builder stringifies a NUMERIC cell.
+# A FAKE DbExecuteResult echoes whatever cell you seed (the fake never runs the ``::text`` cast), so
+# this HALF proves the neutral-row STRINGIFICATION: a numeric 42 cell becomes the exact string '42'
+# (never '42.0', never a Decimal repr) cross-tree. HALF (2) - that Postgres numeric::text renders
+# '42' end-to-end through the real cast - lives in the real-PG scenario.
+_TREND_NUMBER_BREAKDOWN_SQL = DbExecuteResult(
+    columns=[DbColumn(name="bucket"), DbColumn(name="value"), DbColumn(name="breakdown")],
+    rows=[["2026-07-01", 8, 42], ["2026-07-02", 20, 42], ["2026-07-01", 4, 7]],
 )
 
 # UNIQUE COUNT -> unique_count_single_series.expected_rows (same flat bucket/value shape as trend).
@@ -169,6 +201,21 @@ def test_parity_trend_breakdown() -> None:
         TrendSpec(event="order_placed", aggregation="total", window=Duration(7, "day"), breakdown="plan")
     )
     assert result.rows == trend_breakdown.expected_rows
+
+
+def test_number_keyed_breakdown_stringifies_numeric_cell_to_exact_string_42() -> None:
+    # E21-S5 §4c half (1): the row-builder stringifies a numeric breakdown cell to str(42) == '42'
+    # (never '42.0', never a Decimal repr) — cross-tree-identical with the TS String(42) == '42'.
+    result = _adapter_returning(_TREND_NUMBER_BREAKDOWN_SQL).trend(
+        TrendSpec(event="order_placed", aggregation="total", window=Duration(7, "day"), breakdown="amount")
+    )
+    assert result.rows == [
+        TrendRow(bucket="2026-07-01", value=8, breakdown="42"),
+        TrendRow(bucket="2026-07-02", value=20, breakdown="42"),
+        TrendRow(bucket="2026-07-01", value=4, breakdown="7"),
+    ]
+    for row in result.rows:
+        assert isinstance(row.breakdown, str)
 
 
 def test_parity_unique_count() -> None:

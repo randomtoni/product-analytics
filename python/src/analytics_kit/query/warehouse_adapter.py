@@ -43,6 +43,7 @@ from .client import (
     UniqueCountRow,
     UniqueCountSpec,
 )
+from ..taxonomy import Taxonomy
 from .config import QueryClientConfig
 from .db_execute import DbExecute
 from .default_db_execute import create_default_db_execute
@@ -56,6 +57,7 @@ from .warehouse_sql import (
     build_trend_rows,
     build_trend_sql,
     build_unique_count_sql,
+    collect_declarable_keys,
 )
 
 
@@ -72,30 +74,40 @@ class WarehouseQueryAdapter:
     SQL through this seam (E18), so there is no "no exec" state. The adapter NEVER sees a DSN or a
     driver handle and never imports the driver; the DSN→driver build lives at the
     :func:`create_warehouse_query_adapter_from_config` boundary.
+
+    Also holds the OPTIONAL ``taxonomy`` — neutral config, not a driver handle, so it honors the
+    "adapter holds only DbExecute, never a DSN/driver handle" rule. The declarable-key set (the same
+    keys the typed view projects) is derived from it once and threaded to the ``build_*_sql`` builders
+    so a breakdown query can enforce "breakdown key is a declared event property" at SQL-gen time.
+    With no taxonomy the declarable set is ``None`` — the four non-breakdown primitives + ``raw_query``
+    run unchanged; only a breakdown query raises (a distinct missing-taxonomy config error).
     """
 
-    def __init__(self, *, db_execute: DbExecute) -> None:
+    def __init__(self, *, db_execute: DbExecute, taxonomy: Taxonomy | None = None) -> None:
         self._db_execute = db_execute
+        self._declarable_keys = (
+            None if taxonomy is None else collect_declarable_keys(taxonomy.decl["events"])
+        )
 
     def funnel(self, spec: FunnelSpec) -> QueryResult[FunnelStepRow]:
-        query = build_funnel_sql(spec)
+        query = build_funnel_sql(spec, self._declarable_keys)
         result = self._db_execute.execute(query.sql, query.params)
         # ``event`` + the per-group conversion_rate base come from the spec, not the flat count
         # rows — the builder is curried on ``spec.steps``.
         return assemble_result(result, build_funnel_rows(spec.steps))
 
     def retention(self, spec: RetentionSpec) -> QueryResult[RetentionRow]:
-        query = build_retention_sql(spec)
+        query = build_retention_sql(spec, self._declarable_keys)
         result = self._db_execute.execute(query.sql, query.params)
         return assemble_result(result, build_retention_rows)
 
     def trend(self, spec: TrendSpec) -> QueryResult[TrendRow]:
-        query = build_trend_sql(spec)
+        query = build_trend_sql(spec, self._declarable_keys)
         result = self._db_execute.execute(query.sql, query.params)
         return assemble_result(result, build_trend_rows)
 
     def unique_count(self, spec: UniqueCountSpec) -> QueryResult[UniqueCountRow]:
-        query = build_unique_count_sql(spec)
+        query = build_unique_count_sql(spec, self._declarable_keys)
         result = self._db_execute.execute(query.sql, query.params)
         # ``unique_count`` shares ``TrendRow``'s field set; the same flat-row builder produces both,
         # then the neutral rows are re-typed to the own-named ``UniqueCountRow`` at the boundary.
@@ -126,14 +138,18 @@ class WarehouseQueryAdapter:
         return assemble_result(result, build_raw_rows)
 
 
-def create_warehouse_query_adapter(*, db_execute: DbExecute) -> AnalyticsQueryClient:
+def create_warehouse_query_adapter(
+    *, db_execute: DbExecute, taxonomy: Taxonomy | None = None
+) -> AnalyticsQueryClient:
     """Construct the warehouse query adapter from an already-built :class:`DbExecute`.
 
     The low-level DI twin of :func:`~analytics_kit.query.http_adapter.create_http_query_adapter`:
     a caller (or a test with a fake exec) that already holds a ``DbExecute`` injects it directly,
-    skipping DSN parsing. Returns an :class:`AnalyticsQueryClient` (satisfied structurally).
+    skipping DSN parsing. The OPTIONAL ``taxonomy`` supplies the declarable breakdown-key set (a
+    breakdown query without it raises); the four non-breakdown primitives never need it. Returns an
+    :class:`AnalyticsQueryClient` (satisfied structurally).
     """
-    return WarehouseQueryAdapter(db_execute=db_execute)
+    return WarehouseQueryAdapter(db_execute=db_execute, taxonomy=taxonomy)
 
 
 def create_warehouse_query_adapter_from_config(
@@ -147,7 +163,12 @@ def create_warehouse_query_adapter_from_config(
     driver import stays behind the ``analytics-kit[warehouse]`` extra — importing this module does
     not import the driver; only CONSTRUCTING the default driver here does. Reached only via
     ``create_query_client``'s warehouse rung, where ``warehouse_dsn`` is known present.
+
+    It also forwards ``config.taxonomy`` (already in hand — this factory receives the whole config)
+    to the adapter so a breakdown query can enforce the declared-key set; ``create_query_client`` is
+    unchanged.
     """
     return WarehouseQueryAdapter(
-        db_execute=create_default_db_execute(config.warehouse_dsn or "")
+        db_execute=create_default_db_execute(config.warehouse_dsn or ""),
+        taxonomy=config.taxonomy,
     )

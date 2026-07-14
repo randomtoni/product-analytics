@@ -7,9 +7,9 @@ normalizes a driver's :class:`~analytics_kit.query.db_execute.DbExecuteResult` i
 routes the emitted SQL through the injected :class:`~analytics_kit.query.db_execute.DbExecute` seam.
 The trend/unique_count builder is the first resident; funnel/retention/raw builders (S2–S4) join it.
 
-Never targets the base ``events`` table and never reads ``properties`` directly EXCEPT the breakdown
-path (``properties ->> '<key>'``) — breakdown is a runtime string, not a typed view column, so it
-reads the JSONB path; the bucketed/counted columns come from the view.
+Never targets the base ``events`` table and never reads ``properties`` directly — breakdown groups
+on the typed view column projected for the breakdown key (``("<key>")::text``), so every query body
+selects only view columns.
 
 Parity is by shared contract, not shared code: the emitted SQL is Postgres (language-agnostic) and
 **byte-identical** to the TypeScript ``warehouse-sql.ts`` for the same spec; only the surrounding
@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 from typing import Callable, Mapping, TypeVar
 
+from ..taxonomy import PropDecl
 from .client import (
     Aggregation,
     Duration,
@@ -38,7 +39,7 @@ from .client import (
     UniqueCountSpec,
 )
 from .db_execute import DbColumn, DbExecuteResult
-from .warehouse_schema import EVENTS_VIEW
+from .warehouse_schema import EVENTS_VIEW, _collect_projection_keys, _quote_ident
 
 __all__ = [
     "WarehouseQuery",
@@ -52,16 +53,52 @@ __all__ = [
     "build_retention_rows",
     "build_raw_rows",
     "assemble_result",
+    "collect_declarable_keys",
 ]
 
 _TRow = TypeVar("_TRow")
 
 
-def _quote_literal(value: str) -> str:
-    """Single-quote a SQL string literal — the same escaping the view generator applies to consumer
-    keys, kept consistent so the breakdown JSONB key path and the view share one story."""
-    escaped = value.replace("'", "''")
-    return f"'{escaped}'"
+def _breakdown_column(breakdown: str) -> str:
+    """The breakdown leaf: the typed view column projected for ``breakdown``, TEXT-CAST.
+
+    ``_quote_ident`` (shared with the view generator, so the alias here IS the projected column)
+    yields ``"<key>"``; the ``::text`` cast makes Postgres — not the client driver — render the
+    neutral breakdown string, so a non-string declared prop (``number``/``boolean``) renders the
+    SAME canonical string cross-tree. The view ALWAYS projects a column for a declared key, so this
+    references it; an undeclared key never reaches here (it raises at :func:`_require_declared`).
+    """
+    return f"({_quote_ident(breakdown)})::text"
+
+
+def _require_declared(breakdown: str, declarable_keys: frozenset[str] | None) -> None:
+    """Guard a breakdown key against the declared event-property set — RAISE at SQL-gen time.
+
+    ``declarable_keys`` is the union of declared event-property keys (the SAME set the view
+    projects), or ``None`` when no taxonomy was supplied. A missing taxonomy is a DISTINCT config
+    error (name the actual fix); an undeclared key names the key + the declarable set. Both fail
+    before any SQL is emitted — never an empty-result silent-swallow, never a query-time error.
+    """
+    if declarable_keys is None:
+        raise ValueError(
+            "analytics-kit: a warehouse breakdown query requires a taxonomy on QueryClientConfig"
+        )
+    if breakdown not in declarable_keys:
+        declarable = ", ".join(sorted(declarable_keys)) or "(none)"
+        raise ValueError(
+            f'analytics-kit: breakdown key "{breakdown}" is not a declared event property; '
+            f"declarable keys are: {declarable}"
+        )
+
+
+def collect_declarable_keys(events: dict[str, PropDecl]) -> frozenset[str]:
+    """The declarable breakdown-key set — the keys of the SAME projection set the view emits.
+
+    Derived from ``_collect_projection_keys`` (shared with the view generator) so "breakdown key ⇒
+    a column the view actually projects" holds by construction. The adapter derives this once from
+    ``taxonomy.decl['events']`` and threads it to each ``build_*_sql`` call.
+    """
+    return frozenset(key for key, _prop_type in _collect_projection_keys(events))
 
 
 # The `date_trunc` bucket unit, mirroring the HTTP adapter's `_INTERVAL_FOR_UNIT`: minute/hour
@@ -125,7 +162,11 @@ class WarehouseQuery:
 
 
 def _trend_walk_sql(
-    *, count_expr: str, window: Duration, breakdown: str | None
+    *,
+    count_expr: str,
+    window: Duration,
+    breakdown: str | None,
+    declarable_keys: frozenset[str] | None,
 ) -> str:
     """Emit the shared trend walk as Postgres SQL over the typed view.
 
@@ -163,14 +204,15 @@ def _trend_walk_sql(
             ]
         )
 
-    breakdown_path = f"properties ->> {_quote_literal(breakdown)}"
+    _require_declared(breakdown, declarable_keys)
+    breakdown_col = _breakdown_column(breakdown)
     return "\n".join(
         [
             "WITH counts AS (",
-            f"  SELECT date_trunc('{bucket_unit}', timestamp) AS bucket, {breakdown_path} AS breakdown, {count_expr} AS value",
+            f"  SELECT date_trunc('{bucket_unit}', timestamp) AS bucket, {breakdown_col} AS breakdown, {count_expr} AS value",
             f"  FROM {EVENTS_VIEW}",
             f"  WHERE event = $1 AND timestamp >= {lower_bound}",
-            f"  GROUP BY date_trunc('{bucket_unit}', timestamp), {breakdown_path}",
+            f"  GROUP BY date_trunc('{bucket_unit}', timestamp), {breakdown_col}",
             "),",
             "series AS (SELECT DISTINCT breakdown FROM counts)",
             f"SELECT {bucket_label} AS bucket, coalesce(counts.value, 0) AS value, series.breakdown AS breakdown",
@@ -182,25 +224,36 @@ def _trend_walk_sql(
     )
 
 
-def build_trend_sql(spec: TrendSpec) -> WarehouseQuery:
-    """The generated SQL + params for a ``trend`` query."""
+def build_trend_sql(
+    spec: TrendSpec, declarable_keys: frozenset[str] | None = None
+) -> WarehouseQuery:
+    """The generated SQL + params for a ``trend`` query.
+
+    ``declarable_keys`` is the declared event-property key set (the same set the view projects); a
+    ``breakdown`` naming a key outside it — or a breakdown with no taxonomy (``None``) — raises at
+    SQL-gen time before any SQL is emitted (see :func:`_require_declared`).
+    """
     return WarehouseQuery(
         sql=_trend_walk_sql(
             count_expr=_count_expr(spec.aggregation),
             window=spec.window,
             breakdown=spec.breakdown,
+            declarable_keys=declarable_keys,
         ),
         params=[spec.event],
     )
 
 
-def build_unique_count_sql(spec: UniqueCountSpec) -> WarehouseQuery:
+def build_unique_count_sql(
+    spec: UniqueCountSpec, declarable_keys: frozenset[str] | None = None
+) -> WarehouseQuery:
     """The generated SQL + params for a ``unique_count`` query — always distinct actors."""
     return WarehouseQuery(
         sql=_trend_walk_sql(
             count_expr=_count_expr("unique"),
             window=spec.window,
             breakdown=spec.breakdown,
+            declarable_keys=declarable_keys,
         ),
         params=[spec.event],
     )
@@ -215,7 +268,12 @@ def _window_interval_literal(within: Duration) -> str:
     return f"interval '{within.value} {keyword}'"
 
 
-def _funnel_walk_sql(step_count: int, within: Duration, breakdown: str | None) -> str:
+def _funnel_walk_sql(
+    step_count: int,
+    within: Duration,
+    breakdown: str | None,
+    declarable_keys: frozenset[str] | None,
+) -> str:
     """The per-actor ordered-step window walk as a SINGLE Postgres statement, structurally CONSTANT
     regardless of ``step_count`` (only the VALUES rows + the recursion bound vary).
 
@@ -276,14 +334,15 @@ def _funnel_walk_sql(step_count: int, within: Duration, breakdown: str | None) -
             ]
         )
 
-    breakdown_path = f"properties ->> {_quote_literal(breakdown)}"
+    _require_declared(breakdown, declarable_keys)
+    breakdown_col = _breakdown_column(breakdown)
     return "\n".join(
         [
             "WITH RECURSIVE steps(step_index, event_name) AS (",
             f"  VALUES {values_rows}",
             "),",
             "matched AS (",
-            f"  SELECT e.distinct_id, s.step_index, e.timestamp, {breakdown_path} AS bd",
+            f"  SELECT e.distinct_id, s.step_index, e.timestamp, {breakdown_col} AS bd",
             f"  FROM {EVENTS_VIEW} e",
             "  JOIN steps s ON e.event = s.event_name",
             "),",
@@ -314,21 +373,27 @@ def _funnel_walk_sql(step_count: int, within: Duration, breakdown: str | None) -
     )
 
 
-def build_funnel_sql(spec: FunnelSpec) -> WarehouseQuery:
+def build_funnel_sql(
+    spec: FunnelSpec, declarable_keys: frozenset[str] | None = None
+) -> WarehouseQuery:
     """The generated funnel SQL + params.
 
     Each step's event name is bound as a positional param (``$1``..``$N`` in step order); ``within``
-    is inlined as a canonical interval literal; the breakdown key (when present) reaches the SQL as
-    an escaped JSONB path, exactly as the trend breakdown does.
+    is inlined as a canonical interval literal; the breakdown key (when present) groups on the typed
+    view column ``("<key>")::text``, exactly as the trend breakdown does — and must be a declared
+    event property (``declarable_keys``) or SQL-gen raises.
     """
     return WarehouseQuery(
-        sql=_funnel_walk_sql(len(spec.steps), spec.within, spec.breakdown),
+        sql=_funnel_walk_sql(len(spec.steps), spec.within, spec.breakdown, declarable_keys),
         params=list(spec.steps),
     )
 
 
 def _retention_walk_sql(
-    periods: int, granularity: Granularity, breakdown: str | None
+    periods: int,
+    granularity: Granularity,
+    breakdown: str | None,
+    declarable_keys: frozenset[str] | None,
 ) -> str:
     """The cohort self-join as a SINGLE Postgres statement producing a DENSE ``cohorts × periods``
     grid.
@@ -352,10 +417,10 @@ def _retention_walk_sql(
     grouped per ``(cohort_bucket, period_index[, breakdown])``, so an actor in two cohort buckets
     counts once in EACH cohort's cells — per-cohort, never global.
 
-    With a breakdown, the cohort's breakdown value is anchored at the cohort event (``properties ->>
-    key``, escaped exactly as trend/funnel), one grid per breakdown value; it is carried through the
-    grid and the join and stringified onto every row. The emitted string is byte-identical to the
-    TypeScript ``warehouse-sql.ts`` for the same spec.
+    With a breakdown, the cohort's breakdown value is anchored at the cohort event (the typed view
+    column ``("<key>")::text``, exactly as trend/funnel), one grid per breakdown value; it is carried
+    through the grid and the join and stringified onto every row. The emitted string is byte-identical
+    to the TypeScript ``warehouse-sql.ts`` for the same spec.
     """
     bucket_format = _BUCKET_FORMAT_FOR_UNIT[granularity]
     offset_interval = f"(g.period_index * interval '1 {granularity}')"
@@ -397,14 +462,15 @@ def _retention_walk_sql(
             ]
         )
 
-    breakdown_path = f"properties ->> {_quote_literal(breakdown)}"
+    _require_declared(breakdown, declarable_keys)
+    breakdown_col = _breakdown_column(breakdown)
     return "\n".join(
         [
             "WITH cohort AS (",
-            f"  SELECT distinct_id, {bucket_expr} AS cohort_bucket, {breakdown_path} AS bd",
+            f"  SELECT distinct_id, {bucket_expr} AS cohort_bucket, {breakdown_col} AS bd",
             f"  FROM {EVENTS_VIEW}",
             "  WHERE event = $1",
-            f"  GROUP BY distinct_id, {bucket_expr}, {breakdown_path}",
+            f"  GROUP BY distinct_id, {bucket_expr}, {breakdown_col}",
             "),",
             "returns AS (",
             f"  SELECT distinct_id, {bucket_expr} AS return_bucket",
@@ -433,16 +499,19 @@ def _retention_walk_sql(
     )
 
 
-def build_retention_sql(spec: RetentionSpec) -> WarehouseQuery:
+def build_retention_sql(
+    spec: RetentionSpec, declarable_keys: frozenset[str] | None = None
+) -> WarehouseQuery:
     """The generated retention SQL + params.
 
     The cohort event and return event are the two positional params (``$1`` = ``cohort_event``,
     ``$2`` = ``return_event``, in that order); ``periods`` and ``granularity`` are structural (the
-    series bound + the truncation/offset unit) and inlined; the breakdown key (when present) reaches
-    the SQL as an escaped JSONB path, exactly as trend/funnel.
+    series bound + the truncation/offset unit) and inlined; the breakdown key (when present) groups
+    on the typed view column ``("<key>")::text``, exactly as trend/funnel — and must be a declared
+    event property (``declarable_keys``) or SQL-gen raises.
     """
     return WarehouseQuery(
-        sql=_retention_walk_sql(spec.periods, spec.granularity, spec.breakdown),
+        sql=_retention_walk_sql(spec.periods, spec.granularity, spec.breakdown, declarable_keys),
         params=[spec.cohort_event, spec.return_event],
     )
 

@@ -2,6 +2,8 @@ import type {
   FunnelStepRow,
   QueryResult,
   RetentionRow,
+  Taxonomy,
+  TaxonomyDecl,
   TaxonomyShape,
   TrendRow,
   UniqueCountRow,
@@ -25,6 +27,7 @@ import {
   buildTrendRows,
   buildTrendSql,
   buildUniqueCountSql,
+  collectDeclarableKeys,
 } from './warehouse-sql';
 
 // A second query backend, named by ROLE (never a vendor). Every member satisfies
@@ -55,19 +58,33 @@ export interface WarehouseQueryAdapterOptions {
   // seam, so there is no "no exec" state. The adapter NEVER sees a DSN or a driver handle;
   // the DSN→driver build lives at the `createWarehouseQueryAdapterFromConfig` boundary.
   dbExecute: DbExecute;
+  // The OPTIONAL taxonomy — neutral config, not a driver handle, so it honors the "adapter holds
+  // only DbExecute, never a DSN/driver handle" rule. The declarable-key set (the same keys the
+  // typed view projects) is derived from it once and threaded to the `build*Sql` builders so a
+  // breakdown query can enforce "breakdown key is a declared event property" at SQL-gen time. With
+  // no taxonomy the four non-breakdown primitives + `rawQuery` run unchanged; only a breakdown
+  // query throws (a distinct missing-taxonomy config error).
+  taxonomy?: Taxonomy<TaxonomyDecl>;
 }
 
 export class WarehouseQueryAdapter<TX extends TaxonomyShape>
   implements AnalyticsQueryClient<TX>
 {
   private readonly dbExecute: DbExecute;
+  // The declarable breakdown-key set — derived once from the taxonomy (undefined when none was
+  // supplied) and threaded to each `build*Sql` call so a breakdown enforces the declared-key set.
+  private readonly declarableKeys: ReadonlySet<string> | undefined;
 
   constructor(options: WarehouseQueryAdapterOptions) {
     this.dbExecute = options.dbExecute;
+    this.declarableKeys =
+      options.taxonomy === undefined
+        ? undefined
+        : collectDeclarableKeys(options.taxonomy.decl.events);
   }
 
   async funnel(spec: FunnelSpec<TX>): Promise<QueryResult<FunnelStepRow>> {
-    const { sql, params } = buildFunnelSql(spec);
+    const { sql, params } = buildFunnelSql(spec, this.declarableKeys);
     const result = await this.dbExecute(sql, params);
     // `event` + the per-group conversionRate base come from the spec, not the flat count rows —
     // the builder is curried on `spec.steps`.
@@ -75,19 +92,19 @@ export class WarehouseQueryAdapter<TX extends TaxonomyShape>
   }
 
   async retention(spec: RetentionSpec<TX>): Promise<QueryResult<RetentionRow>> {
-    const { sql, params } = buildRetentionSql(spec);
+    const { sql, params } = buildRetentionSql(spec, this.declarableKeys);
     const result = await this.dbExecute(sql, params);
     return assembleResult(result, buildRetentionRows);
   }
 
   async trend(spec: TrendSpec<TX>): Promise<QueryResult<TrendRow>> {
-    const { sql, params } = buildTrendSql(spec);
+    const { sql, params } = buildTrendSql(spec, this.declarableKeys);
     const result = await this.dbExecute(sql, params);
     return assembleResult(result, buildTrendRows);
   }
 
   async uniqueCount(spec: UniqueCountSpec<TX>): Promise<QueryResult<UniqueCountRow>> {
-    const { sql, params } = buildUniqueCountSql(spec);
+    const { sql, params } = buildUniqueCountSql(spec, this.declarableKeys);
     const result = await this.dbExecute(sql, params);
     // `UniqueCountRow` is a type alias of `TrendRow`; the same flat-row builder produces both.
     return assembleResult(result, buildTrendRows);
@@ -114,7 +131,8 @@ export class WarehouseQueryAdapter<TX extends TaxonomyShape>
 
 // Low-level constructor twin of `createHttpQueryAdapter(options)` — takes an already-built
 // `DbExecute` and injects it. The DI entry point: a caller (or a test with a fake exec) that
-// already holds a `DbExecute` skips DSN parsing entirely.
+// already holds a `DbExecute` skips DSN parsing entirely. The OPTIONAL `taxonomy` on `options`
+// supplies the declarable breakdown-key set (a breakdown query without it throws).
 export function createWarehouseQueryAdapter<TX extends TaxonomyShape>(
   options: WarehouseQueryAdapterOptions
 ): WarehouseQueryAdapter<TX> {
@@ -125,11 +143,14 @@ export function createWarehouseQueryAdapter<TX extends TaxonomyShape>(
 // lazily builds the S3 default `DbExecute` from it, and injects it. The lazy optional-`pg`-peer
 // load lives INSIDE `createDefaultDbExecute` (deferred to first exec call), so this factory and
 // the adapter module import clean without the `warehouse` peer installed. Reached only via
-// `createQueryClient`'s warehouse rung, where `warehouseDsn` is known present.
+// `createQueryClient`'s warehouse rung, where `warehouseDsn` is known present. Forwards the
+// optional `taxonomy` so a breakdown query can enforce the declared-key set.
 export function createWarehouseQueryAdapterFromConfig<TX extends TaxonomyShape>(config: {
   warehouseDsn: string;
+  taxonomy?: Taxonomy<TaxonomyDecl>;
 }): WarehouseQueryAdapter<TX> {
   return new WarehouseQueryAdapter<TX>({
     dbExecute: createDefaultDbExecute({ warehouseDsn: config.warehouseDsn }),
+    taxonomy: config.taxonomy,
   });
 }

@@ -344,6 +344,19 @@ frozen `WAREHOUSE-SCHEMA-CONTRACT.md`). Pin this design verbatim — do not re-l
   `api_impact: additive` — no public surface is removed or renamed (the builder signatures are
   internal to the node target).
 
+> Reviewer suggestion (2026-07-14) → E21 improvement pass (cosmetic, cross-tree assertion symmetry): the
+> real-PG trend-breakdown proof asserts an exact dict on Python (`total_by_tier == {"42":2,"7":1}`) but
+> individual `.get`/`.has` + an explicit `'42.0'`-absent check on TS. Both prove the point (the
+> `'42.0'`-absent assertion covers the load-bearing driver-divergence risk); tighten the TS side to an
+> exact-map check for symmetry.
+
 ## Shipped
 
-<!-- Filled by /implement-epics on move to 5-done. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files changed (src):** TS `warehouse-sql.ts` (the `("<key>")::text` leaf + `requireDeclared`/`collectDeclarableKeys` + threading), `warehouse-schema.ts` (export `quoteIdent`/`collectProjectionKeys` internal), `warehouse-query-adapter.ts` (taxonomy field → key set), `create-query-client.ts` (thread `taxonomy`); Python mirrors (`warehouse_sql.py`, `warehouse_schema.py`, `warehouse_adapter.py`). **Contract:** `planning/WAREHOUSE-SCHEMA-CONTRACT.md` (new "Breakdown is a typed-view column" subsection; **line 72 verbatim**). **Tests:** adapter + row-parity + e2e, both trees.
+- **New public API:** none consumer-facing — internal builder signatures widened (declarable-key set); the neutral `breakdown` row field is byte-identical (`api_impact: additive`)
+- **Tests added/changed:** ~9 inline breakdown SQL assertions per tree → `("plan")::text`; the two `o'brien` tests re-authored to identifier-quoting; +4 error tests/tree (undeclared-key raises + lists set; no-taxonomy distinct config error; no-taxonomy non-breakdown primitives run); a `number`-keyed row-parity fixture (`'42'` not `'42.0'`); the real-PG breakdown trend+funnel+retention scenario (re-added, E21-S3 had descoped it)
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict READY TO SHIP (no criticals) — zero `properties ->>` in the breakdown path (SQL + prose); `::text` cross-tree determinism proven on live PG16.14 (numeric→`'42'`, both halves); errors raise at SQL-gen (not query-time); adapter stores only a reduced neutral key set (no `Taxonomy`/driver leak); contract line-72 verbatim, disciplined reconciliation; `o'brien` escaping change correct; funnel zero-cell consistent. 1 cosmetic suggestion above
+- **Cross-story seams exposed:** **warehouse BREAKDOWN now works on real Postgres** — trend/funnel/retention group on the declared typed view column via `("<key>")::text`; undeclared breakdown key = a taxonomy error at SQL-gen; the contract's "never target `properties` directly" now holds WITHOUT the self-granted exception. **S4** can document WORKING breakdown (declared-typed-column semantics; a `date` breakdown renders session-dependently — a documented divergence). The self-host query side is now capability-complete on real Neon.

@@ -21,6 +21,12 @@ __all__ = [
     "EVENTS_VIEW",
     "build_typed_view_sql",
     "build_migration_sql",
+    # Cross-module (node-package-internal) helpers the warehouse SQL builders share so the view
+    # generator and the breakdown path quote identifiers + derive the declarable-key set through
+    # ONE function. Exported for the SQL module's import only — NOT re-exported from the query
+    # package surface (see query/__init__.py, which surfaces neither).
+    "_quote_ident",
+    "_collect_projection_keys",
 ]
 
 EVENTS_TABLE = "events"

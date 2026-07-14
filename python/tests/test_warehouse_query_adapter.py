@@ -25,6 +25,7 @@ from analytics_kit import (
     TrendSpec,
     UniqueCountRow,
     UniqueCountSpec,
+    define_taxonomy,
 )
 from analytics_kit.query import DbColumn, DbExecuteResult
 from analytics_kit.query.http_adapter import HttpQueryAdapter
@@ -37,6 +38,20 @@ from test_query_client import _conforms
 # The injected DB-execute seam — the S3 reusable fake. In S4 the stub methods still raise before
 # ever calling it; it only has to satisfy the required ``db_execute`` kwarg (E18 invokes it).
 _FAKE_EXEC = FakeDbExecute()
+
+# A taxonomy declaring the breakdown keys the SQL-gen guard checks against (E21-S5): `plan` and
+# `o'brien` are declared event properties, so the typed view projects a column for each and a
+# `breakdown="plan"`/`"o'brien"` query passes the declared-key guard. The non-breakdown tests keep
+# the no-taxonomy `WarehouseQueryAdapter(db_execute=...)` form (their SQL never touches the set).
+_BREAKDOWN_TAXONOMY = define_taxonomy(
+    {
+        "events": {
+            "order_placed": {"amount": "number", "plan": "string", "o'brien": "string"},
+            "signed_up": {},
+        },
+        "traits": {"plan": "string"},
+    }
+)
 
 
 # --- bar A: two adapters, one Protocol, zero interface change ----------------------------
@@ -250,9 +265,9 @@ def test_trend_hour_window_collapses_bucket_to_hour_with_time_label() -> None:
     assert 'to_char(spine.bucket, \'YYYY-MM-DD"T"HH24:00:00\')' in sql
 
 
-def test_trend_breakdown_groups_by_jsonb_path_and_stringifies_breakdown_on_every_row() -> None:
+def test_trend_breakdown_groups_by_typed_view_column_and_stringifies_breakdown_on_every_row() -> None:
     fake = FakeDbExecute(_TREND_BREAKDOWN_RESULT)
-    adapter = WarehouseQueryAdapter(db_execute=fake)
+    adapter = WarehouseQueryAdapter(db_execute=fake, taxonomy=_BREAKDOWN_TAXONOMY)
 
     result = adapter.trend(
         TrendSpec(event="order_placed", aggregation="total", window=Duration(30, "day"), breakdown="plan")
@@ -265,9 +280,11 @@ def test_trend_breakdown_groups_by_jsonb_path_and_stringifies_breakdown_on_every
         TrendRow(bucket="2026-07-02", value=10, breakdown="free"),
     ]
     sql = fake.calls[0].sql
-    assert "properties ->> 'plan'" in sql
-    assert "GROUP BY date_trunc('day', timestamp), properties ->> 'plan'" in sql
+    assert '("plan")::text' in sql
+    assert "GROUP BY date_trunc('day', timestamp), (\"plan\")::text" in sql
     assert "CROSS JOIN series" in sql
+    # The breakdown path never reads raw properties.
+    assert "properties ->>" not in sql
 
 
 def test_trend_without_breakdown_emits_no_breakdown_column_and_rows_omit_breakdown() -> None:
@@ -328,7 +345,7 @@ def test_empty_result_yields_empty_rows_never_a_raise() -> None:
 
 def test_no_sql_column_name_or_engine_token_leaks_onto_a_returned_row() -> None:
     fake = FakeDbExecute(_TREND_BREAKDOWN_RESULT)
-    adapter = WarehouseQueryAdapter(db_execute=fake)
+    adapter = WarehouseQueryAdapter(db_execute=fake, taxonomy=_BREAKDOWN_TAXONOMY)
 
     result = adapter.trend(
         TrendSpec(event="order_placed", aggregation="total", window=Duration(30, "day"), breakdown="plan")
@@ -408,18 +425,69 @@ def test_the_generated_hourly_trend_sql_matches_the_canonical_cross_tree_string(
     assert query.sql == _CANONICAL_TREND_SQL_HOURLY
 
 
-def test_a_breakdown_key_with_an_embedded_single_quote_is_sql_escaped() -> None:
-    # The breakdown key is the ONE runtime consumer string that reaches the SQL text (everything
-    # else is $1-bound or closed-enum-inlined). It reuses the view generator's quote-doubling
-    # escaping — an embedded single quote is doubled per the SQL standard (injection-safe).
+def test_a_breakdown_key_with_an_embedded_single_quote_is_identifier_quoted() -> None:
+    # The breakdown key is the ONE runtime consumer string that reaches the SQL text (everything else
+    # is $1-bound or closed-enum-inlined). It now groups on the typed VIEW column via `_quote_ident`,
+    # which double-quotes the identifier and doubles an embedded `"` — a single quote passes through
+    # unchanged inside the identifier (distinct from the OLD JSONB-literal escaping, which doubled it).
     fake = FakeDbExecute(_TREND_SINGLE_RESULT)
-    adapter = WarehouseQueryAdapter(db_execute=fake)
+    adapter = WarehouseQueryAdapter(db_execute=fake, taxonomy=_BREAKDOWN_TAXONOMY)
 
     adapter.trend(
         TrendSpec(event="order_placed", aggregation="total", window=Duration(30, "day"), breakdown="o'brien")
     )
 
-    assert "properties ->> 'o''brien'" in fake.calls[0].sql
+    assert "(\"o'brien\")::text" in fake.calls[0].sql
+    assert "properties ->>" not in fake.calls[0].sql
+
+
+# --- E21-S5: breakdown guards at SQL-gen time (undeclared key + no-taxonomy) -----------------
+
+
+def test_an_undeclared_breakdown_key_raises_at_sql_gen_names_key_and_declarable_set() -> None:
+    fake = FakeDbExecute(_TREND_SINGLE_RESULT)
+    # A taxonomy WITH declared keys — but the breakdown names one that is not declared.
+    adapter = WarehouseQueryAdapter(db_execute=fake, taxonomy=_BREAKDOWN_TAXONOMY)
+
+    with pytest.raises(ValueError, match=r'breakdown key "undeclared_key" is not a declared event property'):
+        adapter.trend(
+            TrendSpec(
+                event="order_placed",
+                aggregation="total",
+                window=Duration(30, "day"),
+                breakdown="undeclared_key",
+            )
+        )
+    # No SQL was emitted — the guard fires before the DB-execute seam is ever called.
+    assert fake.calls == []
+
+
+def test_an_undeclared_key_error_lists_the_declarable_keys_sorted() -> None:
+    fake = FakeDbExecute(_TREND_SINGLE_RESULT)
+    adapter = WarehouseQueryAdapter(db_execute=fake, taxonomy=_BREAKDOWN_TAXONOMY)
+
+    # sorted union of order_placed's declared keys: amount, o'brien, plan.
+    with pytest.raises(ValueError, match=r"declarable keys are: amount, o'brien, plan"):
+        adapter.trend(
+            TrendSpec(event="order_placed", aggregation="total", window=Duration(30, "day"), breakdown="pln")
+        )
+    assert fake.calls == []
+
+
+def test_a_breakdown_query_with_no_taxonomy_raises_a_distinct_missing_taxonomy_config_error() -> None:
+    fake = FakeDbExecute(_TREND_BREAKDOWN_RESULT)
+    # No taxonomy supplied — a breakdown must raise the missing-taxonomy config error (naming the fix),
+    # NOT the generic undeclared-key error.
+    adapter = WarehouseQueryAdapter(db_execute=fake)
+
+    with pytest.raises(
+        ValueError,
+        match=r"a warehouse breakdown query requires a taxonomy on QueryClientConfig",
+    ):
+        adapter.trend(
+            TrendSpec(event="order_placed", aggregation="total", window=Duration(30, "day"), breakdown="plan")
+        )
+    assert fake.calls == []
 
 
 def test_warehouse_result_omits_from_cache_matching_the_ts_absent_key() -> None:
@@ -634,7 +702,7 @@ def test_funnel_conversion_rate_normal_ratios_are_count_step_over_count_zero() -
     assert result.rows[1].conversion_rate == pytest.approx(0.62)
 
 
-def test_funnel_with_a_breakdown_per_group_rate_breakdown_on_every_row_jsonb_group_by() -> None:
+def test_funnel_with_a_breakdown_per_group_rate_breakdown_on_every_row_typed_view_group_by() -> None:
     breakdown_result = DbExecuteResult(
         columns=[
             DbColumn(name="step_index"),
@@ -650,7 +718,7 @@ def test_funnel_with_a_breakdown_per_group_rate_breakdown_on_every_row_jsonb_gro
         ],
     )
     fake = FakeDbExecute(breakdown_result)
-    adapter = WarehouseQueryAdapter(db_execute=fake)
+    adapter = WarehouseQueryAdapter(db_execute=fake, taxonomy=_BREAKDOWN_TAXONOMY)
 
     result = adapter.funnel(
         FunnelSpec(steps=["signed_up", "order_placed"], within=Duration(7, "day"), breakdown="plan")
@@ -663,10 +731,11 @@ def test_funnel_with_a_breakdown_per_group_rate_breakdown_on_every_row_jsonb_gro
         FunnelStepRow(step=1, event="order_placed", count=50, conversion_rate=0.25, breakdown="free"),
     ]
     sql = fake.calls[0].sql
-    assert "properties ->> 'plan' AS bd" in sql
+    assert '("plan")::text AS bd' in sql
     assert "GROUP BY s.step_index, s.event_name, w.bd" in sql
     # The breakdown value is anchored at each actor's step-0 event (one bucket per actor).
     assert "(array_agg(bd ORDER BY timestamp))[1] AS bd" in sql
+    assert "properties ->>" not in sql
 
 
 def test_funnel_rows_carry_no_engine_wire_field() -> None:
@@ -934,7 +1003,7 @@ def test_retention_adversarial_sparse_cohort_zero_cell_still_emits_a_row() -> No
     )
 
 
-def test_retention_with_a_breakdown_one_grid_per_value_stringified_on_every_row_jsonb_group_by() -> None:
+def test_retention_with_a_breakdown_one_grid_per_value_stringified_on_every_row_typed_view_group_by() -> None:
     breakdown_result = DbExecuteResult(
         columns=[
             DbColumn(name="cohort"),
@@ -950,7 +1019,7 @@ def test_retention_with_a_breakdown_one_grid_per_value_stringified_on_every_row_
         ],
     )
     fake = FakeDbExecute(breakdown_result)
-    adapter = WarehouseQueryAdapter(db_execute=fake)
+    adapter = WarehouseQueryAdapter(db_execute=fake, taxonomy=_BREAKDOWN_TAXONOMY)
 
     result = adapter.retention(
         RetentionSpec(
@@ -969,10 +1038,11 @@ def test_retention_with_a_breakdown_one_grid_per_value_stringified_on_every_row_
         RetentionRow(cohort="2026-07-01", period_index=1, value=60, breakdown="free"),
     ]
     sql = fake.calls[0].sql
-    assert "properties ->> 'plan' AS bd" in sql
+    assert '("plan")::text AS bd' in sql
     assert "GROUP BY g.cohort_bucket, g.bd, g.period_index" in sql
     # One grid per breakdown value: buckets carry the breakdown, the grid cross-joins it.
     assert "SELECT DISTINCT cohort_bucket, bd FROM cohort" in sql
+    assert "properties ->>" not in sql
 
 
 def test_retention_without_a_breakdown_emits_no_breakdown_path_and_rows_omit_breakdown() -> None:
@@ -999,9 +1069,9 @@ def test_retention_rows_match_the_row_type_no_engine_wire_field_leaks() -> None:
         assert not hasattr(row, "breakdown_value")
 
 
-def test_retention_breakdown_key_with_an_embedded_single_quote_is_sql_escaped() -> None:
+def test_retention_breakdown_key_with_an_embedded_single_quote_is_identifier_quoted() -> None:
     fake = FakeDbExecute(_RETENTION_GRID_RESULT)
-    adapter = WarehouseQueryAdapter(db_execute=fake)
+    adapter = WarehouseQueryAdapter(db_execute=fake, taxonomy=_BREAKDOWN_TAXONOMY)
 
     adapter.retention(
         RetentionSpec(
@@ -1013,7 +1083,9 @@ def test_retention_breakdown_key_with_an_embedded_single_quote_is_sql_escaped() 
         )
     )
 
-    assert "properties ->> 'o''brien'" in fake.calls[0].sql
+    # Identifier-quoting (double `"`, pass `'` through) — the single quote is NOT doubled here.
+    assert "(\"o'brien\")::text" in fake.calls[0].sql
+    assert "properties ->>" not in fake.calls[0].sql
 
 
 def test_retention_day_and_month_granularity_swaps_truncation_and_offset_interval_unit() -> None:
@@ -1192,3 +1264,31 @@ def test_raw_query_dialect_split_doc_names_the_split_and_no_vendor() -> None:
     # The OUTPUT stays neutral (bar A intact on output); only the INPUT expr is dialect-keyed.
     assert "output" in src and "queryresult" in src
     assert "posthog" not in src
+
+
+def test_with_no_taxonomy_the_four_non_breakdown_primitives_and_raw_query_still_run() -> None:
+    # E21-S5 §3a: a no-taxonomy adapter runs every non-breakdown path — none touches the declared-key
+    # set — so only a breakdown query raises; the four structured primitives + raw_query are unchanged.
+    trend_fake = FakeDbExecute(_TREND_SINGLE_RESULT)
+    WarehouseQueryAdapter(db_execute=trend_fake).trend(
+        TrendSpec(event="order_placed", aggregation="total", window=Duration(30, "day"))
+    )
+    assert len(trend_fake.calls) == 1
+
+    funnel_fake = FakeDbExecute(_FUNNEL_PLAIN_RESULT)
+    WarehouseQueryAdapter(db_execute=funnel_fake).funnel(_TWO_STEP_FUNNEL_SPEC)
+    assert len(funnel_fake.calls) == 1
+
+    retention_fake = FakeDbExecute(_RETENTION_GRID_RESULT)
+    WarehouseQueryAdapter(db_execute=retention_fake).retention(_RETENTION_SPEC)
+    assert len(retention_fake.calls) == 1
+
+    unique_fake = FakeDbExecute(_TREND_SINGLE_RESULT)
+    WarehouseQueryAdapter(db_execute=unique_fake).unique_count(
+        UniqueCountSpec(event="order_placed", window=Duration(30, "day"))
+    )
+    assert len(unique_fake.calls) == 1
+
+    raw_fake = FakeDbExecute(_RAW_RESULT)
+    WarehouseQueryAdapter(db_execute=raw_fake).raw_query("SELECT 1")
+    assert len(raw_fake.calls) == 1

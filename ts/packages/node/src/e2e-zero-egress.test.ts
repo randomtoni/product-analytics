@@ -34,14 +34,17 @@ const DATABASE_URL = process.env.DATABASE_URL;
 // The self-host taxonomy. Each count scenario uses its OWN event names so the counts are unambiguous:
 // the funnel/retention/trend queries are GLOBAL over the `events` table, so sharing an event across
 // scenarios would cross-contaminate the counts. Disjoint event names keep every count hand-computable.
+// `plan` (string) and `tier` (number) are DECLARED event props, so the typed view projects a `plan`
+// / `tier` column and a breakdown on either passes the E21-S5 SQL-gen declared-key guard. `tier` is
+// the §4c half-(2) numeric proof — its `numeric::text` render is asserted end-to-end below.
 const TAXONOMY = defineTaxonomy({
   events: {
-    funnel_step_1: { plan: 'string' },
-    funnel_step_2: { plan: 'string' },
-    funnel_step_3: {},
-    cohort_signup: { plan: 'string' },
+    funnel_step_1: { plan: 'string', tier: 'number' },
+    funnel_step_2: { plan: 'string', tier: 'number' },
+    funnel_step_3: { plan: 'string', tier: 'number' },
+    cohort_signup: { plan: 'string', tier: 'number' },
     return_order: {},
-    page_loaded: {},
+    page_loaded: { plan: 'string', tier: 'number' },
   },
   traits: { plan: 'string' },
 });
@@ -194,16 +197,18 @@ describe.skipIf(!DATABASE_URL)('E1 — end-to-end zero-egress acceptance (real P
     //     (step 2 needs a step_3 STRICTLY after reached_at=12:00; 11:00 < 12:00 -> no match)
     //  C  step_2 at t0+1day+1s, past the inclusive <= bound        -> reaches step 0 only
     //  D  partial (step_2, never step_3)                            -> reaches step 1
+    // step-0 (funnel_step_1) carries the breakdown props: `plan` anchors the funnel breakdown group
+    // (pro={A,C}, free={B,D}); `tier` is the numeric prop the trend breakdown proves renders as text.
     const funnelEvents: WireEvent[] = [
-      ev('funnel_step_1', 'A', '2026-01-05T10:00:00Z', { plan: 'pro' }),
+      ev('funnel_step_1', 'A', '2026-01-05T10:00:00Z', { plan: 'pro', tier: 42 }),
       ev('funnel_step_2', 'A', '2026-01-05T11:00:00Z', { plan: 'pro' }),
       ev('funnel_step_3', 'A', '2026-01-05T12:00:00Z'),
-      ev('funnel_step_1', 'B', '2026-01-05T10:00:00Z', { plan: 'free' }),
+      ev('funnel_step_1', 'B', '2026-01-05T10:00:00Z', { plan: 'free', tier: 7 }),
       ev('funnel_step_3', 'B', '2026-01-05T11:00:00Z'),
       ev('funnel_step_2', 'B', '2026-01-05T12:00:00Z', { plan: 'free' }),
-      ev('funnel_step_1', 'C', '2026-01-05T10:00:00Z', { plan: 'pro' }),
+      ev('funnel_step_1', 'C', '2026-01-05T10:00:00Z', { plan: 'pro', tier: 42 }),
       ev('funnel_step_2', 'C', '2026-01-06T10:00:01Z', { plan: 'pro' }),
-      ev('funnel_step_1', 'D', '2026-01-05T10:00:00Z', { plan: 'free' }),
+      ev('funnel_step_1', 'D', '2026-01-05T10:00:00Z', { plan: 'free', tier: 7 }),
       ev('funnel_step_2', 'D', '2026-01-05T10:30:00Z', { plan: 'free' }),
     ];
 
@@ -215,16 +220,18 @@ describe.skipIf(!DATABASE_URL)('E1 — end-to-end zero-egress acceptance (real P
     //   R3: no return                                    -> contributes to no cell
     //   R4: returns W3 (past periods-1=2)                -> out-of-window: contributes to NOTHING
     // Distinct returners per W0 cell (this cohort, no breakdown): p0={R1}=1, p1={R1,R2}=2, p2={R1}=1.
+    // cohort_signup carries `plan` — the retention breakdown group is anchored at the cohort event:
+    // pro={R1,R3}, free={R2,R4}. In W0's own period only R1 (pro) returns, so p0[pro]=1, p0[free]=0.
     const W0 = '2026-01-05'; // Monday
     const retentionEvents: WireEvent[] = [
-      ev('cohort_signup', 'R1', '2026-01-05T09:00:00Z'),
+      ev('cohort_signup', 'R1', '2026-01-05T09:00:00Z', { plan: 'pro' }),
       ev('return_order', 'R1', '2026-01-05T12:00:00Z'), // W0 (own period)
       ev('return_order', 'R1', '2026-01-12T12:00:00Z'), // W1
       ev('return_order', 'R1', '2026-01-19T12:00:00Z'), // W2
-      ev('cohort_signup', 'R2', '2026-01-05T09:00:00Z'),
+      ev('cohort_signup', 'R2', '2026-01-05T09:00:00Z', { plan: 'free' }),
       ev('return_order', 'R2', '2026-01-12T12:00:00Z'), // W1 only — proves p0=0 for R2
-      ev('cohort_signup', 'R3', '2026-01-05T09:00:00Z'), // never returns
-      ev('cohort_signup', 'R4', '2026-01-05T09:00:00Z'),
+      ev('cohort_signup', 'R3', '2026-01-05T09:00:00Z', { plan: 'pro' }), // never returns
+      ev('cohort_signup', 'R4', '2026-01-05T09:00:00Z', { plan: 'free' }),
       ev('return_order', 'R4', '2026-01-26T12:00:00Z'), // W3, past periods-1 -> no grid cell
     ];
 
@@ -233,24 +240,20 @@ describe.skipIf(!DATABASE_URL)('E1 — end-to-end zero-egress acceptance (real P
       ev('return_order', 'X1', '2026-01-05T12:00:00Z'), // returns in W0 but no cohort_signup
     ];
 
-    // NOTE — the retention BREAKDOWN scenario is deliberately DESCOPED from E1 (architect-ruled,
-    // 2026-07-14): the E1 real-Postgres run surfaced a genuine E18 defect — all three breakdown walk
-    // builders emit `properties ->> '<key>'` FROM the typed view `events_typed`, which the E17 view
-    // generator does NOT expose (it projects only base columns + declared typed prop columns). So
-    // EVERY breakdown query fails on the real engine with `column "properties" does not exist`, in
-    // BOTH trees. That is a contract-violating SQL-generation defect (WAREHOUSE-SCHEMA-CONTRACT.md
-    // line 72 — "Query SQL never targets `properties` directly") that needs its own story: an
-    // architect consult on reconciling a runtime-arbitrary breakdown key with the taxonomy-fixed
-    // typed-column set, a cross-tree SQL-gen change, and an E18 breakdown-fixture rewrite — beyond
-    // S3's locked "test-infra + S1-driver-fix" scope. The MANDATED count-faithfulness (at least one
-    // funnel + one retention adversarial scenario) is fully proven by the funnel + non-breakdown
-    // retention scenarios above, which are green on real Postgres.
+    // E21-S5 RE-ADDS the BREAKDOWN scenario E21-S3 descoped (the Defect 3 fix): all three breakdown
+    // builders now group on the typed view column `("<key>")::text` over `events_typed` (never raw
+    // `properties`), so a breakdown trend/funnel/retention runs to completion on real Postgres. The
+    // funnel/retention seeds above carry a DECLARED `plan` breakdown prop; the trend seeds carry a
+    // DECLARED `tier` NUMBER prop for the numeric `::text` proof. Breakdown assertions are below.
 
-    // now()-relative trend/unique_count smoke: page_loaded by two actors inside a 1-day window.
+    // now()-relative trend/unique_count smoke: page_loaded by two actors inside a 1-day window. The
+    // `tier` NUMBER prop is the §4c half-(2) proof: a numeric breakdown key renders via Postgres
+    // `numeric::text` to '42'/'7' (not '42.0') end-to-end. T1's two rows carry tier=42, T2's one row
+    // tier=7 → breakdown-by-tier: total { '42': 2, '7': 1 }.
     const trendEvents: WireEvent[] = [
-      ev('page_loaded', 'T1', isoMinutesAgo(30)),
-      ev('page_loaded', 'T1', isoMinutesAgo(20)),
-      ev('page_loaded', 'T2', isoMinutesAgo(10)),
+      ev('page_loaded', 'T1', isoMinutesAgo(30), { tier: 42 }),
+      ev('page_loaded', 'T1', isoMinutesAgo(20), { tier: 42 }),
+      ev('page_loaded', 'T2', isoMinutesAgo(10), { tier: 7 }),
     ];
 
     const allEvents = [
@@ -306,7 +309,8 @@ describe.skipIf(!DATABASE_URL)('E1 — end-to-end zero-egress acceptance (real P
     expect(new Set(w0Cells.map((r) => r.periodIndex))).toEqual(new Set([0, 1, 2]));
     expect(w0Cells).toHaveLength(3);
 
-    // (Retention breakdown scenario DESCOPED — see the seeding note above; Defect 3 follow-up.)
+    // (The breakdown trend/funnel/retention scenarios — E21-S5's Defect 3 fix — are asserted in
+    // Step 3b below, grouping on the typed view column over real Postgres.)
 
     // Trend + unique_count smoke (now()-relative window). page_loaded: 3 total rows, 2 unique actors.
     // Assert the SUMMED value over the dense spine, never a pinned bucket label (wall-clock robust).
@@ -319,6 +323,72 @@ describe.skipIf(!DATABASE_URL)('E1 — end-to-end zero-egress acceptance (real P
     // cohort_signup rows: R1,R2,R3,R4 = 4 cohort_signup events.
     const raw = await query.rawQuery(`SELECT count(*)::int AS n FROM events WHERE event = 'cohort_signup'`);
     expect((raw.rows[0] as { n: number }).n).toBe(4);
+
+    // --- Step 3b: the E21-S5 BREAKDOWN scenarios (Defect 3 fix, RE-ADDED) on real Postgres --------
+    // Each groups on the typed view column `("<key>")::text` — no `column "properties" does not exist`.
+
+    // Funnel breakdown by `plan` (anchored at funnel_step_1): pro={A,C}, free={B,D}. Only A (pro)
+    // reaches step 2; B,D (free) reach step 1; C (pro) falls out at step 1's boundary. Per group:
+    //   pro:  step0={A,C}=2, step1={A}=1, step2={A}=1
+    //   free: step0={B,D}=2, step1={B,D}=2  (no actor reaches step 2 → the walk emits no free/step-2
+    //                                        breakdown row; the group's rows stop at the reached step)
+    const funnelBd = await query.funnel({
+      steps: ['funnel_step_1', 'funnel_step_2', 'funnel_step_3'],
+      within: { value: 1, unit: 'day' },
+      breakdown: 'plan',
+    });
+    const byGroupStep = new Map(funnelBd.rows.map((r) => [`${r.breakdown}:${r.step}`, r.count]));
+    expect(byGroupStep.get('pro:0')).toBe(2);
+    expect(byGroupStep.get('pro:1')).toBe(1);
+    expect(byGroupStep.get('pro:2')).toBe(1);
+    expect(byGroupStep.get('free:0')).toBe(2);
+    expect(byGroupStep.get('free:1')).toBe(2);
+    // The free group never reaches step 2 — no free/step-2 row is emitted (the walk drives the groups).
+    expect(byGroupStep.has('free:2')).toBe(false);
+    // Both declared breakdown groups are present, each rendered as a Postgres text string.
+    const funnelGroups = new Set(funnelBd.rows.map((r) => r.breakdown));
+    expect(funnelGroups.has('pro')).toBe(true);
+    expect(funnelGroups.has('free')).toBe(true);
+
+    // Retention breakdown by `plan` (anchored at cohort_signup): pro={R1,R3}, free={R2,R4}. In W0's
+    // own period only R1 (pro) returns → p0[pro]=1, p0[free]=0.
+    const retentionBd = await query.retention({
+      cohortEvent: 'cohort_signup',
+      returnEvent: 'return_order',
+      periods: 3,
+      granularity: 'week',
+      breakdown: 'plan',
+    });
+    const w0Bd = new Map(
+      retentionBd.rows
+        .filter((r) => r.cohort === W0)
+        .map((r) => [`${r.breakdown}:${r.periodIndex}`, r.value])
+    );
+    expect(w0Bd.get('pro:0')).toBe(1); // {R1}
+    expect(w0Bd.get('free:0')).toBe(0); // R2 returns only in W1 → own-period edge
+    expect(new Set(retentionBd.rows.map((r) => r.breakdown))).toEqual(new Set(['pro', 'free']));
+
+    // Trend breakdown by the `tier` NUMBER prop — the §4c half-(2) proof. Postgres renders
+    // `numeric::text` as '42'/'7' (never '42.0') end-to-end. page_loaded totals per group:
+    // tier=42 → 2 rows (T1×2), tier=7 → 1 row (T2×1).
+    const trendBd = await query.trend({
+      event: 'page_loaded',
+      aggregation: 'total',
+      window: { value: 1, unit: 'day' },
+      breakdown: 'tier',
+    });
+    const totalByTier = new Map<string | undefined, number>();
+    for (const r of trendBd.rows) {
+      totalByTier.set(r.breakdown, (totalByTier.get(r.breakdown) ?? 0) + r.value);
+    }
+    expect(totalByTier.get('42')).toBe(2);
+    expect(totalByTier.get('7')).toBe(1);
+    // HALF (2): the numeric key rendered to the EXACT string '42' — not '42.0', not a Number repr.
+    expect(totalByTier.has('42')).toBe(true);
+    expect(totalByTier.has('42.0')).toBe(false);
+    for (const r of trendBd.rows) {
+      expect(typeof r.breakdown).toBe('string');
+    }
 
     // --- Step 4: evaluate E20 static flags local-only (no definition/flag fetch) ------------------
     const flags = createFlagClient({

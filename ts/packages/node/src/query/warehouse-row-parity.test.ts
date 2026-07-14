@@ -1,4 +1,5 @@
 import type { ShapeOf } from '@randomtoni/analytics-kit';
+import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { expect, test } from 'vitest';
 import type { DbExecuteResult } from './db-execute';
 import { createFakeDbExecute } from './db-execute.fixtures';
@@ -34,27 +35,31 @@ import { createWarehouseQueryAdapter } from './warehouse-query-adapter';
 // fixture's `expectedRows`, that would be a BUG in the S1–S3 builder, fixed there, never by
 // relaxing the fixture. (They ship green, so it holds.)
 
-// Type-only taxonomy — the parity suite needs no runtime taxonomy value, only the event keys the
-// specs narrow against, so it is a `ShapeOf` over a literal decl (the same pattern the warehouse
-// adapter test's `TX3` uses). The funnel-precedence case's OUTPUT `event` values are spec-sourced
-// (see below), so the resolved identities (`'Renamed Step'`/`'act_3'`) must be declared events to
-// be valid `spec.steps` keys.
-type TX = ShapeOf<{
+// A runtime taxonomy the breakdown specs narrow AND validate against — the declared-key set the
+// SQL-gen guard checks a `breakdown` key against (E21-S5). `plan` is a declared `string` event prop
+// (the string-keyed breakdown fixtures) and `amount` a declared `number` prop (the number-keyed
+// fixture, proving the row-builder stringifies a numeric cell to `'42'`). The funnel-precedence
+// case's OUTPUT `event` values are spec-sourced, so the resolved identities (`'Renamed Step'`/
+// `'act_3'`) are declared events to be valid `spec.steps` keys.
+const taxonomy = defineTaxonomy({
   events: {
-    order_placed: Record<string, never>;
-    signed_up: Record<string, never>;
-    document_uploaded: Record<string, never>;
-    active_reviewers: Record<string, never>;
-    'Renamed Step': Record<string, never>;
-    act_3: Record<string, never>;
-  };
-  traits: { plan: 'string' };
-}>;
+    order_placed: { plan: 'string', amount: 'number' },
+    signed_up: { plan: 'string', amount: 'number' },
+    document_uploaded: {},
+    active_reviewers: {},
+    'Renamed Step': {},
+    act_3: {},
+  },
+  traits: { plan: 'string' },
+});
 
-// Build an adapter over a fake DB-execute that returns exactly the given SQL-shaped result.
+type TX = ShapeOf<(typeof taxonomy)['decl']>;
+
+// Build an adapter over a fake DB-execute that returns exactly the given SQL-shaped result. The
+// taxonomy is supplied so the broken-down parity cases pass the declared-key guard.
 function adapterReturning(result: DbExecuteResult) {
   const fake = createFakeDbExecute(result);
-  return createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+  return createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute, taxonomy });
 }
 
 // ── SQL-shaped inputs (the flat rows a warehouse SELECT would return per scenario) ───────────
@@ -85,6 +90,20 @@ const trendBreakdownSql: DbExecuteResult = {
     ['2026-07-02', 20, 'pro'],
     ['2026-07-01', 4, 'free'],
     ['2026-07-02', 10, 'free'],
+  ],
+};
+
+// TREND number-keyed breakdown (E21-S5 §4c half (1)) → the row-builder stringifies a NUMERIC cell.
+// A FAKE `DbExecuteResult` echoes whatever cell you seed (the fake never runs the `::text` cast), so
+// this HALF proves the neutral-row STRINGIFICATION: a numeric `42` cell becomes the exact string
+// `'42'` (never `'42.0'`, never a `Number`/`Decimal` repr) cross-tree. HALF (2) — that Postgres
+// `numeric::text` renders `'42'` end-to-end through the real cast — lives in the real-PG scenario.
+const trendNumberBreakdownSql: DbExecuteResult = {
+  columns: [{ name: 'bucket' }, { name: 'value' }, { name: 'breakdown' }],
+  rows: [
+    ['2026-07-01', 8, 42],
+    ['2026-07-02', 20, 42],
+    ['2026-07-01', 4, 7],
   ],
 };
 
@@ -196,6 +215,24 @@ test('PARITY trend, breakdown → warehouse rows equal trendBreakdown.expectedRo
     breakdown: 'plan',
   });
   expect(result.rows).toEqual(trendBreakdown.expectedRows);
+});
+
+test('NUMBER-KEYED breakdown (§4c half 1): the row-builder stringifies a numeric cell to the exact string "42"', async () => {
+  const result = await adapterReturning(trendNumberBreakdownSql).trend({
+    event: 'order_placed',
+    aggregation: 'total',
+    window: { value: 7, unit: 'day' },
+    breakdown: 'amount',
+  });
+  // Every breakdown value is the exact String(cell) — `42` → `'42'`, never `'42.0'`/a Number repr.
+  expect(result.rows).toEqual([
+    { bucket: '2026-07-01', value: 8, breakdown: '42' },
+    { bucket: '2026-07-02', value: 20, breakdown: '42' },
+    { bucket: '2026-07-01', value: 4, breakdown: '7' },
+  ]);
+  for (const row of result.rows) {
+    expect(typeof row.breakdown).toBe('string');
+  }
 });
 
 test('PARITY uniqueCount → warehouse rows equal uniqueCountSingleSeries.expectedRows', async () => {

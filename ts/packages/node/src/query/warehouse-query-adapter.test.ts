@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { ShapeOf, TaxonomyShape } from '@randomtoni/analytics-kit';
 import { defineTaxonomy } from '@randomtoni/analytics-kit';
 import { expect, expectTypeOf, test } from 'vitest';
-import type { DbExecuteResult } from './db-execute';
+import type { DbExecute, DbExecuteResult } from './db-execute';
 import { createFakeDbExecute } from './db-execute.fixtures';
 import type { AnalyticsQueryClient, FunnelSpec, RetentionSpec } from './query-client';
 import {
@@ -12,8 +12,14 @@ import {
 } from './warehouse-query-adapter';
 import { buildRawRows } from './warehouse-sql';
 
+// `plan` is a DECLARED EVENT property (not only a trait) so the view projects a `plan` column and a
+// `breakdown: 'plan'` query passes the SQL-gen declared-key guard. `o'brien` is declared too so the
+// embedded-quote escaping test's breakdown key is a valid declared column.
 const taxonomy = defineTaxonomy({
-  events: { order_placed: { amount: 'number' }, signed_up: {} },
+  events: {
+    order_placed: { amount: 'number', plan: 'string', "o'brien": 'string' },
+    signed_up: {},
+  },
   traits: { plan: 'string' },
 });
 
@@ -23,6 +29,12 @@ type TX = ShapeOf<(typeof taxonomy)['decl']>;
 // A default (empty-result) fake satisfies the required `dbExecute` field so the constructor
 // typechecks; the compute tests pass a canned result to drive the normalization bodies.
 const fakeExec = () => createFakeDbExecute().execute;
+
+// A breakdown-bearing adapter: supplies the runtime taxonomy so the declared-key guard passes and
+// the `plan`/`o'brien` breakdown queries emit SQL. The non-breakdown tests keep the no-taxonomy
+// `createWarehouseQueryAdapter({ dbExecute })` form (their SQL never touches the declared-key set).
+const withBreakdownTaxonomy = (execute: DbExecute) =>
+  createWarehouseQueryAdapter<TX>({ dbExecute: execute, taxonomy });
 
 // The `implements AnalyticsQueryClient<TX>` clause on the class compiles (checked by tsc);
 // these assignability assertions pin that a WarehouseQueryAdapter instance IS a valid
@@ -177,9 +189,9 @@ test('trend minute/hour window collapses the bucket to hour with a time-carrying
   expect(sql).toContain("to_char(spine.bucket, 'YYYY-MM-DD\"T\"HH24:00:00')");
 });
 
-test('trend with a breakdown GROUPs BY the JSONB path and stringifies breakdown onto every row', async () => {
+test('trend with a breakdown GROUPs BY the typed view column and stringifies breakdown onto every row', async () => {
   const fake = createFakeDbExecute(trendBreakdownResult);
-  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+  const client: AnalyticsQueryClient<TX> = withBreakdownTaxonomy(fake.execute);
 
   const result = await client.trend({
     event: 'order_placed',
@@ -195,9 +207,11 @@ test('trend with a breakdown GROUPs BY the JSONB path and stringifies breakdown 
     { bucket: '2026-07-02', value: 10, breakdown: 'free' },
   ]);
   const sql = fake.calls[0].sql;
-  expect(sql).toContain("properties ->> 'plan'");
-  expect(sql).toContain("GROUP BY date_trunc('day', timestamp), properties ->> 'plan'");
+  expect(sql).toContain('("plan")::text');
+  expect(sql).toContain('GROUP BY date_trunc(\'day\', timestamp), ("plan")::text');
   expect(sql).toContain('CROSS JOIN series');
+  // The breakdown path never reads raw properties.
+  expect(sql).not.toContain('properties ->>');
 });
 
 test('trend without a breakdown emits no breakdown column and rows omit breakdown', async () => {
@@ -275,7 +289,7 @@ test('empty result (no events) yields empty rows, never a throw — the zero-fil
 
 test('no SQL column name or engine token leaks onto a returned row', async () => {
   const fake = createFakeDbExecute(trendBreakdownResult);
-  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+  const client: AnalyticsQueryClient<TX> = withBreakdownTaxonomy(fake.execute);
 
   const result = await client.trend({
     event: 'order_placed',
@@ -345,9 +359,9 @@ test('the generated hourly trend SQL matches the canonical cross-tree string (su
   expect(fake.calls[0].sql).toBe(CANONICAL_TREND_SQL_HOURLY);
 });
 
-test('a breakdown key with an embedded single quote is SQL-escaped in the JSONB path (injection-safe)', async () => {
+test('a breakdown key with an embedded single quote is IDENTIFIER-quoted in the typed-view column (injection-safe)', async () => {
   const fake = createFakeDbExecute(trendSingleResult);
-  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+  const client: AnalyticsQueryClient<TX> = withBreakdownTaxonomy(fake.execute);
 
   await client.trend({
     event: 'order_placed',
@@ -356,8 +370,87 @@ test('a breakdown key with an embedded single quote is SQL-escaped in the JSONB 
     breakdown: "o'brien",
   });
 
-  // The single quote is doubled per the SQL standard — the same escaping the view generator uses.
-  expect(fake.calls[0].sql).toContain("properties ->> 'o''brien'");
+  // The breakdown groups on the typed VIEW column via `quoteIdent`, which double-quotes the
+  // identifier and doubles an embedded `"` — a single quote passes through unchanged inside the
+  // identifier (distinct from the OLD JSONB-literal escaping, which doubled the single quote).
+  expect(fake.calls[0].sql).toContain('("o\'brien")::text');
+  expect(fake.calls[0].sql).not.toContain('properties ->>');
+});
+
+// --- E21-S5: breakdown guards at SQL-gen time (undeclared key + no-taxonomy) -----------------
+
+test('an UNDECLARED breakdown key THROWS at SQL-gen, names the key + declarable set, emits no SQL', async () => {
+  const fake = createFakeDbExecute(trendSingleResult);
+  // A taxonomy WITH declared keys — but the breakdown names one that is not declared.
+  const client: AnalyticsQueryClient<TX> = withBreakdownTaxonomy(fake.execute);
+
+  await expect(
+    client.trend({
+      event: 'order_placed',
+      aggregation: 'total',
+      window: { value: 30, unit: 'day' },
+      breakdown: 'undeclared_key',
+    })
+  ).rejects.toThrow(/breakdown key "undeclared_key" is not a declared event property/);
+  // No SQL was emitted — the guard fires before the DB-execute seam is ever called.
+  expect(fake.calls).toHaveLength(0);
+});
+
+test('an undeclared-key error message lists the declarable keys (sorted)', async () => {
+  const fake = createFakeDbExecute(trendSingleResult);
+  const client: AnalyticsQueryClient<TX> = withBreakdownTaxonomy(fake.execute);
+
+  await expect(
+    client.trend({
+      event: 'order_placed',
+      aggregation: 'total',
+      window: { value: 30, unit: 'day' },
+      breakdown: 'pln',
+    })
+    // sorted union of order_placed's declared keys: amount, o'brien, plan.
+  ).rejects.toThrow(/declarable keys are: amount, o'brien, plan/);
+  expect(fake.calls).toHaveLength(0);
+});
+
+test('a breakdown query with NO taxonomy THROWS a DISTINCT missing-taxonomy config error (not the undeclared-key error)', async () => {
+  const fake = createFakeDbExecute(trendBreakdownResult);
+  // No taxonomy supplied — the four non-breakdown primitives run, but a breakdown must throw the
+  // missing-taxonomy config error naming the actual fix.
+  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+
+  await expect(
+    client.trend({
+      event: 'order_placed',
+      aggregation: 'total',
+      window: { value: 30, unit: 'day' },
+      breakdown: 'plan',
+    })
+  ).rejects.toThrow('analytics: a warehouse breakdown query requires a taxonomy on QueryClientConfig');
+  expect(fake.calls).toHaveLength(0);
+});
+
+test('with NO taxonomy the four non-breakdown primitives + rawQuery still run unchanged', async () => {
+  // A no-taxonomy adapter runs every non-breakdown path — none touches the declared-key set.
+  const trendFake = createFakeDbExecute(trendSingleResult);
+  const trendClient = createWarehouseQueryAdapter<TX>({ dbExecute: trendFake.execute });
+  await expect(
+    trendClient.trend({ event: 'order_placed', aggregation: 'total', window: { value: 30, unit: 'day' } })
+  ).resolves.toBeDefined();
+  expect(trendFake.calls).toHaveLength(1);
+
+  const funnelFake = createFakeDbExecute(funnelPlainResult);
+  const funnelClient = createWarehouseQueryAdapter<TX>({ dbExecute: funnelFake.execute });
+  await expect(funnelClient.funnel(twoStepFunnelSpec)).resolves.toBeDefined();
+
+  const uniqueFake = createFakeDbExecute(trendSingleResult);
+  const uniqueClient = createWarehouseQueryAdapter<TX>({ dbExecute: uniqueFake.execute });
+  await expect(
+    uniqueClient.uniqueCount({ event: 'order_placed', window: { value: 30, unit: 'day' } })
+  ).resolves.toBeDefined();
+
+  const rawFake = createFakeDbExecute(trendSingleResult);
+  const rawClient = createWarehouseQueryAdapter<TX>({ dbExecute: rawFake.execute });
+  await expect(rawClient.rawQuery('SELECT 1')).resolves.toBeDefined();
 });
 
 // --- S2: funnel COMPUTES through the injected DbExecute seam ---------------------------------
@@ -605,7 +698,7 @@ test('funnel conversionRate: normal ratios are count[step] / count[0]', async ()
 
 // With a breakdown: SQL groups per breakdown value, conversionRate is PER-GROUP, and the breakdown
 // is stringified onto every row. Each group's step-0 count is that group's base.
-test('funnel with a breakdown: per-group conversionRate, breakdown on every row, JSONB-path GROUP BY', async () => {
+test('funnel with a breakdown: per-group conversionRate, breakdown on every row, typed-view-column GROUP BY', async () => {
   const breakdownResult: DbExecuteResult = {
     columns: [
       { name: 'step_index' },
@@ -621,7 +714,7 @@ test('funnel with a breakdown: per-group conversionRate, breakdown on every row,
     ],
   };
   const fake = createFakeDbExecute(breakdownResult);
-  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+  const client: AnalyticsQueryClient<TX> = withBreakdownTaxonomy(fake.execute);
 
   const result = await client.funnel({ ...twoStepFunnelSpec, breakdown: 'plan' });
 
@@ -632,10 +725,11 @@ test('funnel with a breakdown: per-group conversionRate, breakdown on every row,
     { step: 1, event: 'order_placed', count: 50, conversionRate: 0.25, breakdown: 'free' },
   ]);
   const sql = fake.calls[0].sql;
-  expect(sql).toContain("properties ->> 'plan' AS bd");
+  expect(sql).toContain('("plan")::text AS bd');
   expect(sql).toContain('GROUP BY s.step_index, s.event_name, w.bd');
   // The breakdown value is anchored at each actor's step-0 event (one bucket per actor).
   expect(sql).toContain('(array_agg(bd ORDER BY timestamp))[1] AS bd');
+  expect(sql).not.toContain('properties ->>');
 });
 
 test('funnel rows carry no engine wire field (no average_conversion_time / converted_people_url / breakdown_value)', async () => {
@@ -933,7 +1027,7 @@ test('retention ADVERSARIAL sparse cohort: a zero cell still emits a row with va
   });
 });
 
-test('retention with a breakdown: one grid per breakdown value, breakdown stringified onto every row, JSONB GROUP BY', async () => {
+test('retention with a breakdown: one grid per breakdown value, breakdown stringified onto every row, typed-view-column GROUP BY', async () => {
   const breakdownResult: DbExecuteResult = {
     columns: [
       { name: 'cohort' },
@@ -949,7 +1043,7 @@ test('retention with a breakdown: one grid per breakdown value, breakdown string
     ],
   };
   const fake = createFakeDbExecute(breakdownResult);
-  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+  const client: AnalyticsQueryClient<TX> = withBreakdownTaxonomy(fake.execute);
 
   const result = await client.retention({ ...retentionSpec, periods: 2, breakdown: 'plan' });
 
@@ -960,10 +1054,11 @@ test('retention with a breakdown: one grid per breakdown value, breakdown string
     { cohort: '2026-07-01', periodIndex: 1, value: 60, breakdown: 'free' },
   ]);
   const sql = fake.calls[0].sql;
-  expect(sql).toContain("properties ->> 'plan' AS bd");
+  expect(sql).toContain('("plan")::text AS bd');
   expect(sql).toContain('GROUP BY g.cohort_bucket, g.bd, g.period_index');
   // One grid per breakdown value: buckets carry the breakdown, the grid cross-joins it.
   expect(sql).toContain('SELECT DISTINCT cohort_bucket, bd FROM cohort');
+  expect(sql).not.toContain('properties ->>');
 });
 
 test('retention without a breakdown emits no breakdown path and rows omit breakdown', async () => {
@@ -990,13 +1085,15 @@ test('retention rows match RetentionRow exactly — no engine wire field (breakd
   }
 });
 
-test('retention breakdown key with an embedded single quote is SQL-escaped in the JSONB path (injection-safe)', async () => {
+test('retention breakdown key with an embedded single quote is IDENTIFIER-quoted in the typed-view column (injection-safe)', async () => {
   const fake = createFakeDbExecute(retentionGridResult);
-  const client: AnalyticsQueryClient<TX> = createWarehouseQueryAdapter<TX>({ dbExecute: fake.execute });
+  const client: AnalyticsQueryClient<TX> = withBreakdownTaxonomy(fake.execute);
 
   await client.retention({ ...retentionSpec, breakdown: "o'brien" });
 
-  expect(fake.calls[0].sql).toContain("properties ->> 'o''brien'");
+  // Identifier-quoting (double `"`, pass `'` through) — the single quote is NOT doubled here.
+  expect(fake.calls[0].sql).toContain('("o\'brien")::text');
+  expect(fake.calls[0].sql).not.toContain('properties ->>');
 });
 
 test('retention day/month granularity swaps the truncation + offset interval unit', async () => {
