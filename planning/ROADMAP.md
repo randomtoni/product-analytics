@@ -58,7 +58,7 @@ concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python par
   shape) + consumer-supplied static definitions seeding the snapshot via a structurally-no-fetch seeded
   poller (evaluator byte-unchanged). **Last remote flag dependency closed — self-host flag eval makes
   provably zero remote calls.** Neon `flag_definitions` table is a deferred additive follow-up.
-- **[E21-OBS-protocol-neutrality-gate](epics/E21-OBS-protocol-neutrality-gate.md)** — the capstone: a
+- **[E21-OBS-protocol-neutrality-gate](epics/E21-OBS-protocol-neutrality-gate.md)** *(active)* — the capstone: a
   second, orthogonal (behavioral) neutrality gate — standing factory-selection assertion + end-to-end
   zero-egress acceptance test against real/local Postgres — plus the honest self-host recipe doc.
 

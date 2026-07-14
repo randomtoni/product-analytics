@@ -1,6 +1,6 @@
 ---
 id: E21-OBS-protocol-neutrality-gate
-status: planned
+status: active
 area: observability
 touches: [adapters, query, node, feature-flags]
 api_impact: additive
@@ -68,17 +68,10 @@ it validates E17–E20 end to end.
 
 ## Stories
 
-<Tentative slice — story files are drafted just-in-time at implement time.>
-
-- **E2 factory-selection standing gate** — given a self-host config, assert `create_query_client`
-  returns `WarehouseQueryAdapter`, the flag client is local-only with no flag URL, the receiver writer
-  targets the DSN; added to the quality set as a fast integration test (not an AST pass).
-- **E1 end-to-end zero-egress acceptance test** — full self-host loop against real/local Postgres;
-  recording transport log empty of `/api/projects/.../query/`, `/flags/`, `/batch/`; results provably
-  from Neon.
-- **self-host recipe doc** — the provider-swap walkthrough (migration, DSN, driver extra,
-  static-flag authoring, receiver mount) with the external prerequisites named honestly; PostHog framed
-  as one selectable backend.
+- **[E21-S1](../stories/2-ready-for-dev/E21-S1-python-driver-write-path-fix.md)** *(additive, no deps)* — the recorded MUST-FIX: guard `_result_from_cursor` to return an empty `DbExecuteResult` when `cursor.description is None` (before `fetchall()`), plus a real-driver write unit test; TS already conforms. Unblocks the Python side of the E1 loop.
+- **[E21-S2](../stories/2-ready-for-dev/E21-S2-factory-selection-standing-gate.md)** *(additive, no deps)* — the E2 standing factory-selection gate: given a self-host config, assert the warehouse query adapter (not HTTP), a local-only flag client with no flag URL, and a DSN-targeted receiver are selected — fast, no real Postgres, in the quality set at TS/Python parity.
+- **[E21-S3](../stories/2-ready-for-dev/E21-S3-e2e-zero-egress-acceptance-test.md)** *(additive, depends on E21-S1)* — the E1 capstone: the full self-host loop against a real Postgres ≥16 behind a per-tree needs-Postgres test tier, asserting zero HTTP egress (recording-transport log empty of `/api/projects/.../query/`, `/flags/`, `/batch/`) and counts provably from Neon.
+- **[E21-S4](../stories/2-ready-for-dev/E21-S4-self-host-recipe-doc.md)** *(additive, depends on E21-S3)* — the self-host recipe doc: the provider-swap walkthrough (migration, DSN, driver extra, static flags, receiver mount) with the external prerequisites named honestly and the PG ≥16 floor stated; PostHog framed as one selectable backend.
 
 ## Out of scope
 
