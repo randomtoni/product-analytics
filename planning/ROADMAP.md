@@ -42,7 +42,7 @@ concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python par
   seam + default driver behind the `warehouse` extra; `warehouse_dsn` config field + presence-based
   factory selection ladder. Froze the schema as `planning/WAREHOUSE-SCHEMA-CONTRACT.md` (the one-way
   door). **Substrate complete — E18/E19 now unblocked.** (Generated view needs Postgres ≥16.)
-- **[E18-QRY-warehouse-query-primitives](epics/E18-QRY-warehouse-query-primitives.md)** — the four
+- **[E18-QRY-warehouse-query-primitives](epics/E18-QRY-warehouse-query-primitives.md)** *(active)* — the four
   structured primitives + `raw_query` as SQL over the typed view, normalized through the EXISTING
   row-builders so warehouse rows are byte-identical to HTTP rows by construction (bar-A read-side
   proof). Funnel + retention are the hard, adversarial ones.

@@ -1,6 +1,6 @@
 ---
 id: E18-QRY-warehouse-query-primitives
-status: planned
+status: active
 area: query
 touches: [adapters, node]
 api_impact: additive
@@ -49,21 +49,33 @@ provider swap.
 
 ## Stories
 
-<Tentative slice — story files are drafted just-in-time at implement time. Front-load funnel + retention
-(the two hard, adversarial ones).>
+Drafted to `stories/2-ready-for-dev/` (2026-07-14). Front-loads the SQL-gen + flat-row-builder pattern
+(S1), then the two hard adversarial primitives (S2 funnel, S3 retention); S5 is the read-side bar-A
+proof. **All five write their OWN flat-row builders** (flatten positional `DbExecuteResult` → the same
+neutral row TYPES), reusing the row types + normalizer PATTERN + the `conversionRate`/`period_index`
+RULES — NOT the HTTP adapter's nested builders (E17-S3 architect review, 2026-07-14).
 
-- **trend + unique_count** — shared walk: date_trunc bucket + count, breakdown GROUP BY, zero-fill via
-  `generate_series`; feed into the existing trend/unique-count row-builders. Easy.
-- **funnel (dedicated, adversarial)** — per-actor ordered-step-within-window SQL (window from step 0);
-  adversarial tests: out-of-order, boundary, partial completion. `conversionRate` computed in the
-  normalizer, not SQL. HARD — front-loaded.
-- **retention (dedicated, adversarial)** — cohort self-join, `period_index=0` = cohort's own period,
-  distinct-count per cell; adversarial tests. HARD — front-loaded.
-- **raw_query SQL + dialect-split doc** — pass `expr` as SQL; document the SQL-vs-HogQL dialect split
-  and that `raw_query` is not provider-swap-portable.
-- **row-parity vs `query-contract.fixtures`** — feed SQL-shaped inputs → assert identical neutral rows
-  (the bar-A read-side proof), at TS/Python parity against each tree's mirrored fixtures file
-  (`query-contract.fixtures.ts` / `query_contract_fixtures.py` — parity-by-mirror, not a shared file).
+- **[E18-S1](../stories/2-ready-for-dev/E18-S1-trend-unique-count-sql.md)** *(additive, no deps)* —
+  `trend` + `unique_count` as SQL over the typed view (`date_trunc` bucket + `count(*)`/`count(distinct)`,
+  breakdown `GROUP BY properties->>…`, `generate_series` zero-fill); establishes the SQL-gen module + the
+  flat-row-builder + shared-assembler pattern S2–S4 reuse. Easy — goes first.
+- **[E18-S2](../stories/2-ready-for-dev/E18-S2-funnel-sql-adversarial.md)** *(additive, depends on S1)* —
+  `funnel`: per-actor ordered-step-within-window SQL (window from step 0, strictly increasing step
+  timestamps), `conversionRate` COMPUTED in the builder (guarded), adversarial tests (out-of-order,
+  boundary, partial completion). HARD.
+- **[E18-S3](../stories/2-ready-for-dev/E18-S3-retention-sql-adversarial.md)** *(additive, depends on S1)* —
+  `retention`: cohort self-join, `period_index=0` = the cohort's own period, `count(distinct distinct_id)`
+  per (cohort, period) cell, adversarial tests. HARD.
+- **[E18-S4](../stories/2-ready-for-dev/E18-S4-raw-query-dialect-split.md)** *(additive, depends on S1)* —
+  `raw_query` passes `expr` to the engine AS SQL, normalized via the columns-present `zipRow` path;
+  documents the SQL-vs-HogQL dialect split and that `raw_query` is NOT provider-swap-portable.
+- **[E18-S5](../stories/2-ready-for-dev/E18-S5-row-parity-vs-fixtures.md)** *(additive, depends on S1–S4)* —
+  bar-A read-side proof: SQL-shaped inputs → assert identical neutral rows vs `query-contract.fixtures`
+  (parity-by-mirror across both trees, not a shared file) + the `ENGINE_ROW_FIELD_NAMES` seal.
+
+**Dependency graph:** `S1 → { S2, S3, S4 } → S5`. S1 lands the SQL-gen + flat-builder pattern; S2/S3/S4
+each add a per-primitive builder on top of it (and all edit the same adapter file + SQL-gen module, so
+they run sequentially in practice); S5 asserts the union of S1–S4 honors the LOCKED row contract.
 
 ## Out of scope
 
