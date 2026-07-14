@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-14 — NOW set to the **Self-host backend completion (Neon-native)** area (E17–E21); the protocol-level vendor-neutrality push (epic-refined)
+Last updated: 2026-07-14 — Self-host cycle (E17–E21) in flight; **E17 (warehouse substrate) shipped**, E18/E19 unblocked
 
 ## Status
 
@@ -37,12 +37,11 @@ conventions **documented** (window-from-step-0; cohort `period_index=0`) — NOT
 (the consumer is greenfield: no existing PostHog data to match, which also removes any data-backfill
 concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python parity**.
 
-- **[E17-ADP-warehouse-substrate](epics/E17-ADP-warehouse-substrate.md)** *(active)* — library-owned
-  
+- **[E17-ADP-warehouse-substrate](epics/done/E17-ADP-warehouse-substrate.md)** *(done)* — library-owned
   `events` schema + taxonomy-generated typed view + shipped migration; role-named injectable DB-execute
-  seam + default driver behind a `warehouse` extra; `warehouse_dsn` config field + presence-based
-  factory selection ladder. Freezes the schema as `planning/WAREHOUSE-SCHEMA-CONTRACT.md` (the one-way
-  door) before E18/E19 bind. Foundation.
+  seam + default driver behind the `warehouse` extra; `warehouse_dsn` config field + presence-based
+  factory selection ladder. Froze the schema as `planning/WAREHOUSE-SCHEMA-CONTRACT.md` (the one-way
+  door). **Substrate complete — E18/E19 now unblocked.** (Generated view needs Postgres ≥16.)
 - **[E18-QRY-warehouse-query-primitives](epics/E18-QRY-warehouse-query-primitives.md)** — the four
   structured primitives + `raw_query` as SQL over the typed view, normalized through the EXISTING
   row-builders so warehouse rows are byte-identical to HTTP rows by construction (bar-A read-side
@@ -54,9 +53,8 @@ concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python par
 - **[E20-FF-fully-local-flags](epics/E20-FF-fully-local-flags.md)** — consumer-supplied static flag
   definitions seeding the snapshot directly (zero-infra self-host default, evaluator unchanged), closing
   the last remote flag dependency; Neon `flag_definitions` table is an additive deferrable follow-up.
-  One open user decision (Concern 1): the consumer-authored definition surface is structurally
-  PostHog-shaped today — expose it raw, or add a neutral definition type + mapping (Bar-A-clean but
-  net-new seam surface).
+  Concern 1 RESOLVED (user, 2026-07-14): a **neutral consumer-facing definition type + internal mapping**
+  (Bar-A-clean) — the consumer never authors the raw wire shape (adds one story).
 - **[E21-OBS-protocol-neutrality-gate](epics/E21-OBS-protocol-neutrality-gate.md)** — the capstone: a
   second, orthogonal (behavioral) neutrality gate — standing factory-selection assertion + end-to-end
   zero-egress acceptance test against real/local Postgres — plus the honest self-host recipe doc.
