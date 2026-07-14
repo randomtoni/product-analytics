@@ -112,6 +112,9 @@ function buildUpsert(batch: WireEvent[], receiptTimestamp: string): {
 // A structural check that the decoded body is the node batch envelope. We do not import a runtime
 // schema for this internal wire (Zod is for genuine external boundaries); `batch` an array is the
 // one shape the upsert depends on. `api_key`/`sent_at` are read-through metadata, never validated.
+// This validates ONLY that `batch` is an array — per-`WireEvent` integrity (a missing `uuid`, etc.)
+// is enforced by the DB constraints (NOT NULL / UNIQUE), NOT this parser: a corrupt element surfaces
+// as a driver error at execute time (E21 real-Postgres) → a neutral 5xx, NOT a `malformed_body`.
 function isBatchEnvelope(value: unknown): value is WireBatchEnvelope {
   return (
     typeof value === 'object' &&

@@ -18,7 +18,9 @@ export const STATUS_WRITE_FAILED = 500;
 // Run the receive and map the neutral outcome to a bare `{ status }`. A thrown write is CAUGHT
 // here — scoped to exactly the `receive` call — and mapped to a neutral 5xx so the driver/framework
 // exception NEVER reaches the client (a DB outage is not a client parse error, and its message may
-// carry connection detail). The `switch` is exhaustive over the `ReceiveOutcome` union: a `never`
+// carry connection detail). The swallowed exception is logged server-side (never in the response) so
+// an operator sees the cause behind a 500 — the parity peer of the Python mount's
+// `_logger.exception(...)`. The `switch` is exhaustive over the `ReceiveOutcome` union: a `never`
 // default makes the typechecker flag a missing arm if the core ever grows a third outcome, so a new
 // outcome must get a deliberate status rather than silently defaulting.
 export async function translate(
@@ -29,7 +31,8 @@ export async function translate(
   let outcome;
   try {
     outcome = await receiver.receive(body, headers);
-  } catch {
+  } catch (err) {
+    console.error('analytics-kit receiver: write failed; returning a neutral 5xx', err);
     return { status: STATUS_WRITE_FAILED };
   }
   switch (outcome.outcome) {

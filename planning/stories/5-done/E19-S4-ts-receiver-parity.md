@@ -164,3 +164,10 @@ Mirror how S1 asserts the upsert against the fake and how the send-side tests us
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** independent gate verdict SHIP (no criticals). **Peer-dep ruling ENDORSED:** no-peer-dep pure-structural typing satisfies AC-3 more strongly than a decorative peer — the mounts touch only request/response SHAPES, never a framework VALUE (verified `pg` IS `await import`ed but express/next never are). 2 forward suggestions above (a TS-logging parity gap + a cosmetic statusText)
 - **Cross-story seams exposed:** **S3 (the last E19 story) adds the top-level from-config factory export to the SAME `index.ts`** (export-split: S4 owns the mount HANDLERS, S3 owns the factory + keeps its DSN-build helper submodule-scoped) and composes DSN→driver→`createReceiver(dbExecute)`→whichever mount. Both trees' mounts take an injected `Receiver`; the shared `translate` (TS) / `translate` (Python) guarantees identical status mapping. Consumer body-acquisition posture: Express `express.raw({type:'*/*'})`, Pages-API `bodyParser:false`, App-Router `arrayBuffer()`.
+
+## Follow-up
+
+> E19 improvement pass (2026-07-14) — verified: item 1 adds server-side logging only (client response unchanged); item 2 changes no status code.
+
+- Closed the TS/Python observability parity gap (reviewer suggestion): the TS `translate` now binds the caught write error and `console.error('analytics-kit receiver: write failed; returning a neutral 5xx', err)`s it (matching the Python `_logger.exception`), while the client-facing response stays an empty-body neutral 500. Tested both sides (log fires + body empty, no driver leak) — and a Python regression test now locks the inverse so neither tree can silently drop the log.
+- Simplified the App-Router `statusText` (reviewer suggestion, cosmetic): dropped the hand-maintained `STATUS_TEXT` map — `new Response(null, { status })` with no reason phrase (verified Node's `Response` doesn't auto-derive one; the numeric code is the single source of truth, HTTP/2 drops the phrase). Status codes unchanged.

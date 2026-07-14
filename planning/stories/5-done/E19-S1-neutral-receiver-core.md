@@ -257,3 +257,10 @@ test asserts only the recorded SQL+params. Same way E18's SQL-shape tests assert
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** independent gate verdict SHIP (no criticals) — envelope-faithful (reuses the transport's own `WireEvent`/`WireBatchEnvelope` types → symmetric by construction), injection-safe, seam-opaque, byte-identical SQL across trees (reviewer reproduced both builders). 2 doc-nudge suggestions above
 - **Cross-story seams exposed:** **S2/S3/S4 bind to `createReceiver(dbExecute) → Receiver`** — the core takes an injected `DbExecute` and holds only it (no DSN/driver/framework). **S3** builds the `DbExecute` from `warehouse_dsn` and composes it onto `createReceiver`; **S2 (Python) + S4 (TS) mounts** translate the neutral `ReceiveOutcome` (`accepted`/`malformed_body`) to an HTTP response and pass raw body + headers in. Single multi-row `INSERT … ON CONFLICT (uuid) DO NOTHING`; receipt instant is the `now?` param. **E21:** the known Python-driver `fetchall()` write-raise (deferred) must be fixed before the real receiver writes to Neon.
+
+## Follow-up
+
+> E19 improvement pass (2026-07-14) — verified doc-only for these items (no behavior change).
+
+- Documented the `ReceiverHeaders` flatten obligation on the Python core (reviewer suggestion): the Python core takes SINGLE-valued headers, so a multi-valued mount source (ASGI) must pre-flatten (the ASGI mount already does); TS accepts `string | string[]` and reads the first. Makes the per-tree asymmetry explicit for future mount authors.
+- Documented the per-element integrity boundary on `isBatchEnvelope`/`_is_batch_envelope` (reviewer suggestion): the parser validates only that `batch` is an array; per-`WireEvent` integrity is enforced by the DB constraints (NOT NULL/UNIQUE), so a corrupt element surfaces as a driver error at execute time (E21 real-Postgres) → neutral 5xx, not `malformed_body`.

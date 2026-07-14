@@ -104,11 +104,23 @@ test('App-Router: a malformed body maps to a 400 Response and never calls the DB
 test('App-Router: a DB write failure maps to a neutral 500 Response and leaks no driver message', async () => {
   const driverError = new Error('pg: FATAL password authentication failed for user "app" at 10.0.0.5');
   const handler = createNextRouteReceiver({ receive: () => Promise.reject(driverError) });
+  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-  const response = await handler(appRouterRequest(rawBody(envelope([wireEvent()])), false));
+  try {
+    const response = await handler(appRouterRequest(rawBody(envelope([wireEvent()])), false));
 
-  expect(response.status).toBe(500);
-  expect(await response.text()).toBe('');
+    // The operator-facing log fires with the cause…
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy.mock.calls[0][1]).toBe(driverError);
+    // …while the client-facing response is a neutral 500 with an EMPTY body — no driver message.
+    expect(response.status).toBe(500);
+    const responseBody = await response.text();
+    expect(responseBody).toBe('');
+    expect(responseBody).not.toContain('password');
+    expect(responseBody).not.toContain('10.0.0.5');
+  } finally {
+    errorSpy.mockRestore();
+  }
 });
 
 // --- Pages-API handler (req, res) -------------------------------------------------------

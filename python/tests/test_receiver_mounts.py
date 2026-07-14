@@ -13,6 +13,7 @@ pulls no framework.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, MutableMapping
 
 import anyio
@@ -139,6 +140,30 @@ def test_django_view_maps_a_db_write_failure_to_5xx_and_never_leaks_the_exceptio
     # The neutral response body carries none of the driver exception detail.
     assert b"secret-dsn" not in response.content
     assert b"database failed" not in response.content
+
+
+def test_translate_logs_the_swallowed_write_failure_but_keeps_the_body_empty(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The parity peer of the TS `translate` log: an operator MUST see the cause behind the 5xx.
+    # The swallowed driver exception is logged server-side (with a traceback) while the response
+    # stays a neutral, empty-body 500 — no driver detail reaches the client.
+    from analytics_kit.receiver.mount import translate
+
+    raising = _RaisingDbExecute()
+    with caplog.at_level(logging.ERROR, logger="analytics_kit.receiver"):
+        status, body = translate(Receiver(raising), _raw_body(_envelope([_wire_event()])), {})
+
+    assert status == 500
+    assert body == b""
+
+    records = [r for r in caplog.records if r.name == "analytics_kit.receiver"]
+    assert len(records) == 1
+    # The operator log carries the cause (message + traceback); the client body carries none of it.
+    assert "write failed" in records[0].message
+    assert records[0].exc_info is not None
+    assert b"secret-dsn" not in body
+    assert b"database failed" not in body
 
 
 def test_django_view_forwards_gzip_content_encoding_header_to_the_core() -> None:

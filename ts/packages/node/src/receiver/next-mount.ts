@@ -29,8 +29,6 @@ export interface AppRouterRequestLike {
   headers: Iterable<[string, string]>;
 }
 
-const STATUS_TEXT: Record<number, string> = { 200: 'OK', 400: 'Bad Request', 500: 'Internal Server Error' };
-
 // Flatten Web `Headers` (an `Iterable<[name, value]>`) into the single-valued case-insensitive bag
 // the S1 core takes. Web `Headers` already lowercases names and comma-joins repeats, so a straight
 // copy is faithful; the core only reads `Content-Encoding`.
@@ -50,7 +48,10 @@ function flattenHeaders(headers: Iterable<[string, string]>): ReceiverHeaders {
 // It reads the RAW body via `request.arrayBuffer()` + the request headers, calls the S1 core
 // through `translate`, and returns a Web `Response` with the neutral status and an empty body — no
 // parse, no decompress, no SQL (all in S1). A write failure maps to a neutral 5xx inside
-// `translate`; the driver exception never reaches the client.
+// `translate`; the driver exception never reaches the client. Only `status` is set — the numeric
+// code is the single source of truth (`translate`'s `STATUS_*`); no `statusText` reason phrase is
+// carried, so there is no second per-status map to keep in lockstep (HTTP/2 drops the phrase, and a
+// client reads the code, not the phrase).
 export function createNextRouteReceiver(
   receiver: Receiver
 ): (request: AppRouterRequestLike) => Promise<Response> {
@@ -58,7 +59,7 @@ export function createNextRouteReceiver(
     const body = Buffer.from(await request.arrayBuffer());
     const headers = flattenHeaders(request.headers);
     const { status } = await translate(receiver, body, headers);
-    return new Response(null, { status, statusText: STATUS_TEXT[status] });
+    return new Response(null, { status });
   };
 }
 

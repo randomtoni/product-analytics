@@ -30,7 +30,13 @@ ReceiverHeaders = Mapping[str, str]
 """The neutral request-header bag. WSGI/ASGI and framework header containers are single-valued
 string maps at this layer; a mount pre-normalizes a raw ASGI header list into a dict before
 calling the core. Case-insensitive lookup is done INSIDE the core (the caller is not trusted to
-have lowercased)."""
+have lowercased).
+
+Flatten obligation: this Python core takes SINGLE-VALUED headers, so a mount over a multi-valued
+source (a raw ASGI ``scope['headers']`` list) MUST pre-flatten to one value per name before
+calling ``receive`` (the ASGI mount does). This is a deliberate per-tree asymmetry: the TS
+``ReceiverHeaders`` accepts ``string | string[]`` and reads the first internally, whereas Python
+pushes the flatten to the mount edge."""
 
 
 @dataclass(frozen=True)
@@ -159,6 +165,11 @@ def _is_batch_envelope(value: object) -> bool:
     No runtime schema is imported for this internal wire (Pydantic is for genuine external
     boundaries); ``batch`` being a list is the one shape the upsert depends on. ``api_key`` /
     ``sent_at`` are read-through metadata, never validated.
+
+    Validates ONLY that ``batch`` is a list — per-``WireEvent`` integrity (a missing ``uuid``, etc.)
+    is enforced by the DB constraints (NOT NULL / UNIQUE), NOT this parser: a corrupt element
+    surfaces as a driver error at execute time (E21 real-Postgres) → a neutral 5xx, NOT a
+    :class:`MalformedBody`.
     """
     return isinstance(value, dict) and isinstance(value.get(_WIRE_BATCH_KEY), list)
 
@@ -178,6 +189,9 @@ class Receiver:
         self, body: bytes, headers: ReceiverHeaders, now: datetime | None = None
     ) -> ReceiveOutcome:
         """Parse the node batch envelope off ``body`` and upsert each event.
+
+        ``headers`` must be SINGLE-VALUED (see :data:`ReceiverHeaders`): a mount over a multi-valued
+        source (a raw ASGI header list) pre-flattens before calling here.
 
         ``now`` is the server-receipt instant, mirroring the send-side ``assemble_batch_envelope(
         api_key, events, sent_at)`` param pattern — the impure caller defaults it to
