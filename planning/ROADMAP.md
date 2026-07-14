@@ -38,6 +38,7 @@ conventions **documented** (window-from-step-0; cohort `period_index=0`) — NOT
 concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python parity**.
 
 - **[E17-ADP-warehouse-substrate](epics/E17-ADP-warehouse-substrate.md)** *(active)* — library-owned
+  
   `events` schema + taxonomy-generated typed view + shipped migration; role-named injectable DB-execute
   seam + default driver behind a `warehouse` extra; `warehouse_dsn` config field + presence-based
   factory selection ladder. Freezes the schema as `planning/WAREHOUSE-SCHEMA-CONTRACT.md` (the one-way

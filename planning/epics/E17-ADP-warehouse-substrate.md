@@ -1,6 +1,6 @@
 ---
 id: E17-ADP-warehouse-substrate
-status: planned
+status: active
 area: adapters
 touches: [query, node, core]
 api_impact: additive
@@ -50,19 +50,12 @@ as a committed doc before any SQL or receiver binds to it.
 
 ## Stories
 
-<Tentative slice — story files are drafted just-in-time at implement time.>
+- **[E17-S1](../stories/2-ready-for-dev/E17-S1-schema-contract-freeze.md)** *(additive, no deps)* — write the committed `planning/WAREHOUSE-SCHEMA-CONTRACT.md` freezing the `events` column contract, the safe-cast typed-VIEW rule, the trait/group JSONB-nesting guard, and the greenfield/wire-identity notes; the reviewed one-way-door gate. No code.
+- **[E17-S2](../stories/2-ready-for-dev/E17-S2-events-ddl-typed-view-generator.md)** *(additive, depends on E17-S1)* — library-owned `events` DDL + taxonomy-driven typed-view generator (safe-cast projections over JSONB) + shipped idempotent migration DDL, at TS/Python parity. No driver.
+- **[E17-S3](../stories/2-ready-for-dev/E17-S3-db-execute-seam-driver-extra.md)** *(additive, depends on E17-S1)* — role-named injectable DB-execute protocol seam (mirrors the `QueryTransport`/`FetchLike` injection; no driver handle crosses it) + default `pg`/`psycopg` v3 driver behind the pinned `warehouse` extra / optional peer-dep.
+- **[E17-S4](../stories/2-ready-for-dev/E17-S4-warehouse-dsn-config-selection-ladder.md)** *(additive, depends on E17-S1 + E17-S3)* — `warehouse_dsn` query-config field + presence-based factory selection ladder in `createQueryClient`/`create_query_client` (no `backend:` enum); routes to the existing stub adapter (stub-satisfying until E18).
 
-- **schema-contract-freeze** — write the committed `planning/WAREHOUSE-SCHEMA-CONTRACT.md` (column
-  contract, typed-view rule, trait/group JSONB-nesting guard); the reviewed one-way-door gate before
-  any SQL/receiver binds. No code.
-- **events DDL + typed-view generator + migration** — library-owned `events` schema + taxonomy-driven
-  typed-view generator (safe-cast over JSONB) + shipped migration DDL, at TS/Python parity.
-- **DB-execute protocol seam + default driver behind the extra** — role-named DB-execute protocol
-  (injectable, no driver handle crosses the seam) + default `pg`/`psycopg` driver gated behind a
-  `warehouse` extra / optional peer-dep.
-- **`warehouse_dsn` config field + factory selection ladder** — add the field + the presence-based
-  selection ladder (C) to `createQueryClient`/`create_query_client` at parity; warehouse selection
-  wires to the E18 adapter (stub-satisfying until E18 fills it in).
+**Dependency graph:** `S1 → (S2 ∥ S3) → S4`. S1 (the frozen schema contract) is the one-way door and blocks S2/S3/S4. S2 (DDL + view generator) and S3 (DB-execute seam + driver) run in parallel once S1 lands. S4 (config field + selection ladder) depends on S3's seam (it constructs the driver from the DSN) and S1's contract; it also routes to the existing E18 `WarehouseQueryAdapter` stub. No story carries a blocking `blocked_by`: the DB-execute seam is injectable, so all four build/test against a fake without a real Neon.
 
 ## Out of scope
 
