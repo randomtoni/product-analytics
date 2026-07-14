@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .config import ReceiverConfig
+from .factory import create_receiver_from_config
 from .receiver import (
     Accepted,
     MalformedBody,
@@ -29,6 +31,8 @@ __all__ = [
     "ReceiveOutcome",
     "Accepted",
     "MalformedBody",
+    "ReceiverConfig",
+    "create_receiver_from_config",
     "make_receiver_view",
     "ReceiverASGIApp",
 ]

@@ -9,10 +9,20 @@ import { expect, test } from 'vitest';
 test('the receiver package imports with no Express / Next installed', async () => {
   const mod = await import('./index');
   expect(typeof mod.createReceiver).toBe('function');
+  expect(typeof mod.createReceiverFromConfig).toBe('function');
   expect(typeof mod.createReceiverHandler).toBe('function');
   expect(typeof mod.createExpressReceiver).toBe('function');
   expect(typeof mod.createNextRouteReceiver).toBe('function');
   expect(typeof mod.createNextApiReceiver).toBe('function');
+});
+
+test('the from-config factory imports clean with no `warehouse` (pg) peer installed', async () => {
+  // The real `createDefaultDbExecute` defers the optional `pg` peer load to first exec, so both
+  // this factory module and the receiver package import (and the factory constructs) with no
+  // `warehouse` peer present. `pg` is ABSENT from this workspace's dependency graph — a top-level
+  // `import 'pg'` in the factory chain would throw on this dynamic import.
+  const mod = await import('./create-receiver-from-config');
+  expect(typeof mod.createReceiverFromConfig).toBe('function');
 });
 
 test('the node package entry imports the mounts with no framework installed', async () => {

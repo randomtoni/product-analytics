@@ -43,8 +43,10 @@ from .receiver import (
     Accepted,
     MalformedBody,
     Receiver,
+    ReceiverConfig,
     ReceiverHeaders,
     ReceiveOutcome,
+    create_receiver_from_config,
 )
 from .query import (
     EVENTS_TABLE,
@@ -171,4 +173,6 @@ __all__ = [
     "ReceiveOutcome",
     "Accepted",
     "MalformedBody",
+    "ReceiverConfig",
+    "create_receiver_from_config",
 ]

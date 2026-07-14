@@ -157,6 +157,20 @@ E17-S4 shipped note on the Python eager-load); the receiver core/mount never rec
 (the DSN-never-stored guard); the receiver constructs with no `pg`/`psycopg` installed (lazy import
 proven). Mirror E17-S4's selection tests.
 
+> Reviewer observation (2026-07-14, no action): the DSN-never-stored guards use slightly different DSN
+> scheme literals per tree (Python checks `postgresql://`, TS `postgres://`) — each matches its own fixture,
+> both pass; a parity-tidiness nit only. And the in-file "constructs without the warehouse peer" test uses
+> the mocked builder (proves selection never throws), while the REAL lazy-`pg`-deferral proof lives in
+> `import-safety.test.ts` — the two together are sufficient. Neither is a defect; recorded for tidiness.
+
 ## Shipped
 
-<!-- Empty at draft. /implement-epics fills this on move to stories/5-done/. Do not hand-edit. -->
+> Captured by `implement-epics` on 2026-07-14.
+
+- **Files added:** TS `ts/packages/node/src/receiver/config.ts`, `create-receiver-from-config.ts` (+ `.test.ts`); Python `python/src/analytics_kit/receiver/config.py`, `factory.py` (+ `tests/test_receiver_from_config.py`)
+- **Files changed:** TS `receiver/index.ts`, `src/index.ts`, `receiver/import-safety.test.ts`; Python `receiver/__init__.py`, `__init__.py` (exports)
+- **New public API:** TS `createReceiverFromConfig(config: ReceiverConfig) → Receiver` + `ReceiverConfig` (`warehouseDsn?`); Python `create_receiver_from_config(config: ReceiverConfig) → Receiver` + `ReceiverConfig` (`warehouse_dsn`). The single top-level write-side entry (receiver analog of `createQueryClient`); role-named
+- **Tests added:** TS 8 + 2 import-safety; Python 13 — C-symmetry field-shape pin vs `QueryClientConfig`, factory reads DSN + builds driver (per-tree arg shape) against the E17-S3 fake, DSN-never-stored (iterate fields, injected value IS the opaque `DbExecute`), constructs without the `warehouse` extra (lazy), **absent-DSN → clear neutral error naming the field + NO driver built + NO receiver returned** (anti-silent-drop), empty-string DSN is present (presence not truthiness)
+- **Commit:** this story's ship commit on `main` (see `git log`)
+- **Reviewer notes:** independent gate verdict SHIP (no criticals; reviewer re-ran both gate suites). The absent-DSN anti-silent-drop guard is airtight; DSN-never-stored genuine; C-symmetry structurally pinned. 2 trivial no-action observations above
+- **Cross-story seams exposed:** **E19 (write side) is CLOSED — capture→store→query is wired for self-host.** `createReceiverFromConfig({warehouseDsn})` → a `Receiver` the consumer hands to any mount (S2 Python / S4 TS); the DSN is read only at this boundary, the core/mounts stay DSN-blind. C-symmetric with the query `warehouse_dsn`: one coherent "here's my Neon" across read + write. **Only remaining real-Postgres gap: the recorded E21 Python-driver `fetchall()` write-raise** (`default_db_execute.py:48`) — must-fix before the E21 real-Neon end-to-end test.

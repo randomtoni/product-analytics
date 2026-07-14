@@ -27,6 +27,8 @@ export { createDefaultDbExecute } from './query/default-db-execute';
 export type { DefaultDbExecuteConfig } from './query/default-db-execute';
 export { createReceiver } from './receiver';
 export type { Receiver, ReceiverHeaders, ReceiveOutcome } from './receiver';
+export { createReceiverFromConfig } from './receiver';
+export type { ReceiverConfig } from './receiver';
 export {
   createReceiverHandler,
   createExpressReceiver,
