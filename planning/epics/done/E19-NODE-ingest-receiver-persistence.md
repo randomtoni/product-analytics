@@ -1,6 +1,6 @@
 ---
 id: E19-NODE-ingest-receiver-persistence
-status: active
+status: done
 area: node
 touches: [node, adapters, capture]
 api_impact: additive
@@ -46,21 +46,24 @@ data loop.
 
 ## Stories
 
-- **[E19-S1](../stories/2-ready-for-dev/E19-S1-neutral-receiver-core.md)** *(additive, no deps)* —
+- **[E19-S1](../stories/5-done/E19-S1-neutral-receiver-core.md)** *(done — `2b93e35`)* —
   framework-agnostic receiver core: conditional-decompress + parse the node batch envelope
   `{ api_key, batch, sent_at }` → `WireEvent`s → idempotent `INSERT … ON CONFLICT (uuid) DO NOTHING`
-  through the injected E17 `DbExecute`; trait/group props verbatim into `properties` jsonb;
-  `timestamp`-absent default = server-receipt time (one UTC instant per batch).
-- **[E19-S2](../stories/2-ready-for-dev/E19-S2-python-framework-mounts.md)** *(additive, depends on S1)*
-  — Python Django + FastAPI/ASGI receiver mounts, thin wrappers over the S1 core, mirroring the existing
-  request-context middleware set (lazy-import, extra-gated, `__getattr__`-re-exported).
-- **[E19-S3](../stories/2-ready-for-dev/E19-S3-receiver-warehouse-dsn-selection.md)** *(additive, depends
-  on S1)* — receiver config `warehouse_dsn` (same field SHAPE as the query config; C symmetry) +
-  from-config factory that reads the DSN, lazily builds the default `DbExecute`, and injects it (mirrors
-  E17-S4's factory-builds-driver pattern; core/mounts stay DSN-free).
-- **[E19-S4](../stories/2-ready-for-dev/E19-S4-ts-receiver-parity.md)** *(additive, depends on S1)* — TS
-  receiver mounts (Express / Next-route / plain-handler, optional peer-deps) over the same S1 core;
-  capability at parity with Python. The medium-risk mount surface (raw-body read is the key gotcha).
+  via the injected E17 `DbExecute` (reuses its OWN transport `WireEvent`/`WireBatchEnvelope` types →
+  symmetric with the transport by construction); trait/group props verbatim into `properties` jsonb;
+  receipt-time default (one UTC instant per batch).
+- **[E19-S2](../stories/5-done/E19-S2-python-framework-mounts.md)** *(done — `2e8c923`)*
+  — Python Django + FastAPI/ASGI receiver mounts, thin wrappers over the S1 core, replicating (not
+  importing) the request-context middleware convention (lazy-import, extra-gated, `__getattr__`;
+  subprocess-proven framework-free bare import).
+- **[E19-S3](../stories/5-done/E19-S3-receiver-warehouse-dsn-selection.md)** *(done — `b64e43f`)* —
+  receiver `warehouse_dsn` config (same field SHAPE as the query config; C symmetry) + from-config
+  factory that builds the `DbExecute` at the boundary and injects it (E17-S4's factory-builds-driver
+  pattern; core/mounts stay DSN-free); absent-DSN → **clear neutral error, no silent drop**.
+- **[E19-S4](../stories/5-done/E19-S4-ts-receiver-parity.md)** *(done — `02e5da1`)* — TS
+  receiver mounts (Express / Next-route / plain-handler) over the same S1 core; **pure-structural typing,
+  no framework import, no peer-dep** (endorsed — the mounts touch shapes not values); raw-body + gzip
+  survival verified per mount.
 
 **Dependency graph:** `S1 → (S2 ∥ S3 ∥ S4)`. S1 (the neutral core) lands first; S2 (Python mounts),
 S3 (config/DSN wiring), S4 (TS mounts) each `depends_on` S1. **Serial ordering for overlapping files:**

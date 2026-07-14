@@ -1,6 +1,6 @@
 # Roadmap — analytics-kit
 
-Last updated: 2026-07-14 — Self-host cycle (E17–E21) in flight; **E17 substrate + E18 query read-side shipped**, E19 (ingest receiver) next
+Last updated: 2026-07-14 — Self-host cycle (E17–E21) in flight; **E17 substrate + E18 query + E19 ingest receiver shipped** (full capture→store→query loop on Neon); E20 (local flags) + E21 (acceptance gate) remain
 
 ## Status
 
@@ -47,10 +47,12 @@ concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python par
   **byte-identical to the HTTP adapter's** (bar-A read-side proof, executable vs `query-contract.fixtures`).
   Funnel + retention independently verified on real Postgres 16. **Read side complete — a consumer queries
   their own Neon.**
-- **[E19-NODE-ingest-receiver-persistence](epics/E19-NODE-ingest-receiver-persistence.md)** *(active)* —
+- **[E19-NODE-ingest-receiver-persistence](epics/done/E19-NODE-ingest-receiver-persistence.md)** *(done)* —
   library-shipped framework-mountable reference receiver (inbound analog of the existing middlewares)
   that parses the existing node batch envelope and idempotent-upserts into the `events` table; Django /
-  FastAPI / ASGI + TS Express / Next-route / plain-handler mounts.
+  FastAPI / ASGI + TS Express / Next-route / plain-handler mounts, all over one neutral core + a
+  C-symmetric `warehouse_dsn` from-config factory. **Write side complete — capture→store→query runs on
+  the consumer's own Neon.**
 - **[E20-FF-fully-local-flags](epics/E20-FF-fully-local-flags.md)** — consumer-supplied static flag
   definitions seeding the snapshot directly (zero-infra self-host default, evaluator unchanged), closing
   the last remote flag dependency; Neon `flag_definitions` table is an additive deferrable follow-up.
