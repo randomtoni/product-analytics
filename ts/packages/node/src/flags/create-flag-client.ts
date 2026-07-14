@@ -84,6 +84,15 @@ function buildLocalCapability(
 ): LocalEvalCapability | undefined {
   const staticDefinitions = config.staticDefinitions;
   if (staticDefinitions !== undefined) {
+    // An EMPTY static set is still a valid, non-throwing seed (it lowers to an empty snapshot), but
+    // its poller is permanently not-ready, so every eval degrades silently to the unresolved set —
+    // almost always an accidental empty config. Warn (dev-time only) so it is observable; a non-empty
+    // set stays silent.
+    if (staticDefinitions.length === 0) {
+      console.warn(
+        'analytics: staticDefinitions is empty; the local flag client seeds an empty definition set and every evaluation degrades to the unresolved (flags-off) set. Supply at least one definition, or omit staticDefinitions.'
+      );
+    }
     // Validate at the input boundary so a malformed static set fails LOUDLY at client construction
     // (config-layer `Error`), not lazily at first eval. Then lower to the wire snapshot and seed a
     // poller that structurally cannot fetch — the endpoint/credential are not supplied to it.

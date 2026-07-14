@@ -325,9 +325,11 @@ describe('malformed static definitions are rejected at client construction', () 
     ).toThrow(/invalid flag definitions/i);
   });
 
-  test('an empty static-definitions array is a real (empty) route, not a throw — degrades cleanly', async () => {
+  test('an empty static-definitions array is a real (empty) route, not a throw — degrades cleanly and dev-warns', async () => {
     // A present-but-empty set is a valid seed: it lowers to an empty snapshot. isReady() is false
     // (no flags), so a local-only client degrades to the neutral unresolved set — no throw, no fetch.
+    // An empty set degrades every eval silently, so construction dev-warns to make it observable.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const fetchSpy = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }) as never);
     const client = createFlagClient({
       key: 'k',
@@ -335,6 +337,9 @@ describe('malformed static definitions are rejected at client construction', () 
       onlyEvaluateLocally: true,
       fetch: fetchSpy as never,
     });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/staticDefinitions is empty/));
 
     const set = await client.evaluate(CONTEXT);
     expect(set.getAll()).toEqual({});

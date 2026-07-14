@@ -160,3 +160,10 @@ zero-egress + equal-value assertions.
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** independent gate verdict SHIP (no criticals). **Zero-egress is STRUCTURAL** — the seeded poller carries no URL/credential/transport and every fetch entry point (`start`→`load`→`fetchDefinitions`) short-circuits; egress is impossible even against a direct `fetchDefinitions()` call. Adapter + evaluator **zero-diff** (verified). The `typing_extensions.TypedDict` swap validated as a mandatory boundary req (Pydantic reproduced the <3.12 error). 2 forward suggestions above
 - **Cross-story seams exposed:** **E20 is CLOSED — self-host flag eval makes provably zero remote calls** (the last remote flag dependency, gone). Seeding is a seeded MODE of the same `DefinitionPoller` (so `local.poller` type + the adapter resolve path are unchanged); the config field takes the neutral S1 type; validation runs at construction. **E21** proves the full-loop zero-egress (recording-transport log empty of `/api/projects/.../query/`, `/flags/`, `/batch/`) and the standing factory-selection gate (a self-host flag config selects the local-only path).
+
+## Follow-up
+
+> E20 improvement pass (2026-07-14) — verified: adds a dev-warn only (empty-seed behavior otherwise unchanged).
+
+- Added a dev-warn on an empty static-definitions set (reviewer suggestion, optional): TS `console.warn` / Python `warnings.warn` when the static-defs branch receives an empty set (`staticDefinitions is empty`), so an accidental empty config is observable (symmetric with the keyed-but-no-route warn). Still a valid, non-throwing empty seed — behavior otherwise identical. Tests assert the warn fires on empty + stays silent on a non-empty set.
+- Pre-existing `key`-guard `''`-asymmetry (TS no-ops on empty string, Python only on `None`) — NOT addressed here (out of E20 scope, predates the cycle); recorded as a future follow-up ticket.

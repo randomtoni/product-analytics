@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import threading
+import warnings
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, cast
@@ -352,18 +353,20 @@ def test_out_of_range_rollout_raises_at_construction() -> None:
         )
 
 
-def test_empty_static_definitions_is_a_real_route_not_a_throw() -> None:
+def test_empty_static_definitions_is_a_real_route_not_a_throw_and_dev_warns() -> None:
     # A present-but-empty list is a valid seed: it lowers to an empty snapshot. is_ready() is False
     # (no flags), so a local-only client degrades to the neutral unresolved set — no throw, no fetch.
+    # An empty set degrades every eval silently, so construction dev-warns to make it observable.
     transport = _RecordingTransport()
-    client = create_flag_client(
-        FlagClientConfig(
-            key="k",
-            static_definitions=[],
-            only_evaluate_locally=True,
-            transport=cast("FlagTransport", transport),
+    with pytest.warns(UserWarning, match="static_definitions is empty"):
+        client = create_flag_client(
+            FlagClientConfig(
+                key="k",
+                static_definitions=[],
+                only_evaluate_locally=True,
+                transport=cast("FlagTransport", transport),
+            )
         )
-    )
     try:
         result = client.evaluate(CONTEXT)
         assert result.get_all() == {}
@@ -371,3 +374,17 @@ def test_empty_static_definitions_is_a_real_route_not_a_throw() -> None:
         assert transport.calls == []
     finally:
         cast("HttpFlagAdapter", client).stop()
+
+
+def test_non_empty_static_definitions_does_not_warn() -> None:
+    # The empty-set dev-warn must NOT fire for a real (non-empty) static config.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning would raise and fail the test
+        client = create_flag_client(
+            FlagClientConfig(
+                key="k",
+                static_definitions=_static_definitions(),
+                only_evaluate_locally=True,
+            )
+        )
+    cast("HttpFlagAdapter", client).stop()

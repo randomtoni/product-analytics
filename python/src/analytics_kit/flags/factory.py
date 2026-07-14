@@ -21,6 +21,8 @@ local machinery's) is sealed inside those modules and never surfaces here.
 
 from __future__ import annotations
 
+import warnings
+
 from ..ports import FeatureFlagPort
 from .adapter import HttpFlagAdapter, LocalEvalCapability
 from .config import FlagClientConfig
@@ -74,6 +76,17 @@ def _build_local_capability(config: FlagClientConfig) -> LocalEvalCapability | N
     ``only_evaluate_locally or False``."""
     only_locally = config.only_evaluate_locally or False
     if config.static_definitions is not None:
+        # An EMPTY static set is still a valid, non-throwing seed (it lowers to an empty snapshot), but
+        # its poller is permanently not-ready, so every eval degrades silently to the unresolved set —
+        # almost always an accidental empty config. Warn (dev-time only) so it is observable; a
+        # non-empty set stays silent.
+        if len(config.static_definitions) == 0:
+            warnings.warn(
+                "static_definitions is empty; the local flag client seeds an empty definition set and "
+                "every evaluation degrades to the unresolved (flags-off) set. Supply at least one "
+                "definition, or omit static_definitions.",
+                stacklevel=2,
+            )
         # Validate at the input boundary so a malformed static set fails LOUDLY at client construction
         # (Pydantic ValidationError — the config-layer error type), not lazily at first eval. Then
         # lower to the wire snapshot and seed a poller that structurally cannot fetch.

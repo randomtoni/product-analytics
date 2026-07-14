@@ -367,7 +367,9 @@ def test_validation_rejects_variant_override_not_naming_declared_variant() -> No
 def test_validation_rejects_empty_variants_and_empty_variant_key() -> None:
     with pytest.raises(ValidationError, match="present but empty"):
         validate_definitions([{"key": "empty-variants", "enabled": True, "variants": []}])
-    with pytest.raises(ValidationError):
+    # Message parity with the TS validator's `a variant has an empty 'key'` — both trees give the same
+    # consumer-facing diagnostic for an empty variant key.
+    with pytest.raises(ValidationError, match="a variant has an empty 'key'"):
         validate_definitions([{"key": "empty-key", "enabled": True, "variants": [{"key": "", "rollout_percentage": 100}]}])
 
 
@@ -429,3 +431,23 @@ def test_public_surface_contract() -> None:
     assert "validate_definitions" not in analytics_kit.__all__
     assert not hasattr(analytics_kit, "lower_definitions")
     assert not hasattr(analytics_kit, "validate_definitions")
+
+
+def test_neutral_definition_module_barrel_advertises_only_the_six_neutral_types() -> None:
+    # The module `__all__` lists ONLY the six neutral types, so a `from ...neutral_definition import *`
+    # cannot pull the wire-returning `lower_definitions` (a latent structural leak) or re-export
+    # Pydantic's `ValidationError`. The lowering/validator STAY importable by explicit path (S2's
+    # factory relies on that) — this pins the barrel, not the module's contents.
+    from analytics_kit.flags.local import neutral_definition
+
+    assert set(neutral_definition.__all__) == {
+        "FeatureFlagDefinition",
+        "FlagCondition",
+        "PropertyFilter",
+        "FlagVariant",
+        "FlagFilterValue",
+        "FlagFilterOperator",
+    }
+    # Still reachable by explicit path — the factory's import contract is intact.
+    assert callable(neutral_definition.lower_definitions)
+    assert callable(neutral_definition.validate_definitions)

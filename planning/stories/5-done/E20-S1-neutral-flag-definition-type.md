@@ -247,3 +247,10 @@ match).
 - **Commit:** this story's ship commit on `main` (see `git log`)
 - **Reviewer notes:** independent gate verdict SHIP (no criticals) — **public surface verified structurally neutral in the built `dist/index.d.ts`** (zero wire tokens; six type-only exports; lowering/validator off every barrel). Builder's self-review already caught+fixed a public-export leak; the independent gate confirmed the fix at the artifact level. 2 forward suggestions above
 - **Cross-story seams exposed:** **S2 imports** `lowerDefinitions`/`lower_definitions` + `validateDefinitions`/`validate_definitions` from the INTERNAL modules (`flags/local/neutral-definition` + `validate-definitions` / `flags.local.neutral_definition`) and the public `FeatureFlagDefinition` type for its `staticDefinitions?` config field. `lower_definitions` returns the COMPLETE seeded-poller-ready `DefinitionSnapshot` (non-empty `flags`, disabled kept in `flagsByKey`) — exactly what the poller builds, so S2's seeded poller reports ready via the same `is_ready()` gate. **Story wording nit for future readers: "Zod in TS" → there is no zod; the config-layer idiom is `throw new Error`** (implemented correctly).
+
+## Follow-up
+
+> E20 improvement pass (2026-07-14) — verified `__all__`/validator-message only (no shape/surface change).
+
+- Trimmed the Python `neutral_definition.__all__` to the six neutral types only (reviewer suggestion — defensive): removed `lower_definitions`/`validate_definitions`/`ValidationError` from the module barrel so a future `from ...neutral_definition import *` can't pull the wire-`DefinitionSnapshot`-returning lowering into a barrel (a latent Bar-A leak). They stay importable by explicit path (S2's factory still works); package public surface unchanged (still six-types-only, pinned by a test).
+- Empty-variant-key message parity (reviewer suggestion): the Python validator now raises `a variant has an empty 'key'` (an explicit `field_validator`) — matching the TS message verbatim — instead of a generic Pydantic `min_length` error. Still surfaces as `ValidationError`; behavior unchanged.

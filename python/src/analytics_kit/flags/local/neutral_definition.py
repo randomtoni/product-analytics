@@ -27,7 +27,7 @@ from typing import Literal, Union
 # shape is unchanged.
 from typing_extensions import TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .definition_types import DefinitionSnapshot
 
@@ -149,8 +149,18 @@ class _FlagConditionModel(BaseModel):
 class _FlagVariantModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    key: str = Field(min_length=1)
+    key: str
     rollout_percentage: float = Field(ge=_ROLLOUT_MIN, le=_ROLLOUT_MAX)
+
+    @field_validator("key")
+    @classmethod
+    def _reject_empty_key(cls, value: str) -> str:
+        # An explicit message matching the TS validator's `a variant has an empty 'key'`, so both
+        # trees give the same consumer-facing diagnostic (a bare Pydantic `min_length` error carries
+        # no such phrase).
+        if value == "":
+            raise ValueError("a variant has an empty 'key'")
+        return value
 
 
 class _FeatureFlagDefinitionModel(BaseModel):
@@ -288,6 +298,11 @@ def _lower_variant(variant: FlagVariant) -> dict[str, object]:
     return {"key": variant["key"], "rollout_percentage": variant["rollout_percentage"]}
 
 
+# Only the six NEUTRAL types are advertised via the module barrel — matching the TS module, which
+# advertises nothing consumable via a star-import. `lower_definitions`/`validate_definitions` stay
+# importable by explicit path (S2's factory imports them that way) but are kept OUT of `__all__`, so a
+# future `from ...neutral_definition import *` cannot pull the wire-returning lowering (a latent
+# structural leak) into a barrel; Pydantic's `ValidationError` is likewise not re-exported here.
 __all__ = [
     "FeatureFlagDefinition",
     "FlagCondition",
@@ -295,7 +310,4 @@ __all__ = [
     "FlagVariant",
     "FlagFilterValue",
     "FlagFilterOperator",
-    "lower_definitions",
-    "validate_definitions",
-    "ValidationError",
 ]
