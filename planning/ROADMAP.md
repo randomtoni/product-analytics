@@ -47,7 +47,7 @@ concern); **(2)** scope is the **full loop**, all five epics, at **TS/Python par
   **byte-identical to the HTTP adapter's** (bar-A read-side proof, executable vs `query-contract.fixtures`).
   Funnel + retention independently verified on real Postgres 16. **Read side complete — a consumer queries
   their own Neon.**
-- **[E19-NODE-ingest-receiver-persistence](epics/E19-NODE-ingest-receiver-persistence.md)** —
+- **[E19-NODE-ingest-receiver-persistence](epics/E19-NODE-ingest-receiver-persistence.md)** *(active)* —
   library-shipped framework-mountable reference receiver (inbound analog of the existing middlewares)
   that parses the existing node batch envelope and idempotent-upserts into the `events` table; Django /
   FastAPI / ASGI + TS Express / Next-route / plain-handler mounts.
